@@ -53,6 +53,8 @@ func (c *Config) DSN() string {
 		return c.buildSQLiteDSN()
 	case "sqlserver", "mssql":
 		return c.buildSQLServerDSN()
+	case "mongodb", "mongo":
+		return c.buildMongoDSN()
 	default:
 		return ""
 	}
@@ -154,6 +156,13 @@ func (c *Config) Validate() error {
 		if c.Database == "" {
 			return fmt.Errorf("database file path is required for sqlite driver")
 		}
+	case "mongodb", "mongo":
+		if c.Host == "" {
+			return fmt.Errorf("host is required for mongodb driver")
+		}
+		if c.Database == "" {
+			return fmt.Errorf("database is required for mongodb driver")
+		}
 	default:
 		return fmt.Errorf("unsupported driver: %s", c.Driver)
 	}
@@ -178,4 +187,13 @@ func DefaultConfig() *Config {
 		Debug:           false,
 		LogQueries:      true,
 	}
+}
+
+// buildMongoDSN 构建MongoDB连接字符串
+func (c *Config) buildMongoDSN() string {
+	if c.Username != "" && c.Password != "" {
+		return fmt.Sprintf("mongodb://%s:%s@%s:%d/%s",
+			c.Username, c.Password, c.Host, c.Port, c.Database)
+	}
+	return fmt.Sprintf("mongodb://%s:%d/%s", c.Host, c.Port, c.Database)
 }

@@ -92,6 +92,8 @@ func (m *Manager) createConnection(name string) (ConnectionInterface, error) {
 		conn, err = NewSQLiteConnection(config, m.logger)
 	case "sqlserver", "mssql":
 		conn, err = NewSQLServerConnection(config, m.logger)
+	case "mongodb", "mongo":
+		conn, err = NewMongoDBConnection(config, m.logger)
 	default:
 		return nil, fmt.Errorf("unsupported driver: %s", config.Driver)
 	}

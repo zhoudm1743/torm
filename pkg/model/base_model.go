@@ -84,8 +84,8 @@ func (m *BaseModel) GetConnection() string {
 }
 
 // SetConnection 设置连接名
-func (m *BaseModel) SetConnection(conn string) *BaseModel {
-	m.connection = conn
+func (m *BaseModel) SetConnection(connection string) *BaseModel {
+	m.connection = connection
 	return m
 }
 

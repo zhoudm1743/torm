@@ -305,16 +305,6 @@ func (t *MySQLTransaction) Rollback() error {
 
 // 占位符连接器
 
-// NewPostgreSQLConnection 创建PostgreSQL连接（占位符）
-func NewPostgreSQLConnection(config *Config, logger LoggerInterface) (ConnectionInterface, error) {
-	return nil, fmt.Errorf("PostgreSQL connector not implemented yet")
-}
-
-// NewSQLiteConnection 创建SQLite连接（占位符）
-func NewSQLiteConnection(config *Config, logger LoggerInterface) (ConnectionInterface, error) {
-	return nil, fmt.Errorf("SQLite connector not implemented yet")
-}
-
 // NewSQLServerConnection 创建SQL Server连接（占位符）
 func NewSQLServerConnection(config *Config, logger LoggerInterface) (ConnectionInterface, error) {
 	return nil, fmt.Errorf("SQL Server connector not implemented yet")

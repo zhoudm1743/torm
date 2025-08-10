@@ -7,7 +7,7 @@ TORM是一个基于Go语言开发的高性能ORM（对象关系映射）框架�
 ### ✅ 已实现功能
 
 #### 🔧 核心数据库功能
-- **多数据库支持**: MySQL、PostgreSQL、SQLite、SQL Server
+- **多数据库支持**: MySQL、PostgreSQL（完整支持）、SQLite、SQL Server
 - **连接池管理**: 高效的数据库连接池，支持连接复用和自动回收
 - **事务支持**: 完整的事务操作，支持嵌套事务和事务回滚
 - **查询构造器**: 流畅的链式调用API，支持复杂查询构建
@@ -66,7 +66,8 @@ TORM是一个基于Go语言开发的高性能ORM（对象关系映射）框架�
 
 ```bash
 go mod init your-project
-go get github.com/go-sql-driver/mysql
+go get github.com/go-sql-driver/mysql    # MySQL 支持
+go get github.com/lib/pq                 # PostgreSQL 支持
 go get github.com/stretchr/testify
 ```
 
@@ -98,8 +99,29 @@ func main() {
         ConnMaxLifetime: time.Hour,
     }
 
-    // 添加连接配置
+    // 添加MySQL连接配置
     err := db.AddConnection("default", config)
+    if err != nil {
+        panic(err)
+    }
+
+    // PostgreSQL 配置示例
+    postgresConfig := &db.Config{
+        Driver:   "postgres",
+        Host:     "localhost",
+        Port:     5432,
+        Database: "your_database",
+        Username: "postgres",
+        Password: "your_password",
+        SSLMode:  "disable",
+        Timezone: "UTC",
+        MaxOpenConns: 100,
+        MaxIdleConns: 10,
+        ConnMaxLifetime: time.Hour,
+    }
+    
+    // 添加PostgreSQL连接配置
+    err = db.AddConnection("postgres", postgresConfig)
     if err != nil {
         panic(err)
     }

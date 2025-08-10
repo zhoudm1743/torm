@@ -373,3 +373,15 @@ func CountByStatus(ctx context.Context, status string) (int64, error) {
 
 	return query.Where("status", "=", status).Count(ctx)
 }
+
+// 关联关系
+
+// Profile 获取用户资料 (HasOne)
+func (u *User) Profile() *HasOne {
+	return u.HasOne(&Profile{}, "user_id", "id")
+}
+
+// Posts 获取用户文章 (HasMany)
+func (u *User) Posts() *HasMany {
+	return u.HasMany(&Post{}, "user_id", "id")
+}

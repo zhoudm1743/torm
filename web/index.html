@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TORM - Go语言的优雅ORM库</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- 导航栏 -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-brand">
+                <img src="assets/logo.svg" alt="TORM" class="logo">
+                <span class="brand-text">TORM</span>
+            </div>
+            <div class="nav-menu" id="nav-menu">
+                <a href="#" class="nav-link">文档</a>
+                <a href="#" class="nav-link">示例</a>
+                <a href="#" class="nav-link">社区</a>
+                <a href="#" class="nav-link">API</a>
+                <a href="#" class="nav-link">贡献</a>
+                <div class="language-selector">
+                    <select id="language-select">
+                        <option value="zh">简体中文</option>
+                        <option value="en">English</option>
+                    </select>
+                </div>
+            </div>
+            <div class="nav-toggle" id="nav-toggle">
+                <span></span>
+                <span></span>
+                <span></span>
+            </div>
+        </div>
+    </nav>
+
+    <!-- 主页内容 -->
+    <main class="main-content">
+        <!-- 英雄区域 -->
+        <section class="hero">
+            <div class="hero-background"></div>
+            <div class="container">
+                <div class="hero-content">
+                    <h1 class="hero-title">
+                        <span class="hero-title-main">TORM</span>
+                        <span class="hero-title-sub">Go语言的优雅ORM库</span>
+                    </h1>
+                    <div class="hero-install">
+                        <code class="install-command">go get -u github.com/zhoudm1743/torm</code>
+                        <button class="copy-btn" onclick="copyInstallCommand()">复制</button>
+                    </div>
+                    <div class="hero-stats">
+                        <div class="stat-item">
+                            <span class="stat-icon">⭐</span>
+                            <span class="stat-text">GitHub stars</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-icon">🍴</span>
+                            <span class="stat-text">GitHub forks</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-icon">👥</span>
+                            <span class="stat-text">贡献者</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 特性展示 -->
+        <section class="features">
+            <div class="container">
+                <h2 class="section-title">为什么选择TORM？</h2>
+                <div class="features-grid">
+                    <div class="feature-card">
+                        <div class="feature-icon">🚀</div>
+                        <h3>高性能</h3>
+                        <p>优化的查询构建器和连接池管理，为您的应用提供极致性能</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">🔗</div>
+                        <h3>关联关系</h3>
+                        <p>完整支持 has one、has many、belongs to、many to many 等关联关系</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">🪝</div>
+                        <h3>钩子函数</h3>
+                        <p>支持 before/after create/save/update/delete/find 等生命周期钩子</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">📊</div>
+                        <h3>数据迁移</h3>
+                        <p>内置强大的数据库迁移工具，轻松管理数据库版本</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">💾</div>
+                        <h3>多数据库支持</h3>
+                        <p>支持 MySQL、PostgreSQL、SQLite、MongoDB 等多种数据库</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">🔒</div>
+                        <h3>事务处理</h3>
+                        <p>完整的事务支持，包括嵌套事务、保存点等高级功能</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">🎯</div>
+                        <h3>查询构建器</h3>
+                        <p>强大的 SQL 查询构建器，支持复杂查询和子查询</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">🧰</div>
+                        <h3>开发友好</h3>
+                        <p>详细的文档、丰富的示例，让开发更加轻松愉快</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 代码示例 -->
+        <section class="code-demo">
+            <div class="container">
+                <h2 class="section-title">快速上手</h2>
+                <div class="demo-tabs">
+                    <button class="tab-btn active" onclick="showTab('basic')">基础操作</button>
+                    <button class="tab-btn" onclick="showTab('migration')">数据迁移</button>
+                    <button class="tab-btn" onclick="showTab('transaction')">事务处理</button>
+                </div>
+                <div class="demo-content">
+                    <div class="tab-content active" id="basic">
+                        <pre><code class="language-go">package main
+
+import (
+    "context"
+    "log"
+    "torm/pkg/db"
+)
+
+type User struct {
+    ID    int64  `db:"id" json:"id"`
+    Name  string `db:"name" json:"name"`
+    Email string `db:"email" json:"email"`
+}
+
+func main() {
+    config := &db.Config{
+        Driver:   "mysql",
+        Host:     "localhost",
+        Port:     3306,
+        Database: "blog",
+        Username: "root",
+        Password: "password",
+    }
+    
+    err := db.AddConnection("default", config)
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    conn, _ := db.DB("default")
+    ctx := context.Background()
+    
+    // 创建用户
+    _, err = conn.Exec(ctx, 
+        "INSERT INTO users (name, email) VALUES (?, ?)", 
+        "张三", "zhangsan@example.com")
+    
+    // 查询用户
+    row := conn.QueryRow(ctx, 
+        "SELECT id, name, email FROM users WHERE email = ?", 
+        "zhangsan@example.com")
+    
+    var user User
+    row.Scan(&user.ID, &user.Name, &user.Email)
+}</code></pre>
+                    </div>
+                    <div class="tab-content" id="migration">
+                        <pre><code class="language-go">package main
+
+import (
+    "context"
+    "torm/pkg/migration"
+)
+
+func main() {
+    migrator := migration.NewMigrator(conn, nil)
+    
+    // 注册迁移
+    migrator.RegisterFunc(
+        "20240101_000001",
+        "创建用户表",
+        func(ctx context.Context, conn db.ConnectionInterface) error {
+            schema := migration.NewSchemaBuilder(conn)
+            
+            table := &migration.Table{
+                Name: "users",
+                Columns: []*migration.Column{
+                    {
+                        Name:          "id",
+                        Type:          migration.ColumnTypeBigInt,
+                        PrimaryKey:    true,
+                        AutoIncrement: true,
+                        NotNull:       true,
+                    },
+                    {
+                        Name:    "name",
+                        Type:    migration.ColumnTypeVarchar,
+                        Length:  100,
+                        NotNull: true,
+                    },
+                },
+            }
+            
+            return schema.CreateTable(ctx, table)
+        },
+        func(ctx context.Context, conn db.ConnectionInterface) error {
+            schema := migration.NewSchemaBuilder(conn)
+            return schema.DropTable(ctx, "users")
+        },
+    )
+    
+    // 执行迁移
+    migrator.Up(ctx)
+}</code></pre>
+                    </div>
+                    <div class="tab-content" id="transaction">
+                        <pre><code class="language-go">package main
+
+func transferMoney(ctx context.Context, conn db.ConnectionInterface, 
+                  fromID, toID int64, amount float64) error {
+    tx, err := conn.Begin(ctx)
+    if err != nil {
+        return err
+    }
+    defer tx.Rollback()
+    
+    // 扣除发送方余额
+    _, err = tx.Exec(ctx, 
+        "UPDATE accounts SET balance = balance - ? WHERE id = ?", 
+        amount, fromID)
+    if err != nil {
+        return err
+    }
+    
+    // 增加接收方余额
+    _, err = tx.Exec(ctx, 
+        "UPDATE accounts SET balance = balance + ? WHERE id = ?", 
+        amount, toID)
+    if err != nil {
+        return err
+    }
+    
+    // 提交事务
+    return tx.Commit()
+}</code></pre>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 赞助商区域 -->
+        <section class="sponsors">
+            <div class="container">
+                <h2 class="section-title">感谢我们的赞助商</h2>
+                <div class="sponsor-tiers">
+                    <div class="sponsor-tier">
+                        <h3>白金赞助商</h3>
+                        <div class="sponsor-cards">
+                            <div class="sponsor-card placeholder">
+                                <span>成为赞助商</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="sponsor-tier">
+                        <h3>黄金赞助商</h3>
+                        <div class="sponsor-cards">
+                            <div class="sponsor-card placeholder">
+                                <span>成为赞助商</span>
+                            </div>
+                            <div class="sponsor-card placeholder">
+                                <span>成为赞助商</span>
+                            </div>
+                            <div class="sponsor-card placeholder">
+                                <span>成为赞助商</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- 页脚 -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-section">
+                    <h4>TORM</h4>
+                    <p>Go语言的优雅ORM库</p>
+                </div>
+                <div class="footer-section">
+                    <h4>文档</h4>
+                    <a href="#">快速开始</a>
+                    <a href="#">配置指南</a>
+                    <a href="#">API参考</a>
+                </div>
+                <div class="footer-section">
+                    <h4>社区</h4>
+                    <a href="#">GitHub</a>
+                    <a href="#">讨论区</a>
+                    <a href="#">贡献指南</a>
+                </div>
+                <div class="footer-section">
+                    <h4>其他</h4>
+                    <a href="#">更新日志</a>
+                    <a href="#">问题反馈</a>
+                    <a href="#">故障排除</a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>&copy; 2024 TORM. 文档基于 CC BY 4.0 协议.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="scripts/main.js"></script>
+</body>
+</html> 
