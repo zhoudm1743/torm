@@ -135,15 +135,102 @@
                         <pre><code class="language-go">package main
 
 import (
-    "context"
     "fmt"
     "log"
-    "torm/pkg/db"
-    "torm/pkg/model"
+    
+    "github.com/zhoudm1743/torm/pkg/db"
 )
 
 func main() {
-    // 配置数据库（SQLite最简单）
+    // 配置数据库连接
+    config := &db.Config{
+        Driver:   "sqlite",
+        Database: "example.db",
+    }
+    
+    // 添加连接配置
+    err := db.AddConnection("default", config)
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    // 获取查询构建器 - 正确的API调用
+    query, err := db.Table("users")
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    // 创建用户 - 使用真正的查询构建器
+    userID, err := query.Insert(map[string]interface{}{
+        "name":       "张三",
+        "email":      "zhangsan@example.com", 
+        "age":        25,
+        "status":     "active",
+        "created_at": "2024-01-01 10:00:00",
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("✅ 用户创建成功! ID: %v\n", userID)
+    
+    // 查找单个用户 - 使用First()
+    user, err := query.Where("id", "=", userID).First()
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("找到用户: %s (%s)\n", user["name"], user["email"])
+    
+    // 更新用户 - 使用Update()
+    affected, err := query.Where("id", "=", userID).Update(map[string]interface{}{
+        "age":        26,
+        "updated_at": "2024-01-01 11:00:00",
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("✅ 用户更新成功! 影响行数: %d\n", affected)
+    
+    // 复杂查询 - 展示链式调用
+    adults, err := query.
+        Select("name", "email", "age").
+        Where("age", ">=", 18).
+        Where("status", "=", "active").
+        OrderBy("age", "desc").
+        Limit(10).
+        Get()
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("✅ 查询到 %d 个成年用户\n", len(adults))
+    
+    // 聚合查询
+    count, err := query.Where("status", "=", "active").Count()
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("✅ 活跃用户总数: %d\n", count)
+    
+    // 删除用户
+    deleted, err := query.Where("id", "=", userID).Delete()
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("✅ 用户删除成功! 删除行数: %d\n", deleted)
+}</code></pre>
+                    </div>
+                    <div class="tab-content" id="migration">
+                        <pre><code class="language-go">package main
+
+import (
+    "fmt"
+    "log"
+    
+    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/pkg/migration"
+)
+
+func main() {
+    // 配置数据库连接
     config := &db.Config{
         Driver:   "sqlite",
         Database: "example.db",
@@ -154,141 +241,309 @@ func main() {
         log.Fatal(err)
     }
     
-    ctx := context.Background()
-    
-    // 创建用户
-    user := model.NewUser()
-    user.SetName("张三").SetEmail("zhangsan@example.com").SetAge(25)
-    user.Save(ctx)
-    fmt.Printf("✅ 用户创建成功! ID: %v\n", user.GetID())
-    
-    // 查找用户
-    foundUser := model.NewUser()
-    foundUser.Find(ctx, user.GetID())
-    fmt.Printf("找到用户: %s (%s)\n", foundUser.GetName(), foundUser.GetEmail())
-    
-    // 更新用户
-    foundUser.SetAge(26)
-    foundUser.Save(ctx)
-    fmt.Println("✅ 用户更新成功!")
-    
-    // 删除用户
-    foundUser.Delete(ctx)
-    fmt.Println("✅ 用户删除成功!")
-}</code></pre>
-                    </div>
-                    <div class="tab-content" id="migration">
-                        <pre><code class="language-go">package main
-
-import (
-    "context"
-    "fmt"
-    "torm/pkg/db"
-    "torm/pkg/migration"
-)
-
-func main() {
     // 获取数据库连接
-    conn, _ := db.DB("default")
+    conn, err := db.DB("default")
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    err = conn.Connect()
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    // 创建迁移器
     migrator := migration.NewMigrator(conn, nil)
     
-    // 注册迁移 - 创建用户表
-    migrator.RegisterFunc(
-        "20240101_000001",
-        "创建用户表",
-        func(ctx context.Context, conn db.ConnectionInterface) error {
-            schema := migration.NewSchemaBuilder(conn)
-            
+    // 注册用户表迁移 - 使用现代化的结构定义
+    migrator.Register("20240101_000001", "创建用户表", 
+        func(conn db.ConnectionInterface) error {
+            // 使用Table结构定义表
             table := &migration.Table{
                 Name: "users",
                 Columns: []*migration.Column{
                     {Name: "id", Type: migration.ColumnTypeBigInt, PrimaryKey: true, AutoIncrement: true},
                     {Name: "name", Type: migration.ColumnTypeVarchar, Length: 100, NotNull: true},
                     {Name: "email", Type: migration.ColumnTypeVarchar, Length: 100, NotNull: true},
-                    {Name: "age", Type: migration.ColumnTypeInt, NotNull: true},
+                    {Name: "age", Type: migration.ColumnTypeInt, NotNull: true, Default: "0"},
+                    {Name: "status", Type: migration.ColumnTypeVarchar, Length: 20, Default: "'active'"},
                     {Name: "created_at", Type: migration.ColumnTypeDateTime, Default: "CURRENT_TIMESTAMP"},
+                    {Name: "updated_at", Type: migration.ColumnTypeDateTime, Default: "CURRENT_TIMESTAMP"},
                 },
                 Indexes: []*migration.Index{
                     {Name: "idx_users_email", Columns: []string{"email"}, Unique: true},
+                    {Name: "idx_users_status", Columns: []string{"status"}},
                 },
             }
             
-            return schema.CreateTable(ctx, table)
-        },
-        func(ctx context.Context, conn db.ConnectionInterface) error {
             schema := migration.NewSchemaBuilder(conn)
-            return schema.DropTable(ctx, "users")
+            return schema.CreateTable(table)
+        },
+        func(conn db.ConnectionInterface) error {
+            schema := migration.NewSchemaBuilder(conn)
+            return schema.DropTable("users")
+        },
+    )
+    
+    // 注册文章表迁移
+    migrator.Register("20240101_000002", "创建文章表",
+        func(conn db.ConnectionInterface) error {
+            table := &migration.Table{
+                Name: "posts",
+                Columns: []*migration.Column{
+                    {Name: "id", Type: migration.ColumnTypeBigInt, PrimaryKey: true, AutoIncrement: true},
+                    {Name: "user_id", Type: migration.ColumnTypeBigInt, NotNull: true},
+                    {Name: "title", Type: migration.ColumnTypeVarchar, Length: 200, NotNull: true},
+                    {Name: "content", Type: migration.ColumnTypeText},
+                    {Name: "status", Type: migration.ColumnTypeVarchar, Length: 20, Default: "'draft'"},
+                    {Name: "created_at", Type: migration.ColumnTypeDateTime, Default: "CURRENT_TIMESTAMP"},
+                    {Name: "updated_at", Type: migration.ColumnTypeDateTime, Default: "CURRENT_TIMESTAMP"},
+                },
+                ForeignKeys: []*migration.ForeignKey{
+                    {
+                        Name:           "fk_posts_user_id",
+                        Columns:        []string{"user_id"},
+                        ReferencedTable: "users",
+                        ReferencedColumns: []string{"id"},
+                        OnDelete:       "CASCADE",
+                        OnUpdate:       "CASCADE",
+                    },
+                },
+            }
+            
+            schema := migration.NewSchemaBuilder(conn)
+            return schema.CreateTable(table)
+        },
+        func(conn db.ConnectionInterface) error {
+            schema := migration.NewSchemaBuilder(conn)
+            return schema.DropTable("posts")
         },
     )
     
     // 执行迁移
-    ctx := context.Background()
-    err := migrator.Up(ctx)
+    err = migrator.Up()
     if err != nil {
         fmt.Printf("迁移失败: %v\n", err)
         return
     }
     fmt.Println("✅ 数据库迁移完成!")
+    
+    // 显示迁移状态
+    migrator.PrintStatus()
+    
+    // 演示回滚最后一个迁移
+    fmt.Println("\n🔄 演示回滚最后一个迁移...")
+    err = migrator.Down()
+    if err != nil {
+        fmt.Printf("回滚失败: %v\n", err)
+    } else {
+        fmt.Println("✅ 回滚成功!")
+        migrator.PrintStatus()
+    }
 }</code></pre>
                     </div>
                     <div class="tab-content" id="transaction">
                         <pre><code class="language-go">package main
 
 import (
-    "context"
     "fmt"
-    "torm/pkg/db"
-    "torm/pkg/model"
+    "log"
+    
+    "github.com/zhoudm1743/torm/pkg/db"
 )
 
-// 转账示例 - 演示事务处理
-func transferMoney(ctx context.Context, fromUserID, toUserID int64, amount float64) error {
-    conn, _ := db.DB("default")
+// 账户操作业务逻辑 - 完全基于查询构建器
+func createAccount(userID int64, initialBalance float64) (int64, error) {
+    query, err := db.Table("accounts")
+    if err != nil {
+        return 0, err
+    }
     
-    // 开始事务
-    tx, err := conn.Begin(ctx)
+    return query.Insert(map[string]interface{}{
+        "user_id":    userID,
+        "balance":    initialBalance,
+        "status":     "active",
+        "created_at": "2024-01-01 10:00:00",
+        "updated_at": "2024-01-01 10:00:00",
+    })
+}
+
+func getAccountBalance(userID int64) (float64, error) {
+    query, err := db.Table("accounts")
+    if err != nil {
+        return 0, err
+    }
+    
+    account, err := query.Select("balance").Where("user_id", "=", userID).First()
+    if err != nil {
+        return 0, err
+    }
+    
+    // TORM返回的是map[string]interface{}，需要类型断言
+    balance, ok := account["balance"].(float64)
+    if !ok {
+        // 尝试其他可能的数字类型
+        if intVal, ok := account["balance"].(int64); ok {
+            balance = float64(intVal)
+        } else {
+            return 0, fmt.Errorf("余额数据类型错误")
+        }
+    }
+    
+    return balance, nil
+}
+
+func updateAccountBalance(userID int64, newBalance float64) error {
+    query, err := db.Table("accounts")
     if err != nil {
         return err
     }
-    defer tx.Rollback() // 确保在出错时回滚
     
-    // 扣除发送方余额
-    _, err = tx.Exec(ctx, 
-        "UPDATE accounts SET balance = balance - ? WHERE user_id = ?", 
-        amount, fromUserID)
+    affected, err := query.Where("user_id", "=", userID).Update(map[string]interface{}{
+        "balance":    newBalance,
+        "updated_at": "2024-01-01 11:00:00",
+    })
+    
     if err != nil {
-        return fmt.Errorf("扣除余额失败: %v", err)
+        return err
     }
     
-    // 增加接收方余额
-    _, err = tx.Exec(ctx, 
-        "UPDATE accounts SET balance = balance + ? WHERE user_id = ?", 
-        amount, toUserID)
-    if err != nil {
-        return fmt.Errorf("增加余额失败: %v", err)
+    if affected == 0 {
+        return fmt.Errorf("账户不存在")
     }
     
-    // 记录转账日志
-    _, err = tx.Exec(ctx,
-        "INSERT INTO transfer_logs (from_user_id, to_user_id, amount, created_at) VALUES (?, ?, ?, NOW())",
-        fromUserID, toUserID, amount)
+    return nil
+}
+
+func createTransferLog(fromUserID, toUserID int64, amount float64) error {
+    query, err := db.Table("transfer_logs")
     if err != nil {
-        return fmt.Errorf("记录日志失败: %v", err)
+        return err
     }
     
-    // 提交事务
-    return tx.Commit()
+    _, err = query.Insert(map[string]interface{}{
+        "from_user_id": fromUserID,
+        "to_user_id":   toUserID,
+        "amount":       amount,
+        "status":       "completed",
+        "created_at":   "2024-01-01 11:00:00",
+    })
+    
+    return err
+}
+
+// 转账示例 - 查询构建器 + 事务
+func transferMoney(fromUserID, toUserID int64, amount float64) error {
+    // 事务前验证
+    fromBalance, err := getAccountBalance(fromUserID)
+    if err != nil {
+        return fmt.Errorf("获取发送方余额失败: %v", err)
+    }
+    
+    if fromBalance < amount {
+        return fmt.Errorf("余额不足: 当前 %.2f, 需要 %.2f", fromBalance, amount)
+    }
+    
+    toBalance, err := getAccountBalance(toUserID)
+    if err != nil {
+        return fmt.Errorf("获取接收方余额失败: %v", err)
+    }
+    
+    // 使用TORM的事务API
+    return db.Transaction(func(tx db.TransactionInterface) error {
+        // 计算新余额
+        newFromBalance := fromBalance - amount
+        newToBalance := toBalance + amount
+        
+        // 更新发送方余额
+        err := updateAccountBalance(fromUserID, newFromBalance)
+        if err != nil {
+            return fmt.Errorf("更新发送方余额失败: %v", err)
+        }
+        
+        // 更新接收方余额
+        err = updateAccountBalance(toUserID, newToBalance)
+        if err != nil {
+            return fmt.Errorf("更新接收方余额失败: %v", err)
+        }
+        
+        // 记录转账日志
+        err = createTransferLog(fromUserID, toUserID, amount)
+        if err != nil {
+            return fmt.Errorf("记录转账日志失败: %v", err)
+        }
+        
+        return nil // 自动提交事务
+    })
 }
 
 func main() {
-    ctx := context.Background()
+    // 配置数据库
+    config := &db.Config{
+        Driver:   "sqlite", 
+        Database: "bank.db",
+    }
     
-    // 执行转账
-    err := transferMoney(ctx, 1, 2, 100.00)
+    err := db.AddConnection("default", config)
     if err != nil {
-        fmt.Printf("转账失败: %v\n", err)
+        log.Fatal(err)
+    }
+    
+    // 使用业务函数创建测试账户
+    fmt.Println("🏦 创建银行账户...")
+    account1ID, err := createAccount(1, 1000.00)
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    account2ID, err := createAccount(2, 500.00)
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    fmt.Printf("✅ 创建账户: %v, %v\n", account1ID, account2ID)
+    
+    // 显示转账前余额
+    fmt.Println("💰 转账前余额:")
+    balance1, _ := getAccountBalance(1)
+    balance2, _ := getAccountBalance(2)
+    fmt.Printf("  用户 1: %.2f\n", balance1)
+    fmt.Printf("  用户 2: %.2f\n", balance2)
+    
+    // 执行转账事务
+    fmt.Println("\n🔄 执行转账...")
+    err = transferMoney(1, 2, 100.00)
+    if err != nil {
+        fmt.Printf("❌ 转账失败: %v\n", err)
     } else {
         fmt.Println("✅ 转账成功!")
+        
+        // 查询转账后的余额
+        fmt.Println("\n💰 转账后余额:")
+        newBalance1, _ := getAccountBalance(1)
+        newBalance2, _ := getAccountBalance(2)
+        fmt.Printf("  用户 1: %.2f (变化: %.2f)\n", newBalance1, newBalance1-balance1)
+        fmt.Printf("  用户 2: %.2f (变化: %.2f)\n", newBalance2, newBalance2-balance2)
+        
+        // 查询转账记录
+        logQuery, _ := db.Table("transfer_logs")
+        logs, err := logQuery.
+            Select("from_user_id", "to_user_id", "amount", "status").
+            Where("from_user_id", "=", 1).
+            Where("to_user_id", "=", 2).
+            Get()
+        if err == nil && len(logs) > 0 {
+            log := logs[0]
+            fmt.Printf("\n📋 转账记录: 用户%v -> 用户%v, 金额: %.2f, 状态: %s\n",
+                log["from_user_id"], log["to_user_id"], log["amount"], log["status"])
+        }
+    }
+    
+    // 演示事务回滚
+    fmt.Println("\n🔄 演示事务回滚...")
+    err = transferMoney(1, 2, 10000.00)
+    if err != nil {
+        fmt.Printf("✅ 正确回滚: %v\n", err)
     }
 }</code></pre>
                     </div>

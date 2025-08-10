@@ -1,6 +1,6 @@
 # 快速开始指南
 
-欢迎使用TORM！这个指南将在5分钟内让你体验TORM的现代化ORM功能。我们将创建一个简单的用户管理示例。
+欢迎使用TORM v1.1.0！这个指南将在5分钟内让你体验TORM的现代化ORM功能，包括最新的关联预加载、分页器和JSON查询等高级特性。
 
 ## 📋 前置要求
 
@@ -485,4 +485,74 @@ users, err := query.WithContext(ctx).Get()
 - 在高并发场景下，建议使用 `WithTimeout()` 避免无限等待
 - 事务会自动处理commit/rollback，无需手动管理
 
-现在你可以享受更简洁、更现代化的TORM体验了！ 🎉 
+## 🌟 体验v1.1.0新功能
+
+### 关联预加载 (解决N+1查询问题)
+
+```go
+// 获取用户数据
+users := []interface{}{user1, user2, user3} // 你的用户模型实例
+
+// 预加载关联数据
+collection := model.NewModelCollection(users)
+collection.With("profile", "posts")
+err := collection.Load(context.Background())
+
+// 现在访问关联数据不会产生额外查询
+for _, userInterface := range collection.Models() {
+    if u, ok := userInterface.(*User); ok {
+        profile := u.GetRelation("profile") // 无需查询数据库
+        posts := u.GetRelation("posts")     // 无需查询数据库
+    }
+}
+```
+
+### 分页功能
+
+```go
+// 简单分页
+result, err := userQuery.Paginate(1, 10) // 第1页，每页10条
+
+// 高级分页器
+paginator := paginator.NewQueryPaginator(userQuery, ctx)
+paginationResult, err := paginator.SetPerPage(15).SetPage(2).Paginate()
+```
+
+### JSON字段查询
+
+```go
+// 创建高级查询构建器
+advQuery := query.NewAdvancedQueryBuilder(baseQuery)
+
+// JSON查询 (支持MySQL、PostgreSQL、SQLite)
+users := advQuery.
+    WhereJSON("profile", "$.age", ">", 25).
+    WhereJSONContains("skills", "$.languages", "Go").
+    Get()
+```
+
+### 高级查询功能
+
+```go
+// 子查询 - 查找有活跃项目的用户
+activeUsers := advQuery.WhereExists(func(q db.QueryInterface) db.QueryInterface {
+    return q.Where("projects.user_id", "=", "users.id").
+        Where("projects.status", "=", "active")
+})
+
+// 窗口函数 - 部门内排名
+ranking := advQuery.
+    WithRowNumber("rank", "department", "salary DESC").
+    WithAvgWindow("salary", "dept_avg", "department")
+```
+
+---
+
+现在你可以享受更强大、更现代化的TORM v1.1.0体验了！ 🚀
+
+## 🔗 更多资源
+
+- [完整示例](Examples) - 查看详细的功能示例
+- [API文档](Configuration) - 深入了解配置选项
+- [故障排除](Troubleshooting) - 解决常见问题
+- [更新日志](Changelog) - 了解最新变更 

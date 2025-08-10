@@ -86,6 +86,9 @@ type QueryInterface interface {
 	Count() (int64, error)
 	Exists() (bool, error)
 
+	// 分页查询
+	Paginate(page, perPage int) (interface{}, error)
+
 	// 数据操作
 	Insert(data map[string]interface{}) (int64, error)
 	InsertBatch(data []map[string]interface{}) (int64, error)

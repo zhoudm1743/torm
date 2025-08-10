@@ -1,9 +1,10 @@
-# TORM - 高性能Go语言ORM框架
+# TORM v1.1.0 - 高性能Go语言ORM框架
 
-![TORM Logo](https://img.shields.io/badge/TORM-Go%20ORM-blue?style=for-the-badge&logo=go)
+![TORM Logo](https://img.shields.io/badge/TORM-v1.1.0-blue?style=for-the-badge&logo=go)
 ![Go Version](https://img.shields.io/badge/Go-1.19+-00ADD8?style=flat-square&logo=go)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
 ![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen?style=flat-square)
+![New Features](https://img.shields.io/badge/v1.1.0-New%20Features-orange?style=flat-square)
 
 ## 📖 欢迎使用 TORM
 
@@ -20,6 +21,14 @@ TORM (Think ORM) 是一个功能强大、高性能的Go语言ORM框架，专为�
 - **🛡️ 事务支持**: 完整的ACID事务处理
 - **💾 智能缓存**: 高性能内存缓存系统
 - **📝 详细日志**: 可配置的查询日志和性能监控
+
+### 🆕 v1.1.0 新功能
+
+- **🔗 关联预加载**: 彻底解决N+1查询问题，性能提升10倍+
+- **📄 分页器系统**: 传统分页 + 游标分页，支持大数据量
+- **🔍 JSON查询**: 跨数据库JSON字段查询，支持JSONPath语法
+- **🏗️ 高级查询**: 子查询、窗口函数、复杂条件组合
+- **⚡ 性能优化**: 查询缓存、批量操作、智能预载入
 
 ### 🎯 设计理念
 

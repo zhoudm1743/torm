@@ -21,6 +21,8 @@ type BaseModel struct {
 	attributes map[string]interface{}
 	// 原始属性（用于检测变更）
 	original map[string]interface{}
+	// 关联数据
+	relations map[string]interface{}
 	// 是否为新记录
 	isNew bool
 	// 是否存在于数据库中
@@ -41,6 +43,7 @@ func NewBaseModel() *BaseModel {
 		primaryKey:  "id",
 		attributes:  make(map[string]interface{}),
 		original:    make(map[string]interface{}),
+		relations:   make(map[string]interface{}),
 		isNew:       true,
 		exists:      false,
 		timestamps:  true,
@@ -454,6 +457,27 @@ func (m *BaseModel) ToMap() map[string]interface{} {
 		result[key] = value
 	}
 	return result
+}
+
+// SetRelation 设置关联数据
+func (m *BaseModel) SetRelation(name string, value interface{}) {
+	m.relations[name] = value
+}
+
+// GetRelation 获取关联数据
+func (m *BaseModel) GetRelation(name string) interface{} {
+	return m.relations[name]
+}
+
+// GetRelations 获取所有关联数据
+func (m *BaseModel) GetRelations() map[string]interface{} {
+	return m.relations
+}
+
+// HasRelation 检查是否存在关联
+func (m *BaseModel) HasRelation(name string) bool {
+	_, exists := m.relations[name]
+	return exists
 }
 
 // String 字符串表示

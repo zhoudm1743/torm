@@ -2,6 +2,372 @@
 
 本文档提供了TORM现代化ORM的完整使用示例，涵盖了从基础操作到高级功能的各种场景。
 
+## 🌟 v1.1.0 新功能示例
+
+### 🔗 关联预加载 (Eager Loading)
+
+解决 N+1 查询问题，大幅提升性能：
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "torm/pkg/db"
+    "torm/pkg/model"
+)
+
+// 用户模型
+type User struct {
+    *model.BaseModel
+}
+
+func NewUser() *User {
+    user := &User{BaseModel: model.NewBaseModel()}
+    user.SetTable("users")
+    return user
+}
+
+// 定义关联关系
+func (u *User) Profile() *model.HasOne {
+    return u.HasOne(&Profile{}, "user_id", "id")
+}
+
+func (u *User) Posts() *model.HasMany {
+    return u.HasMany(&Post{}, "user_id", "id")
+}
+
+func main() {
+    // 初始化数据库连接
+    config := &db.Config{
+        Driver: "mysql",
+        Host: "localhost", 
+        Port: 3306,
+        Database: "blog",
+        Username: "root",
+        Password: "password",
+    }
+    
+    err := db.AddConnection("default", config)
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    ctx := context.Background()
+    
+    // 获取用户数据
+    query, _ := db.Table("users")
+    userData, _ := query.Limit(10).Get()
+    
+    // 转换为模型
+    users := make([]interface{}, len(userData))
+    for i, data := range userData {
+        user := NewUser()
+        user.Fill(data)
+        users[i] = user
+    }
+    
+    // 创建模型集合并预载入关联
+    collection := model.NewModelCollection(users)
+    
+    // 预载入用户资料和文章
+    collection.With("profile", "posts")
+    
+    // 为文章关联添加条件
+    collection.WithClosure("posts", func(q db.QueryInterface) db.QueryInterface {
+        return q.Where("status", "=", "published").
+            OrderBy("created_at", "desc").
+            Limit(5)
+    })
+    
+    // 执行预载入 - 只会执行3个查询而不是N+1个
+    err = collection.Load(ctx)
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    // 使用预载入的数据
+    for _, userInterface := range collection.Models() {
+        if user, ok := userInterface.(*User); ok {
+            // 直接使用预载入的关联数据，无需额外查询
+            if user.HasRelation("profile") {
+                profile := user.GetRelation("profile")
+                log.Printf("用户资料: %+v", profile)
+            }
+            
+            if user.HasRelation("posts") {
+                posts := user.GetRelation("posts")
+                log.Printf("用户文章: %+v", posts)
+            }
+        }
+    }
+}
+```
+
+### 📄 分页功能
+
+支持传统分页和高性能游标分页：
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "torm/pkg/db"
+    "torm/pkg/paginator"
+)
+
+func main() {
+    // 初始化数据库连接
+    config := &db.Config{
+        Driver: "mysql",
+        Host: "localhost",
+        Port: 3306,
+        Database: "blog", 
+        Username: "root",
+        Password: "password",
+    }
+    
+    err := db.AddConnection("default", config)
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    ctx := context.Background()
+    
+    // 1. 传统分页
+    query, _ := db.Table("users")
+    query = query.Where("status", "=", "active").OrderBy("created_at", "desc")
+    
+    // 使用内置分页方法
+    result, err := query.Paginate(1, 10) // 第1页，每页10条
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    log.Printf("分页结果: %+v", result)
+    
+    // 2. 高级分页器
+    queryPaginator := paginator.NewQueryPaginator(query, ctx)
+    paginationResult, err := queryPaginator.
+        SetPerPage(15).
+        SetPage(2).
+        Paginate()
+    
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    if pg, ok := paginationResult.(paginator.PaginatorInterface); ok {
+        log.Printf("总记录数: %d", pg.Total())
+        log.Printf("当前页: %d", pg.CurrentPage())
+        log.Printf("总页数: %d", pg.LastPage())
+        log.Printf("是否有下一页: %t", pg.HasMore())
+        
+        // 获取分页数据
+        items := pg.Items()
+        log.Printf("当前页数据: %+v", items)
+        
+        // 获取完整分页信息
+        paginationData := pg.ToMap()
+        log.Printf("分页信息: %+v", paginationData)
+    }
+    
+    // 3. 游标分页 (适用于大数据量)
+    items := []interface{}{
+        map[string]interface{}{"id": 1, "name": "用户1"},
+        map[string]interface{}{"id": 2, "name": "用户2"}, 
+        map[string]interface{}{"id": 3, "name": "用户3"},
+    }
+    
+    cursorPaginator := paginator.NewCursorPaginator(
+        items, 
+        10, 
+        "eyJpZCI6MTB9", // next_cursor
+        "eyJpZCI6MX0=", // prev_cursor
+    )
+    
+    log.Printf("游标分页结果: %+v", cursorPaginator.ToMap())
+}
+```
+
+### 🔍 JSON字段查询
+
+跨数据库的JSON查询支持：
+
+```go
+package main
+
+import (
+    "log"
+    "torm/pkg/db"
+    "torm/pkg/query"
+)
+
+func main() {
+    // 初始化数据库连接
+    config := &db.Config{
+        Driver: "mysql", // 支持 mysql, postgresql, sqlite
+        Host: "localhost",
+        Port: 3306,
+        Database: "blog",
+        Username: "root",
+        Password: "password",
+    }
+    
+    err := db.AddConnection("default", config)
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    // 创建高级查询构建器
+    baseQuery, _ := db.Table("users")
+    advQuery := query.NewAdvancedQueryBuilder(baseQuery)
+    
+    // 1. JSON字段值查询
+    result1 := advQuery.WhereJSON("profile", "$.age", ">", 25)
+    
+    // 2. JSON包含查询
+    result2 := advQuery.WhereJSONContains("skills", "$.languages", "Go")
+    
+    // 3. JSON数组长度查询
+    result3 := advQuery.WhereJSONLength("certifications", "$", ">=", 2)
+    
+    // 4. 复合JSON查询
+    complexResult := advQuery.
+        WhereJSON("metadata", "$.city", "=", "北京").
+        WhereJSONContains("hobbies", "$.type", "技术").
+        WhereJSONLength("projects", "$", ">", 5).
+        OrderBy("created_at", "desc").
+        Limit(20)
+    
+    data, err := complexResult.Get()
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    log.Printf("JSON查询结果: %+v", data)
+    
+    // 5. 跨数据库兼容的JSON查询
+    // MySQL: 使用 JSON_EXTRACT、JSON_CONTAINS
+    // PostgreSQL: 使用 jsonb 操作符 @>、->、->>
+    // SQLite: 自动降级为 LIKE 查询
+    universalQuery := advQuery.
+        WhereJSON("settings", "$.theme", "=", "dark").
+        WhereJSONContains("preferences", "$.notifications", true)
+    
+    universalData, err := universalQuery.Get()
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    log.Printf("跨数据库JSON查询结果: %+v", universalData)
+}
+```
+
+### 🏗️ 高级查询功能
+
+子查询和窗口函数支持：
+
+```go
+package main
+
+import (
+    "log"
+    "torm/pkg/db"
+    "torm/pkg/query"
+)
+
+func main() {
+    // 初始化数据库连接
+    config := &db.Config{
+        Driver: "mysql",
+        Host: "localhost",
+        Port: 3306,
+        Database: "company",
+        Username: "root", 
+        Password: "password",
+    }
+    
+    err := db.AddConnection("default", config)
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    // 创建高级查询构建器
+    baseQuery, _ := db.Table("employees")
+    advQuery := query.NewAdvancedQueryBuilder(baseQuery)
+    
+    // 1. EXISTS 子查询 - 查找有项目的员工
+    employeesWithProjects := advQuery.WhereExists(func(q db.QueryInterface) db.QueryInterface {
+        return q.Where("projects.employee_id", "=", "employees.id").
+            Where("projects.status", "=", "active")
+    })
+    
+    // 2. NOT EXISTS 子查询 - 查找没有迟到记录的员工
+    punctualEmployees := advQuery.WhereNotExists(func(q db.QueryInterface) db.QueryInterface {
+        return q.Where("attendances.employee_id", "=", "employees.id").
+            Where("attendances.status", "=", "late")
+    })
+    
+    // 3. IN 子查询 - 查找高绩效部门的员工
+    highPerformers := advQuery.WhereInSubQuery("department_id", func(q db.QueryInterface) db.QueryInterface {
+        return q.Where("performance_score", ">", 90).
+            Where("year", "=", 2024)
+    })
+    
+    // 4. 窗口函数 - 部门内薪资排名
+    salaryRanking := advQuery.
+        WithRowNumber("row_num", "department_id", "salary DESC").
+        WithRank("salary_rank", "department_id", "salary DESC").
+        WithDenseRank("dense_rank", "department_id", "salary DESC")
+    
+    // 5. 窗口聚合 - 部门统计
+    departmentStats := advQuery.
+        WithCountWindow("dept_employee_count", "department_id").
+        WithSumWindow("salary", "dept_total_salary", "department_id").
+        WithAvgWindow("salary", "dept_avg_salary", "department_id")
+    
+    // 6. LAG/LEAD 函数 - 获取前一个员工的薪资
+    salaryComparison := advQuery.
+        WithLag("salary", "prev_employee_salary", "department_id", "hire_date", 1, 0)
+    
+    // 7. 复合高级查询
+    complexAnalysis := advQuery.
+        Where("status", "=", "active").
+        WhereJSON("skills", "$.level", ">=", "senior").
+        WhereExists(func(q db.QueryInterface) db.QueryInterface {
+            return q.Where("performance.employee_id", "=", "employees.id").
+                Where("performance.score", ">", 85)
+        }).
+        WithRowNumber("performance_rank", "department_id", "hire_date").
+        WithAvgWindow("salary", "dept_avg", "department_id").
+        OrderBy("department_id", "asc").
+        OrderBy("salary", "desc").
+        Limit(50)
+    
+    // 执行查询
+    data, err := complexAnalysis.Get()
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    log.Printf("复合分析结果: %+v", data)
+    
+    // 8. 分页 + 高级查询
+    paginatedResult, err := complexAnalysis.Paginate(1, 20)
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    log.Printf("分页的高级查询结果: %+v", paginatedResult)
+}
+```
+
+---
+
 ## 🚀 基础示例
 
 ### 连接数据库（现代化方式）

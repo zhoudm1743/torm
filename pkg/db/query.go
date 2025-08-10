@@ -869,6 +869,55 @@ func (q *QueryBuilder) queryRowWithContext(ctx context.Context, query string, ar
 	return q.connection.QueryRow(query, args...)
 }
 
+// Paginate 实现分页查询
+func (q *QueryBuilder) Paginate(page, perPage int) (interface{}, error) {
+	// 导入分页器包并创建分页查询
+	// 由于循环导入问题，这里使用简化实现
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 {
+		perPage = 15
+	}
+
+	// 计算总数
+	total, err := q.Count()
+	if err != nil {
+		return nil, err
+	}
+
+	// 计算偏移量
+	offset := (page - 1) * perPage
+
+	// 执行查询
+	data, err := q.Limit(perPage).Offset(offset).Get()
+	if err != nil {
+		return nil, err
+	}
+
+	// 转换数据格式
+	items := make([]interface{}, len(data))
+	for i, item := range data {
+		items[i] = item
+	}
+
+	// 创建简化的分页结果
+	lastPage := int((total + int64(perPage) - 1) / int64(perPage))
+	hasMore := page < lastPage
+
+	result := map[string]interface{}{
+		"data":         items,
+		"total":        total,
+		"per_page":     perPage,
+		"current_page": page,
+		"last_page":    lastPage,
+		"has_more":     hasMore,
+		"has_prev":     page > 1,
+	}
+
+	return result, nil
+}
+
 // execWithContext 内部方法：执行带context的SQL语句
 func (q *QueryBuilder) execWithContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
 	// 尝试使用带context的方法，如果不支持则回退到普通方法
