@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>文档 - TORM</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="stylesheet" href="styles/docs.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-okaidia.min.css" media="(prefers-color-scheme: dark)">
+</head>
+<body>
+    <!-- 导航栏 -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-brand">
+                <a href="index.html" style="display: flex; align-items: center; gap: 0.75rem; text-decoration: none; color: var(--text-primary);">
+                    <img src="assets/logo.svg" alt="TORM" class="logo">
+                    <span class="brand-text">TORM</span>
+                </a>
+            </div>
+            <div class="nav-menu" id="nav-menu">
+                <a href="docs.html" class="nav-link active">文档</a>
+                <a href="#" class="nav-link">示例</a>
+                <a href="#" class="nav-link">社区</a>
+                <a href="#" class="nav-link">API</a>
+                <a href="index.html" class="nav-link">首页</a>
+                <div class="language-selector">
+                    <select id="language-select">
+                        <option value="zh">简体中文</option>
+                        <option value="en">English</option>
+                    </select>
+                </div>
+            </div>
+            <div class="nav-toggle" id="nav-toggle">
+                <span></span>
+                <span></span>
+                <span></span>
+            </div>
+        </div>
+    </nav>
+
+    <!-- 文档布局 -->
+    <div class="docs-layout">
+        <!-- 侧边栏 -->
+        <aside class="docs-sidebar" id="docs-sidebar">
+            <div class="sidebar-header">
+                <h3>文档导航</h3>
+                <button class="sidebar-toggle" id="sidebar-toggle">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </button>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <div class="nav-section">
+                    <h4>开始使用</h4>
+                    <ul>
+                        <li><a href="#" onclick="loadDoc('home')" class="nav-item active">介绍</a></li>
+                        <li><a href="#" onclick="loadDoc('installation')" class="nav-item">安装指南</a></li>
+                        <li><a href="#" onclick="loadDoc('quick-start')" class="nav-item">快速开始</a></li>
+                        <li><a href="#" onclick="loadDoc('configuration')" class="nav-item">配置</a></li>
+                    </ul>
+                </div>
+                
+                <div class="nav-section">
+                    <h4>核心功能</h4>
+                    <ul>
+                        <li><a href="#" onclick="loadDoc('database-support')" class="nav-item">数据库支持</a></li>
+                        <li><a href="#" onclick="loadDoc('migrations')" class="nav-item">数据迁移</a></li>
+                        <li><a href="#" onclick="loadDoc('examples')" class="nav-item">示例代码</a></li>
+                    </ul>
+                </div>
+                
+                <div class="nav-section">
+                    <h4>开发指南</h4>
+                    <ul>
+                        <li><a href="#" onclick="loadDoc('contributing')" class="nav-item">贡献指南</a></li>
+                        <li><a href="#" onclick="loadDoc('troubleshooting')" class="nav-item">故障排除</a></li>
+                        <li><a href="#" onclick="loadDoc('changelog')" class="nav-item">更新日志</a></li>
+                    </ul>
+                </div>
+            </nav>
+        </aside>
+
+        <!-- 主内容区域 -->
+        <main class="docs-main">
+            <div class="docs-content" id="docs-content">
+                <!-- 默认加载的内容 -->
+                <div class="loading-content">
+                    <div class="loading-spinner"></div>
+                    <p>正在加载文档...</p>
+                </div>
+            </div>
+            
+            <!-- 页面导航 -->
+            <div class="docs-pagination" id="docs-pagination" style="display: none;">
+                <div class="pagination-prev">
+                    <a href="#" id="prev-page">
+                        <span class="pagination-label">上一页</span>
+                        <span class="pagination-title"></span>
+                    </a>
+                </div>
+                <div class="pagination-next">
+                    <a href="#" id="next-page">
+                        <span class="pagination-label">下一页</span>
+                        <span class="pagination-title"></span>
+                    </a>
+                </div>
+            </div>
+        </main>
+
+        <!-- 目录 -->
+        <aside class="docs-toc" id="docs-toc">
+            <div class="toc-header">
+                <h4>页面目录</h4>
+            </div>
+            <nav class="toc-nav" id="toc-nav">
+                <!-- 动态生成的目录 -->
+            </nav>
+        </aside>
+    </div>
+
+    <!-- 回到顶部按钮 -->
+    <button class="back-to-top" id="back-to-top" title="回到顶部">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M3.293 9.707a1 1 0 010-1.414l6-6a1 1 0 011.414 0l6 6a1 1 0 01-1.414 1.414L11 5.414V17a1 1 0 11-2 0V5.414L4.707 9.707a1 1 0 01-1.414 0z" clip-rule="evenodd" />
+        </svg>
+    </button>
+
+    <!-- 脚本 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/5.1.1/marked.min.js"></script>
+    <script src="scripts/main.js"></script>
+    <script src="scripts/docs.js"></script>
+</body>
+</html> 
