@@ -1,2 +1,4 @@
 study/
 examples/
+*.db
+*.log
