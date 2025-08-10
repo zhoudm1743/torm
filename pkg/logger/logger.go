@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"torm/pkg/db"
+	"github.com/zhoudm1743/torm/pkg/db"
 )
 
 // LogLevel 日志级别

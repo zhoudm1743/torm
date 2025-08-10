@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"torm/pkg/db"
+	"github.com/zhoudm1743/torm/pkg/db"
 )
 
 func TestPostgreSQLBuilderBasic(t *testing.T) {

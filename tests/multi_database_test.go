@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"torm/pkg/db"
+	"github.com/zhoudm1743/torm/pkg/db"
 )
 
 func setupMultiDatabase(t *testing.T) {

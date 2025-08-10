@@ -98,7 +98,7 @@ package main
 import (
     "context"
     "time"
-    "torm/pkg/db"
+    "github.com/zhoudm1743/torm/pkg/db"
 )
 
 func main() {
@@ -186,7 +186,7 @@ affected, err = query.
 #### 3. 模型系统
 
 ```go
-import "torm/pkg/model"
+import "github.com/zhoudm1743/torm/pkg/model"
 
 // 创建用户模型
 user := model.NewUser()
@@ -216,7 +216,7 @@ err = user2.Delete(context.Background())
 #### 4. 缓存系统
 
 ```go
-import "torm/pkg/cache"
+import "github.com/zhoudm1743/torm/pkg/cache"
 
 // 创建内存缓存
 memCache := cache.NewMemoryCache()
@@ -237,7 +237,7 @@ err = memCache.Delete(context.Background(), "user:1")
 #### 5. 日志系统
 
 ```go
-import "torm/pkg/logger"
+import "github.com/zhoudm1743/torm/pkg/logger"
 
 // 创建日志记录器
 appLogger := logger.NewLogger(logger.INFO)

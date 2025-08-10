@@ -5,7 +5,7 @@ import (
 	"math"
 	"strconv"
 
-	"torm/pkg/db"
+	"github.com/zhoudm1743/torm/pkg/db"
 )
 
 // PaginatorInterface 分页器接口

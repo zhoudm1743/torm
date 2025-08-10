@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"torm/pkg/db"
-	"torm/pkg/migration"
+	"github.com/zhoudm1743/torm/pkg/db"
+	"github.com/zhoudm1743/torm/pkg/migration"
 )
 
 // setupModernORM 设置现代化的ORM测试环境

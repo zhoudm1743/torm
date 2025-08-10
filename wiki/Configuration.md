@@ -82,7 +82,7 @@ postgresConfig := &db.Config{
         "lock_timeout":       "30000",       // 锁超时（毫秒）
         "idle_in_transaction_session_timeout": "30000", // 事务空闲超时
         "search_path":        "public",      // 搜索路径
-        "application_name":   "torm",        // 应用名称
+        "application_name":   "github.com/zhoudm1743/torm",        // 应用名称
     },
 }
 ```
@@ -154,7 +154,7 @@ sqlserverConfig := &db.Config{
         "keepAlive":          "30",           // 保持连接
         "encrypt":            "disable",      // 加密
         "TrustServerCertificate": "true",     // 信任服务器证书
-        "app name":           "torm",         // 应用名称
+        "app name":           "github.com/zhoudm1743/torm",         // 应用名称
         "log":                "1",            // 日志级别
     },
 }

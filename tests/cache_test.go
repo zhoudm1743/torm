@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"torm/pkg/cache"
+	"github.com/zhoudm1743/torm/pkg/cache"
 )
 
 func TestMemoryCache_BasicOperations(t *testing.T) {

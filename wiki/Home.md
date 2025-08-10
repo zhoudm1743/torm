@@ -54,10 +54,18 @@ go get github.com/zhoudm1743/torm
 package main
 
 import (
-    "context"
     "log"
-    "torm/pkg/db"
+    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/pkg/model"
 )
+
+// 定义用户模型
+type User struct {
+    model.BaseModel
+    Name  string `db:"name" json:"name"`
+    Email string `db:"email" json:"email"`
+    Age   int    `db:"age" json:"age"`
+}
 
 func main() {
     // 配置数据库连接
@@ -77,21 +85,33 @@ func main() {
         log.Fatal(err)
     }
 
-    // 获取连接
-    conn, err := db.DB("default")
+    // 使用查询构建器查询用户
+    var users []User
+    query := db.NewQueryBuilder("default")
+    err = query.Table("users").
+        Where("age", ">", 18).
+        Where("status", "=", "active").
+        OrderBy("created_at", "desc").
+        Limit(10).
+        Get(&users)
     if err != nil {
         log.Fatal(err)
     }
 
-    // 执行查询
-    ctx := context.Background()
-    rows, err := conn.Query(ctx, "SELECT * FROM users WHERE age > ?", 18)
+    // 使用模型方法创建用户
+    user := &User{
+        Name:  "张三",
+        Email: "zhangsan@example.com", 
+        Age:   25,
+    }
+    
+    err = query.Table("users").Insert(user)
     if err != nil {
         log.Fatal(err)
     }
-    defer rows.Close()
 
-    // 处理结果...
+    log.Printf("找到 %d 个用户", len(users))
+    log.Printf("创建用户成功，ID: %d", user.ID)
 }
 ```
 
@@ -154,33 +174,43 @@ TORM在多种场景下都表现出色：
 ### 模型定义
 ```go
 type User struct {
-    torm.BaseModel
+    model.BaseModel
     Name     string    `db:"name" json:"name"`
     Email    string    `db:"email" json:"email"`
     Age      int       `db:"age" json:"age"`
-    Posts    []*Post   `has_many:"user_id"`
-    Profile  *Profile  `has_one:"user_id"`
+    Profile  string    `db:"profile" json:"profile"` // JSON字段
+    Posts    []*Post   `relation:"has_many,user_id"`
+    Profile  *Profile  `relation:"has_one,user_id"`
 }
 ```
 
-### 查询构建
+### v1.1.0 新功能演示
 ```go
+// 1. 关联预加载 - 解决N+1查询问题
 users := make([]*User, 0)
-err := db.Model(&User{}).
-    Where("age", ">", 18).
-    Where("status", "active").
-    OrderBy("created_at", "desc").
-    Limit(10).
-    Find(&users)
-```
+query := db.NewQueryBuilder("default")
+err := query.Table("users").Get(&users)
 
-### 关联查询
-```go
-user := &User{}
-err := db.Model(&User{}).
-    With("Posts", "Profile").
-    Where("id", 1).
-    First(user)
+collection := model.NewModelCollection(users)
+err = collection.With("posts", "profile").Load(ctx) // 仅3个查询！
+
+// 2. 分页查询
+result, err := query.Table("users").
+    Where("age", ">", 18).
+    Paginate(1, 10) // 第1页，每页10条
+
+// 3. JSON字段查询 (v1.1.0新功能)
+advQuery := query.NewAdvancedQueryBuilder(query)
+users, err := advQuery.
+    WhereJSON("profile", "$.age", ">", 25).
+    WhereJSONContains("skills", "$.languages", "Go").
+    Get()
+
+// 4. 高级查询 - 窗口函数
+result, err := advQuery.
+    WithRowNumber("rank", "department", "salary DESC").
+    WithAvgWindow("salary", "dept_avg", "department").
+    Get()
 ```
 
 ## 📞 联系我们

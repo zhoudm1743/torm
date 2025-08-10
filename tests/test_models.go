@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"torm/pkg/db"
-	"torm/pkg/model"
+	"github.com/zhoudm1743/torm/pkg/db"
+	"github.com/zhoudm1743/torm/pkg/model"
 )
 
 // User 用户模型

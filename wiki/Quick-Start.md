@@ -31,9 +31,9 @@ import (
     "log"
     "time"
     
-    "torm/pkg/db"
-    "torm/pkg/migration"
-    "torm/pkg/model"
+    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/pkg/migration"
+    "github.com/zhoudm1743/torm/pkg/model"
 )
 
 // User 用户模型

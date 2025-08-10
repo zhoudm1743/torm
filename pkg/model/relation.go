@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"strings"
 
-	"torm/pkg/db"
+	"github.com/zhoudm1743/torm/pkg/db"
 )
 
 // RelationType 关联关系类型

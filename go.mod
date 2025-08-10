@@ -1,4 +1,4 @@
-module torm
+module github.com/zhoudm1743/torm
 
 go 1.21
 

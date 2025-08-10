@@ -1,5 +1,5 @@
 {
-  "name": "torm-website",
+  "name": "github.com/zhoudm1743/torm-website",
   "version": "1.0.0",
   "description": "TORM - Go语言优雅ORM库的官方网站",
   "scripts": {
@@ -9,7 +9,7 @@
     "preview": "npx serve . -p 8080"
   },
   "keywords": [
-    "torm",
+    "github.com/zhoudm1743/torm",
     "orm",
     "golang",
     "database",

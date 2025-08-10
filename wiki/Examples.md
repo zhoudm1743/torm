@@ -14,8 +14,8 @@ package main
 import (
     "context"
     "log"
-    "torm/pkg/db"
-    "torm/pkg/model"
+    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/pkg/model"
 )
 
 // 用户模型
@@ -115,8 +115,8 @@ package main
 import (
     "context"
     "log"
-    "torm/pkg/db"
-    "torm/pkg/paginator"
+    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/pkg/paginator"
 )
 
 func main() {
@@ -202,8 +202,8 @@ package main
 
 import (
     "log"
-    "torm/pkg/db"
-    "torm/pkg/query"
+    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/pkg/query"
 )
 
 func main() {
@@ -276,8 +276,8 @@ package main
 
 import (
     "log"
-    "torm/pkg/db"
-    "torm/pkg/query"
+    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/pkg/query"
 )
 
 func main() {
@@ -379,7 +379,7 @@ import (
     "log"
     "time"
     
-    "torm/pkg/db"
+    "github.com/zhoudm1743/torm/pkg/db"
 )
 
 func main() {
@@ -430,7 +430,7 @@ import (
     "log"
     "time"
     
-    "torm/pkg/db"
+    "github.com/zhoudm1743/torm/pkg/db"
 )
 
 func main() {
@@ -500,7 +500,7 @@ import (
     "log"
     "time"
     
-    "torm/pkg/db"
+    "github.com/zhoudm1743/torm/pkg/db"
 )
 
 func advancedQueryExamples() {
@@ -577,7 +577,7 @@ import (
     "log"
     "time"
     
-    "torm/pkg/db"
+    "github.com/zhoudm1743/torm/pkg/db"
 )
 
 func batchOperationsExample() {
@@ -650,7 +650,7 @@ import (
     "log"
     "time"
     
-    "torm/pkg/db"
+    "github.com/zhoudm1743/torm/pkg/db"
 )
 
 func transactionExample() {
@@ -775,7 +775,7 @@ import (
     "log"
     "time"
     
-    "torm/pkg/db"
+    "github.com/zhoudm1743/torm/pkg/db"
 )
 
 func timeoutControlExample() {
@@ -856,8 +856,8 @@ import (
     "context"
     "log"
     
-    "torm/pkg/db"
-    "torm/pkg/migration"
+    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/pkg/migration"
 )
 
 func main() {
@@ -1006,7 +1006,7 @@ import (
     "context"
     "log"
     
-    "torm/pkg/db"
+    "github.com/zhoudm1743/torm/pkg/db"
 )
 
 func main() {
@@ -1091,7 +1091,7 @@ import (
     "time"
     
     "go.mongodb.org/mongo-driver/bson"
-    "torm/pkg/db"
+    "github.com/zhoudm1743/torm/pkg/db"
 )
 
 func main() {
@@ -1253,7 +1253,7 @@ import (
     "log"
     "time"
     
-    "torm/pkg/db"
+    "github.com/zhoudm1743/torm/pkg/db"
 )
 
 type User struct {

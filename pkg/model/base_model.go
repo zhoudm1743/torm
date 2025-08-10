@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"torm/pkg/db"
+	"github.com/zhoudm1743/torm/pkg/db"
 )
 
 // BaseModel 基础模型

@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"torm/pkg/db"
+	"github.com/zhoudm1743/torm/pkg/db"
 )
 
 // CacheItem 缓存项

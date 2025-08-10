@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"torm/pkg/db"
+	"github.com/zhoudm1743/torm/pkg/db"
 )
 
 // ColumnType 列类型
