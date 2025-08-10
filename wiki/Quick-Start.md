@@ -1,6 +1,6 @@
 # 快速开始指南
 
-欢迎使用TORM v1.1.0！这个指南将在5分钟内让你体验TORM的现代化ORM功能，包括最新的关联预加载、分页器和JSON查询等高级特性。
+欢迎使用TORM v1.1.0！这个指南将在5分钟内让你体验TORM的强大功能，包括最新的First/Find增强、自定义主键、复合主键等特性。
 
 ## 📋 前置要求
 
@@ -21,24 +21,19 @@ go get github.com/zhoudm1743/torm
 
 ## 🔧 第2步：创建现代化示例
 
-创建 `main.go` 文件：
+### 创建模型文件 `models/user.go`
 
 ```go
-package main
+package models
 
 import (
-    "fmt"
-    "log"
     "time"
-    
-    "github.com/zhoudm1743/torm/pkg/db"
-    "github.com/zhoudm1743/torm/pkg/migration"
     "github.com/zhoudm1743/torm/pkg/model"
 )
 
-// User 用户模型
+// User 默认主键模型
 type User struct {
-    *model.BaseModel
+    model.BaseModel
     ID        interface{} `json:"id" db:"id"`
     Name      string      `json:"name" db:"name"`
     Email     string      `json:"email" db:"email"`
@@ -48,255 +43,200 @@ type User struct {
     UpdatedAt time.Time   `json:"updated_at" db:"updated_at"`
 }
 
-// NewUser 创建新用户实例
+// UserWithUUID 使用UUID作为主键的用户模型
+type UserWithUUID struct {
+    model.BaseModel
+    UUID      string    `json:"uuid" db:"uuid" primary:"true"`  // 自定义UUID主键
+    Name      string    `json:"name" db:"name"`
+    Email     string    `json:"email" db:"email"`
+    CreatedAt time.Time `json:"created_at" db:"created_at"`
+    UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
+}
+
+// UserWithCompositePK 使用复合主键的用户模型
+type UserWithCompositePK struct {
+    model.BaseModel
+    TenantID  string    `json:"tenant_id" db:"tenant_id" primary:"true"`   // 复合主键1
+    UserID    string    `json:"user_id" db:"user_id" primary:"true"`       // 复合主键2
+    Name      string    `json:"name" db:"name"`
+    Email     string    `json:"email" db:"email"`
+    CreatedAt time.Time `json:"created_at" db:"created_at"`
+    UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
+}
+
+// NewUser 创建用户模型
 func NewUser() *User {
     user := &User{
-        BaseModel: model.NewBaseModel(),
-        Status:    "active",
+        BaseModel: *model.NewBaseModel(),
     }
     user.SetTable("users")
-    user.SetPrimaryKey("id")
     user.SetConnection("default")
     return user
 }
 
-func main() {
-    // 配置数据库连接（使用SQLite，无需额外设置）
-    config := &db.Config{
-        Driver:   "sqlite",
-        Database: "example.db",
+// NewUserWithUUID 创建UUID主键的用户模型
+func NewUserWithUUID() *UserWithUUID {
+    user := &UserWithUUID{
+        BaseModel: *model.NewBaseModel(),
     }
-
-    // 添加连接
-    err := db.AddConnection("default", config)
-    if err != nil {
-        log.Fatal("连接数据库失败:", err)
-    }
-
-    // 获取连接
-    conn, err := db.DB("default")
-    if err != nil {
-        log.Fatal("获取连接失败:", err)
-    }
-
-    // 连接数据库
-    err = conn.Connect()
-    if err != nil {
-        log.Fatal("连接数据库失败:", err)
-    }
-    defer conn.Close()
-
-    fmt.Println("🎉 数据库连接成功！")
-
-    // 使用迁移系统创建表
-    setupDatabase(conn)
-
-    // 演示现代化查询构建器
-    demonstrateQueryBuilder()
-
-    // 演示模型操作
-    demonstrateModelOperations()
-
-    // 演示事务
-    demonstrateTransactions()
-
-    fmt.Println("✅ 所有示例执行完成！")
+    user.SetTable("users_uuid")
+    user.SetConnection("default")
+    // 自动检测主键标签
+    user.DetectPrimaryKeysFromStruct(user)
+    return user
 }
 
-// setupDatabase 使用迁移系统设置数据库
-func setupDatabase(conn db.ConnectionInterface) {
-    fmt.Println("📊 设置数据库表结构...")
-    
-    migrator := migration.NewMigrator(conn, nil)
-    
-    // 注册用户表迁移
-    migrator.RegisterFunc("20240101_000001", "创建用户表", func(conn db.ConnectionInterface) error {
-        _, err := conn.Exec(`
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                email TEXT UNIQUE NOT NULL,
-                age INTEGER DEFAULT 0,
-                status TEXT DEFAULT 'active',
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        `)
-        return err
-    }, func(conn db.ConnectionInterface) error {
-        _, err := conn.Exec("DROP TABLE IF EXISTS users")
-        return err
-    })
-
-    // 执行迁移
-    err := migrator.Up()
-    if err != nil {
-        log.Fatal("迁移失败:", err)
+// NewUserWithCompositePK 创建复合主键的用户模型
+func NewUserWithCompositePK() *UserWithCompositePK {
+    user := &UserWithCompositePK{
+        BaseModel: *model.NewBaseModel(),
     }
-    
-    fmt.Println("✅ 数据库表创建完成")
-}
-
-// demonstrateQueryBuilder 演示查询构建器功能
-func demonstrateQueryBuilder() {
-    fmt.Println("🔍 演示查询构建器...")
-
-    // 获取查询构建器
-    userQuery, err := db.Table("users")
-    if err != nil {
-        log.Fatal("创建查询失败:", err)
-    }
-
-    // 1. 插入数据
-    fmt.Println("📝 插入用户数据...")
-    userID, err := userQuery.Insert(map[string]interface{}{
-        "name":   "张三",
-        "email":  "zhangsan@example.com",
-        "age":    28,
-        "status": "active",
-    })
-    if err != nil {
-        log.Fatal("插入失败:", err)
-    }
-    fmt.Printf("✅ 插入成功，用户ID: %v\n", userID)
-
-    // 2. 批量插入
-    fmt.Println("📝 批量插入用户数据...")
-    users := []map[string]interface{}{
-        {"name": "李四", "email": "lisi@example.com", "age": 25, "status": "active"},
-        {"name": "王五", "email": "wangwu@example.com", "age": 30, "status": "inactive"},
-        {"name": "赵六", "email": "zhaoliu@example.com", "age": 35, "status": "active"},
-    }
-    _, err = userQuery.InsertBatch(users)
-    if err != nil {
-        log.Fatal("批量插入失败:", err)
-    }
-    fmt.Println("✅ 批量插入成功")
-
-    // 3. 查询数据
-    fmt.Println("🔍 查询活跃用户...")
-    activeUsers, err := userQuery.
-        Where("status", "=", "active").
-        Where("age", ">=", 25).
-        OrderBy("age", "desc").
-        Get()
-    if err != nil {
-        log.Fatal("查询失败:", err)
-    }
-    fmt.Printf("✅ 找到 %d 个活跃用户\n", len(activeUsers))
-
-    // 4. 计数查询
-    totalCount, err := userQuery.Count()
-    if err != nil {
-        log.Fatal("计数失败:", err)
-    }
-    fmt.Printf("✅ 总用户数: %d\n", totalCount)
-
-    // 5. 更新数据
-    affected, err := userQuery.
-        Where("email", "=", "wangwu@example.com").
-        Update(map[string]interface{}{
-            "status": "active",
-        })
-    if err != nil {
-        log.Fatal("更新失败:", err)
-    }
-    fmt.Printf("✅ 更新了 %d 条记录\n", affected)
-}
-
-// demonstrateModelOperations 演示模型操作
-func demonstrateModelOperations() {
-    fmt.Println("👤 演示模型操作...")
-
-    // 创建新用户
-    user := NewUser()
-    user.Name = "模型用户"
-    user.Email = "model@example.com"
-    user.Age = 32
-
-    // 保存用户（会自动决定是插入还是更新）
-    err := user.Save()
-    if err != nil {
-        log.Fatal("保存用户失败:", err)
-    }
-    fmt.Printf("✅ 用户保存成功，ID: %v\n", user.ID)
-
-    // 根据ID查找用户
-    foundUser := NewUser()
-    err = foundUser.Find(user.ID)
-    if err != nil {
-        log.Fatal("查找用户失败:", err)
-    }
-    fmt.Printf("✅ 找到用户: %s (%s)\n", foundUser.Name, foundUser.Email)
-
-    // 更新用户
-    foundUser.Age = 33
-    err = foundUser.Save()
-    if err != nil {
-        log.Fatal("更新用户失败:", err)
-    }
-    fmt.Println("✅ 用户更新成功")
-}
-
-// demonstrateTransactions 演示事务功能
-func demonstrateTransactions() {
-    fmt.Println("💳 演示事务功能...")
-
-    // 事务成功案例
-    err := db.Transaction(func(tx db.TransactionInterface) error {
-        // 在事务中插入用户
-        result, err := tx.Exec(`
-            INSERT INTO users (name, email, age, status) 
-            VALUES (?, ?, ?, ?)
-        `, "事务用户", "transaction@example.com", 25, "active")
-        if err != nil {
-            return err
-        }
-
-        userID, _ := result.LastInsertId()
-        fmt.Printf("✅ 事务中创建用户，ID: %v\n", userID)
-        
-        return nil
-    })
-    if err != nil {
-        log.Fatal("事务失败:", err)
-    }
-    fmt.Println("✅ 事务提交成功")
+    user.SetTable("users_composite")
+    user.SetConnection("default")
+    // 自动检测主键标签
+    user.DetectPrimaryKeysFromStruct(user)
+    return user
 }
 ```
 
-## 📖 第3步：运行示例
+### 创建主文件 `main.go`
+
+```go
+package main
+
+import (
+    "examples/models"
+    "log"
+    
+    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/pkg/model"
+)
+
+func main() {
+    // 配置数据库连接
+    conf := &db.Config{
+        Driver:   "mysql",
+        Host:     "localhost",
+        Port:     3306,
+        Username: "root",
+        Password: "123456",
+        Database: "orm",
+    }
+    err := db.AddConnection("default", conf)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // ===== First和Find新功能演示 =====
+    log.Println("===== First和Find新功能演示 =====")
+    
+    // First方法 - 只填充当前模型
+    user1 := models.NewUser()
+    _, err = user1.Where("id", "=", 1).First()
+    if err != nil {
+        log.Printf("查询失败: %v", err)
+    } else {
+        log.Printf("First结果: Name=%s, Age=%d", user1.Name, user1.Age)
+    }
+
+    // First方法 - 同时填充传入的指针
+    user2 := models.NewUser()
+    var anotherUser models.User
+    _, err = user2.Where("id", "=", 2).First(&anotherUser)
+    if err != nil {
+        log.Printf("查询失败: %v", err)
+    } else {
+        log.Printf("First + 指针填充: 当前=%s, 指针=%s", user2.Name, anotherUser.Name)
+    }
+
+    // Find方法 - 同时填充传入的指针
+    user3 := models.NewUser()
+    var targetUser models.User
+    _, err = user3.Find(1, &targetUser)
+    if err != nil {
+        log.Printf("Find失败: %v", err)
+    } else {
+        log.Printf("Find + 指针填充: 当前=%s, 指针=%s", user3.Name, targetUser.Name)
+    }
+
+    // ===== db包First和Find方法演示 =====
+    log.Println("\n===== db包First和Find方法演示 =====")
+    
+    // db.Table().First() 
+    query1, err := db.Table("users", "default")
+    if err == nil {
+        dbResult1, err := query1.Where("id", "=", 1).First()
+        if err == nil {
+            log.Printf("db.First() 结果: %s", dbResult1["name"])
+        }
+    }
+
+    // db.Table().First(&model)
+    query2, err := db.Table("users", "default")
+    if err == nil {
+        var userStruct models.User
+        _, err := query2.Where("id", "=", 1).First(&userStruct)
+        if err == nil {
+            log.Printf("db.First(&model) 结果: Name=%s", userStruct.Name)
+        }
+    }
+
+    // ===== 自定义主键功能演示 =====
+    log.Println("\n===== 自定义主键功能演示 =====")
+    
+    // 默认主键
+    user4 := models.NewUser()
+    log.Printf("默认主键: %v", user4.PrimaryKeys())
+
+    // UUID主键
+    userUUID := models.NewUserWithUUID()
+    userUUID.UUID = "550e8400-e29b-41d4-a716-446655440000"
+    userUUID.SetAttribute("uuid", userUUID.UUID)
+    log.Printf("UUID主键: %v, 值: %v", userUUID.PrimaryKeys(), userUUID.GetKey())
+
+    // 复合主键
+    userComposite := models.NewUserWithCompositePK()
+    userComposite.SetAttribute("tenant_id", "tenant-001")
+    userComposite.SetAttribute("user_id", "user-001")
+    log.Printf("复合主键: %v, 值: %v", userComposite.PrimaryKeys(), userComposite.GetKey())
+
+    // 手动设置主键
+    user5 := models.NewUser()
+    user5.SetPrimaryKeys([]string{"tenant_id", "user_code"})
+    log.Printf("手动设置复合主键: %v", user5.PrimaryKeys())
+
+    log.Println("\n===== 演示完成 =====")
+}
+```
+
+## 🎯 第3步：运行代码
 
 ```bash
-# 运行示例
 go run main.go
 ```
 
-预期输出：
+你将看到类似输出：
+
 ```
-🎉 数据库连接成功！
-📊 设置数据库表结构...
-✅ 数据库表创建完成
-🔍 演示查询构建器...
-📝 插入用户数据...
-✅ 插入成功，用户ID: 1
-📝 批量插入用户数据...
-✅ 批量插入成功
-🔍 查询活跃用户...
-✅ 找到 3 个活跃用户
-✅ 总用户数: 4
-✅ 更新了 1 条记录
-👤 演示模型操作...
-✅ 用户保存成功，ID: 5
-✅ 找到用户: 模型用户 (model@example.com)
-✅ 用户更新成功
-💳 演示事务功能...
-✅ 事务中创建用户，ID: 6
-✅ 事务提交成功
-✅ 所有示例执行完成！
+===== First和Find新功能演示 =====
+First结果: Name=关联测试用户, Age=30
+First + 指针填充: 当前=关联测试用户, 指针=关联测试用户
+Find + 指针填充: 当前=关联测试用户, 指针=关联测试用户
+
+===== db包First和Find方法演示 =====
+db.First() 结果: 关联测试用户
+db.First(&model) 结果: Name=关联测试用户
+
+===== 自定义主键功能演示 =====
+默认主键: [id]
+UUID主键: [uuid], 值: 550e8400-e29b-41d4-a716-446655440000
+复合主键: [tenant_id user_id], 值: map[tenant_id:tenant-001 user_id:user-001]
+手动设置复合主键: [tenant_id user_code]
+
+===== 演示完成 =====
 ```
 
-## 🎯 核心特性亮点
+## ✨ 核心特性展示
 
 ### 1. 🚫 无Context依赖
 ```go
@@ -469,90 +409,3 @@ users, err := query.WithContext(ctx).Get()
        WithTimeout(30*time.Second).
        Get()
    ```
-
-### 🎯 重构带来的优势
-
-1. **简洁性**：移除了90%情况下不需要的context参数
-2. **一致性**：所有API都遵循相同的调用模式
-3. **向后兼容**：通过WithContext()支持需要context的场景
-4. **现代化**：符合现代Go ORM的最佳实践
-5. **易用性**：降低了学习和使用门槛
-
-### 🚨 注意事项
-
-- 默认情况下，操作使用 `context.Background()`
-- MongoDB驱动由于其特性仍然内部使用context，但对外API已简化
-- 在高并发场景下，建议使用 `WithTimeout()` 避免无限等待
-- 事务会自动处理commit/rollback，无需手动管理
-
-## 🌟 体验v1.1.0新功能
-
-### 关联预加载 (解决N+1查询问题)
-
-```go
-// 获取用户数据
-users := []interface{}{user1, user2, user3} // 你的用户模型实例
-
-// 预加载关联数据
-collection := model.NewModelCollection(users)
-collection.With("profile", "posts")
-err := collection.Load(context.Background())
-
-// 现在访问关联数据不会产生额外查询
-for _, userInterface := range collection.Models() {
-    if u, ok := userInterface.(*User); ok {
-        profile := u.GetRelation("profile") // 无需查询数据库
-        posts := u.GetRelation("posts")     // 无需查询数据库
-    }
-}
-```
-
-### 分页功能
-
-```go
-// 简单分页
-result, err := userQuery.Paginate(1, 10) // 第1页，每页10条
-
-// 高级分页器
-paginator := paginator.NewQueryPaginator(userQuery, ctx)
-paginationResult, err := paginator.SetPerPage(15).SetPage(2).Paginate()
-```
-
-### JSON字段查询
-
-```go
-// 创建高级查询构建器
-advQuery := query.NewAdvancedQueryBuilder(baseQuery)
-
-// JSON查询 (支持MySQL、PostgreSQL、SQLite)
-users := advQuery.
-    WhereJSON("profile", "$.age", ">", 25).
-    WhereJSONContains("skills", "$.languages", "Go").
-    Get()
-```
-
-### 高级查询功能
-
-```go
-// 子查询 - 查找有活跃项目的用户
-activeUsers := advQuery.WhereExists(func(q db.QueryInterface) db.QueryInterface {
-    return q.Where("projects.user_id", "=", "users.id").
-        Where("projects.status", "=", "active")
-})
-
-// 窗口函数 - 部门内排名
-ranking := advQuery.
-    WithRowNumber("rank", "department", "salary DESC").
-    WithAvgWindow("salary", "dept_avg", "department")
-```
-
----
-
-现在你可以享受更强大、更现代化的TORM v1.1.0体验了！ 🚀
-
-## 🔗 更多资源
-
-- [完整示例](Examples) - 查看详细的功能示例
-- [API文档](Configuration) - 深入了解配置选项
-- [故障排除](Troubleshooting) - 解决常见问题
-- [更新日志](Changelog) - 了解最新变更 

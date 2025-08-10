@@ -81,8 +81,8 @@ type QueryInterface interface {
 
 	// 执行查询
 	Get() ([]map[string]interface{}, error)
-	First() (map[string]interface{}, error)
-	Find(id interface{}) (map[string]interface{}, error)
+	First(dest ...interface{}) (map[string]interface{}, error)
+	Find(id interface{}, dest ...interface{}) (map[string]interface{}, error)
 	Count() (int64, error)
 	Exists() (bool, error)
 

@@ -4,9 +4,90 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 )
+
+// LoadModel 将map数据填充到指针指向的结构体
+func LoadModel(dest interface{}, result map[string]interface{}) error {
+	if result == nil {
+		return fmt.Errorf("no data to load")
+	}
+
+	// 使用反射填充目标模型
+	destValue := reflect.ValueOf(dest)
+	if destValue.Kind() != reflect.Ptr {
+		return fmt.Errorf("destination must be a pointer")
+	}
+
+	destValue = destValue.Elem()
+	destType := destValue.Type()
+
+	// 如果目标有BaseModel字段，通过SetAttribute方法设置属性
+	if baseModelField := destValue.FieldByName("BaseModel"); baseModelField.IsValid() {
+		// 尝试调用SetAttribute方法设置每个属性
+		setAttrMethod := baseModelField.Addr().MethodByName("SetAttribute")
+		if setAttrMethod.IsValid() {
+			for key, value := range result {
+				// 使用defer + recover避免因为未初始化而崩溃
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							// 忽略错误，继续处理其他字段
+						}
+					}()
+					setAttrMethod.Call([]reflect.Value{
+						reflect.ValueOf(key),
+						reflect.ValueOf(value),
+					})
+				}()
+			}
+		}
+	}
+
+	// 填充结构体字段
+	for i := 0; i < destType.NumField(); i++ {
+		field := destType.Field(i)
+
+		// 跳过BaseModel字段
+		if field.Name == "BaseModel" {
+			continue
+		}
+
+		dbTag := field.Tag.Get("db")
+		jsonTag := field.Tag.Get("json")
+
+		var fieldName string
+		if dbTag != "" && dbTag != "-" {
+			fieldName = dbTag
+		} else if jsonTag != "" && jsonTag != "-" {
+			fieldName = jsonTag
+		} else {
+			fieldName = strings.ToLower(field.Name)
+		}
+
+		if value, exists := result[fieldName]; exists && destValue.Field(i).CanSet() {
+			fieldValue := destValue.Field(i)
+			if fieldValue.Kind() == reflect.Ptr {
+				if value != nil {
+					// 为指针字段分配内存
+					newValue := reflect.New(fieldValue.Type().Elem())
+					if newValue.Elem().Type() == reflect.TypeOf(value) {
+						newValue.Elem().Set(reflect.ValueOf(value))
+						fieldValue.Set(newValue)
+					}
+				}
+			} else {
+				if value != nil && reflect.TypeOf(value).AssignableTo(fieldValue.Type()) {
+					fieldValue.Set(reflect.ValueOf(value))
+				}
+			}
+		}
+	}
+
+	return nil
+}
 
 // QueryBuilder 查询构造器
 type QueryBuilder struct {
@@ -329,35 +410,12 @@ func (q *QueryBuilder) Get() ([]map[string]interface{}, error) {
 	}
 	defer rows.Close()
 
-	columns, err := rows.Columns()
-	if err != nil {
-		return nil, err
-	}
-
-	var results []map[string]interface{}
-	for rows.Next() {
-		values := make([]interface{}, len(columns))
-		valuePtrs := make([]interface{}, len(columns))
-		for i := range values {
-			valuePtrs[i] = &values[i]
-		}
-
-		if err := rows.Scan(valuePtrs...); err != nil {
-			return nil, err
-		}
-
-		row := make(map[string]interface{})
-		for i, col := range columns {
-			row[col] = values[i]
-		}
-		results = append(results, row)
-	}
-
-	return results, rows.Err()
+	return q.scanRows(rows)
 }
 
 // First 执行查询并返回第一条记录
-func (q *QueryBuilder) First() (map[string]interface{}, error) {
+// 如果传入指针，也会填充到指针指向的对象
+func (q *QueryBuilder) First(dest ...interface{}) (map[string]interface{}, error) {
 	results, err := q.Limit(1).Get()
 	if err != nil {
 		return nil, err
@@ -365,12 +423,24 @@ func (q *QueryBuilder) First() (map[string]interface{}, error) {
 	if len(results) == 0 {
 		return nil, fmt.Errorf("no records found")
 	}
-	return results[0], nil
+
+	result := results[0]
+
+	// 如果传入了指针，填充到指针指向的对象
+	if len(dest) > 0 && dest[0] != nil {
+		err = LoadModel(dest[0], result)
+		if err != nil {
+			return result, fmt.Errorf("failed to load model: %w", err)
+		}
+	}
+
+	return result, nil
 }
 
 // Find 根据ID查找记录
-func (q *QueryBuilder) Find(id interface{}) (map[string]interface{}, error) {
-	return q.Where("id", "=", id).First()
+// 如果传入指针，也会填充到指针指向的对象
+func (q *QueryBuilder) Find(id interface{}, dest ...interface{}) (map[string]interface{}, error) {
+	return q.Where("id", "=", id).First(dest...)
 }
 
 // Count 获取记录数量
@@ -820,24 +890,44 @@ func (q *QueryBuilder) scanRows(rows *sql.Rows) ([]map[string]interface{}, error
 				continue
 			}
 
+			// 获取数据库类型名称（用于调试）
+			dbTypeName := columnTypes[i].DatabaseTypeName()
+
 			// 根据数据库类型转换值
-			switch columnTypes[i].DatabaseTypeName() {
-			case "VARCHAR", "TEXT", "CHAR":
+			switch dbTypeName {
+			case "VARCHAR", "TEXT", "CHAR", "MEDIUMTEXT", "LONGTEXT", "TINYTEXT",
+				"ENUM", "SET", "JSON", "BINARY", "VARBINARY":
+				// 文本类型：强制转换[]byte为string
 				if b, ok := val.([]byte); ok {
 					row[col] = string(b)
 				} else {
 					row[col] = val
 				}
-			case "INT", "INTEGER", "BIGINT":
+			case "INT", "INTEGER", "BIGINT", "TINYINT", "SMALLINT", "MEDIUMINT",
+				"UNSIGNED INT", "UNSIGNED BIGINT", "UNSIGNED TINYINT", "UNSIGNED SMALLINT", "UNSIGNED MEDIUMINT":
+				// 整数类型：保持原样
 				row[col] = val
-			case "FLOAT", "DOUBLE", "DECIMAL":
+			case "FLOAT", "DOUBLE", "DECIMAL", "NUMERIC":
+				// 浮点类型：保持原样
 				row[col] = val
-			case "BOOLEAN", "BOOL":
+			case "BOOLEAN", "BOOL", "BIT":
+				// 布尔类型：保持原样
 				row[col] = val
-			case "TIMESTAMP", "DATETIME", "DATE", "TIME":
-				row[col] = val
+			case "TIMESTAMP", "DATETIME", "DATE", "TIME", "YEAR":
+				// 日期时间类型：可能需要转换[]byte
+				if b, ok := val.([]byte); ok {
+					row[col] = string(b)
+				} else {
+					row[col] = val
+				}
 			default:
-				row[col] = val
+				// 默认情况下，如果是[]byte类型，尝试转换为字符串
+				// 这是一个安全的后备方案，适用于未明确处理的类型
+				if b, ok := val.([]byte); ok {
+					row[col] = string(b)
+				} else {
+					row[col] = val
+				}
 			}
 		}
 

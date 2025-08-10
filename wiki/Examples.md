@@ -2,7 +2,202 @@
 
 本文档提供了TORM现代化ORM的完整使用示例，涵盖了从基础操作到高级功能的各种场景。
 
-## 🌟 v1.1.0 新功能示例
+## 🚀 v1.1.0 最新特性
+
+### 🔍 First/Find 增强功能
+
+新的 First 和 Find 方法支持同时填充当前模型和传入的指针，并返回原始 map 数据：
+
+```go
+package main
+
+import (
+    "log"
+    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/examples/models"
+)
+
+func main() {
+    // 配置数据库
+    conf := &db.Config{
+        Driver:   "mysql",
+        Host:     "localhost",
+        Port:     3306,
+        Username: "root",
+        Password: "123456",
+        Database: "orm",
+    }
+    db.AddConnection("default", conf)
+
+    // First方法 - 只填充当前模型
+    user1 := models.NewUser()
+    result1, err := user1.Where("id", "=", 1).First()
+    if err != nil {
+        log.Printf("查询失败: %v", err)
+    } else {
+        log.Printf("当前模型: Name=%s, Age=%d", user1.Name, user1.Age)
+        log.Printf("返回数据: %+v", result1)
+    }
+
+    // First方法 - 同时填充传入的指针
+    user2 := models.NewUser()
+    var anotherUser models.User
+    result2, err := user2.Where("id", "=", 2).First(&anotherUser)
+    if err != nil {
+        log.Printf("查询失败: %v", err)
+    } else {
+        log.Printf("当前模型: %s", user2.Name)
+        log.Printf("传入指针: %s", anotherUser.Name)
+        log.Printf("返回数据: %+v", result2)
+    }
+
+    // Find方法 - 同时填充传入的指针  
+    user3 := models.NewUser()
+    var targetUser models.User
+    result3, err := user3.Find(1, &targetUser)
+    if err != nil {
+        log.Printf("查询失败: %v", err)
+    } else {
+        log.Printf("当前模型: %s", user3.Name)
+        log.Printf("传入指针: %s", targetUser.Name)
+        log.Printf("返回数据: %+v", result3)
+    }
+}
+```
+
+### 🔑 自定义主键和复合主键
+
+TORM 现在支持灵活的主键配置，包括 UUID、复合主键等：
+
+```go
+package main
+
+import (
+    "time"
+    "github.com/zhoudm1743/torm/pkg/model"
+)
+
+// 默认主键模型
+type User struct {
+    model.BaseModel
+    ID        interface{} `json:"id" db:"id"`
+    Name      string      `json:"name" db:"name"`
+    Email     string      `json:"email" db:"email"`
+    CreatedAt time.Time   `json:"created_at" db:"created_at"`
+}
+
+// UUID主键模型
+type Product struct {
+    model.BaseModel
+    UUID        string  `json:"uuid" db:"uuid" primary:"true"`    // UUID主键
+    Name        string  `json:"name" db:"name"`
+    Price       float64 `json:"price" db:"price"`
+    CreatedAt   time.Time `json:"created_at" db:"created_at"`
+}
+
+// 复合主键模型（多租户场景）
+type UserRole struct {
+    model.BaseModel
+    TenantID string `json:"tenant_id" db:"tenant_id" primary:"true"`  // 复合主键1
+    UserID   string `json:"user_id" db:"user_id" primary:"true"`      // 复合主键2
+    Role     string `json:"role" db:"role"`
+    CreatedAt time.Time `json:"created_at" db:"created_at"`
+}
+
+func NewUser() *User {
+    user := &User{BaseModel: *model.NewBaseModel()}
+    user.SetTable("users")
+    return user
+}
+
+func NewProduct() *Product {
+    product := &Product{BaseModel: *model.NewBaseModel()}
+    product.SetTable("products")
+    // 自动检测主键标签
+    product.DetectPrimaryKeysFromStruct(product)
+    return product
+}
+
+func NewUserRole() *UserRole {
+    userRole := &UserRole{BaseModel: *model.NewBaseModel()}
+    userRole.SetTable("user_roles")
+    // 自动检测复合主键标签
+    userRole.DetectPrimaryKeysFromStruct(userRole)
+    return userRole
+}
+
+func demonstratePrimaryKeys() {
+    // 默认主键
+    user := NewUser()
+    log.Printf("默认主键: %v", user.PrimaryKeys())
+
+    // UUID主键
+    product := NewProduct()
+    product.UUID = "550e8400-e29b-41d4-a716-446655440000"
+    product.SetAttribute("uuid", product.UUID)
+    log.Printf("UUID主键: %v, 值: %v", product.PrimaryKeys(), product.GetKey())
+
+    // 复合主键
+    userRole := NewUserRole()
+    userRole.SetAttribute("tenant_id", "tenant-001")
+    userRole.SetAttribute("user_id", "user-001")
+    log.Printf("复合主键: %v, 值: %v", userRole.PrimaryKeys(), userRole.GetKey())
+
+    // 手动设置主键
+    customUser := NewUser()
+    customUser.SetPrimaryKeys([]string{"tenant_id", "user_code"})
+    log.Printf("手动设置复合主键: %v", customUser.PrimaryKeys())
+}
+```
+
+### 📊 db包增强功能
+
+底层db包的 First 和 Find 方法也支持了指针填充：
+
+```go
+package main
+
+import (
+    "log"
+    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/examples/models"
+)
+
+func demonstrateDBPackage() {
+    // db.Table().First() - 只返回map
+    query1, err := db.Table("users", "default")
+    if err == nil {
+        result1, err := query1.Where("id", "=", 1).First()
+        if err == nil {
+            log.Printf("db.First() 结果: %s", result1["name"])
+        }
+    }
+
+    // db.Table().First(&model) - 填充指针 + 返回map
+    query2, err := db.Table("users", "default")
+    if err == nil {
+        var user models.User
+        result2, err := query2.Where("id", "=", 1).First(&user)
+        if err == nil {
+            log.Printf("填充的模型: Name=%s", user.Name)
+            log.Printf("返回的map: %+v", result2)
+        }
+    }
+
+    // db.Table().Find(&model) - 同样支持指针填充
+    query3, err := db.Table("users", "default")
+    if err == nil {
+        var user models.User
+        result3, err := query3.Find(1, &user)
+        if err == nil {
+            log.Printf("Find填充的模型: Name=%s", user.Name)
+            log.Printf("Find返回的map: %+v", result3)
+        }
+    }
+}
+```
+
+## 🌟 v1.1.0 其他新功能示例
 
 ### 🔗 关联预加载 (Eager Loading)
 
