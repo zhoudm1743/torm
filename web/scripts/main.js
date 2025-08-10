@@ -287,54 +287,7 @@ function throttle(func, limit) {
     }
 }
 
-// 响应式菜单样式
-const responsiveStyles = `
-    @media (max-width: 768px) {
-        .nav-menu {
-            position: fixed;
-            top: 4rem;
-            left: 0;
-            right: 0;
-            background: var(--glass-backdrop);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border-bottom: 1px solid var(--glass-border);
-            padding: 2rem 1.5rem;
-            flex-direction: column;
-            gap: 1.5rem;
-            transform: translateY(-100%);
-            opacity: 0;
-            transition: all 0.3s ease;
-            z-index: 999;
-        }
-        
-        .nav-menu.active {
-            transform: translateY(0);
-            opacity: 1;
-        }
-        
-        .nav-toggle.active span:nth-child(1) {
-            transform: rotate(45deg) translate(5px, 5px);
-        }
-        
-        .nav-toggle.active span:nth-child(2) {
-            opacity: 0;
-        }
-        
-        .nav-toggle.active span:nth-child(3) {
-            transform: rotate(-45deg) translate(7px, -6px);
-        }
-        
-        .language-selector {
-            margin-top: 1rem;
-        }
-    }
-`;
-
-// 动态添加响应式样式
-const mainStyleSheet = document.createElement('style');
-mainStyleSheet.textContent = responsiveStyles;
-document.head.appendChild(mainStyleSheet);
+// 响应式样式已移至main.css文件中，无需动态添加
 
 // GitHub统计获取（可选功能）
 async function fetchGitHubStats() {
