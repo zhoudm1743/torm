@@ -139,7 +139,6 @@ import (
     "log"
     
     "github.com/zhoudm1743/torm/pkg/db"
-    "github.com/zhoudm1743/torm/pkg/model"
 )
 
 func main() {
@@ -157,7 +156,33 @@ func main() {
         log.Fatal(err)
     }
 
+    // ===== 查询构建器演示 =====
+    log.Println("===== 查询构建器演示 =====")
+
+    // 基础查询
+    query, err := db.Table("users", "default")
+    if err == nil {
+        // 查询所有用户
+        users, err := query.Select("id", "name", "email", "age").
+            Where("status", "=", "active").
+            OrderBy("created_at", "desc").
+            Limit(5).
+            Get()
+        if err == nil {
+            log.Printf("查询到 %d 个活跃用户", len(users))
+        }
+
+        // 条件查询
+        adults, err := query.Where("age", ">=", 18).
+            Where("status", "=", "active").
+            Count()
+        if err == nil {
+            log.Printf("成年活跃用户数量: %d", adults)
+        }
+    }
+
     // ===== First和Find新功能演示 =====
+    log.Println("===== First和Find新功能演示 =====")
     
     // First方法 - 只填充当前模型
     user1 := models.NewUser()
@@ -189,6 +214,7 @@ func main() {
     }
 
     // ===== db包First和Find方法演示 =====
+    log.Println("===== db包First和Find方法演示 =====")
     
     // db.Table().First() 
     query1, err := db.Table("users", "default")
@@ -210,6 +236,7 @@ func main() {
     }
 
     // ===== 自定义主键功能演示 =====
+    log.Println("===== 自定义主键功能演示 =====")
     
     // 默认主键
     user4 := models.NewUser()
@@ -227,10 +254,26 @@ func main() {
     userComposite.SetAttribute("user_id", "user-001")
     log.Printf("复合主键: %v, 值: %v", userComposite.PrimaryKeys(), userComposite.GetKey())
 
-    // 手动设置主键
-    user5 := models.NewUser()
-    user5.SetPrimaryKeys([]string{"tenant_id", "user_code"})
-    log.Printf("手动设置复合主键: %v", user5.PrimaryKeys())
+    // ===== 高级查询功能演示 =====
+    log.Println("===== 高级查询功能演示 =====")
+
+    // 复杂条件查询
+    complexQuery, err := db.Table("users", "default")
+    if err == nil {
+        result, err := complexQuery.
+            Select("id", "name", "email").
+            Where("age", "BETWEEN", []interface{}{20, 40}).
+            WhereIn("status", []interface{}{"active", "pending"}).
+            OrderBy("age", "ASC").
+            OrderBy("name", "DESC").
+            Limit(10).
+            Get()
+        if err == nil {
+            log.Printf("复杂查询结果数量: %d", len(result))
+        }
+    }
+
+    log.Printf("演示完成")
 }</code></pre>
                     </div>
                     <div class="tab-content" id="migration">

@@ -14,7 +14,8 @@ TORM (Think ORM) 是一个功能强大、高性能的Go语言ORM框架，专为�
 
 - **🚀 高性能**: 优化的连接池管理和查询执行
 - **🔗 多数据库支持**: MySQL、PostgreSQL、SQLite、SQL Server、MongoDB
-- **🏗️ 强大的查询构建器**: 类型安全的SQL查询构建
+- **🏗️ 强大的查询构建器**: 类型安全的SQL查询构建，支持复杂条件和子查询
+- **📊 Active Record模式**: 模型内置查询方法，面向对象的数据库操作
 - **🔄 完整的关联关系**: HasOne、HasMany、BelongsTo、ManyToMany
 - **📦 数据迁移工具**: 版本化数据库结构管理
 - **⚡ 并发安全**: 内置连接池和并发控制

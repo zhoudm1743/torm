@@ -21,8 +21,33 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// 演示First和Find新功能
-	log.Println("===== First和Find新功能演示 =====")
+	// ===== 查询构建器演示 =====
+	log.Println("===== 查询构建器演示 =====")
+
+	// 基础查询
+	query, err := db.Table("users", "default")
+	if err == nil {
+		// 查询所有用户
+		users, err := query.Select("id", "name", "email", "age").
+			Where("status", "=", "active").
+			OrderBy("created_at", "desc").
+			Limit(5).
+			Get()
+		if err == nil {
+			log.Printf("查询到 %d 个活跃用户", len(users))
+		}
+
+		// 条件查询
+		adults, err := query.Where("age", ">=", 18).
+			Where("status", "=", "active").
+			Count()
+		if err == nil {
+			log.Printf("成年活跃用户数量: %d", adults)
+		}
+	}
+
+	// ===== First和Find新功能演示 =====
+	log.Println("\n===== First和Find新功能演示 =====")
 
 	// First方法 - 只填充当前模型
 	user1 := models.NewUser()
@@ -53,7 +78,7 @@ func main() {
 		log.Printf("Find + 指针填充: 当前=%s, 指针=%s", user3.Name, targetUser.Name)
 	}
 
-	// 演示db包的First和Find方法
+	// ===== db包First和Find方法演示 =====
 	log.Println("\n===== db包First和Find方法演示 =====")
 
 	// db.Table().First()
@@ -75,7 +100,7 @@ func main() {
 		}
 	}
 
-	// 演示自定义主键功能
+	// ===== 自定义主键功能演示 =====
 	log.Println("\n===== 自定义主键功能演示 =====")
 
 	// 默认主键
@@ -98,6 +123,34 @@ func main() {
 	user5 := models.NewUser()
 	user5.SetPrimaryKeys([]string{"tenant_id", "user_code"})
 	log.Printf("手动设置复合主键: %v", user5.PrimaryKeys())
+
+	// ===== 高级查询功能演示 =====
+	log.Println("\n===== 高级查询功能演示 =====")
+
+	// 复杂条件查询
+	complexQuery, err := db.Table("users", "default")
+	if err == nil {
+		result, err := complexQuery.
+			Select("id", "name", "email").
+			Where("age", "BETWEEN", []interface{}{20, 40}).
+			WhereIn("status", []interface{}{"active", "pending"}).
+			OrderBy("age", "ASC").
+			OrderBy("name", "DESC").
+			Limit(10).
+			Get()
+		if err == nil {
+			log.Printf("复杂查询结果数量: %d", len(result))
+		}
+	}
+
+	// 聚合查询
+	aggregateQuery, err := db.Table("users", "default")
+	if err == nil {
+		count, err := aggregateQuery.Where("status", "=", "active").Count()
+		if err == nil {
+			log.Printf("活跃用户总数: %d", count)
+		}
+	}
 
 	log.Println("\n===== 演示完成 =====")
 }

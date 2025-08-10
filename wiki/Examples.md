@@ -4,6 +4,119 @@
 
 ## 🚀 v1.1.0 最新特性
 
+### 🔍 查询构建器增强功能
+
+TORM 提供了强大的查询构建器，支持链式调用和复杂查询：
+
+```go
+package main
+
+import (
+    "log"
+    "github.com/zhoudm1743/torm/pkg/db"
+)
+
+func main() {
+    // 配置数据库
+    conf := &db.Config{
+        Driver:   "mysql",
+        Host:     "localhost",
+        Port:     3306,
+        Username: "root",
+        Password: "123456",
+        Database: "orm",
+    }
+    db.AddConnection("default", conf)
+
+    // ===== 基础查询演示 =====
+    
+    // 创建查询构建器
+    query, err := db.Table("users", "default")
+    if err == nil {
+        // 简单查询
+        users, err := query.Select("id", "name", "email", "age").
+            Where("status", "=", "active").
+            OrderBy("created_at", "desc").
+            Limit(5).
+            Get()
+        if err == nil {
+            log.Printf("查询到 %d 个活跃用户", len(users))
+        }
+
+        // 条件统计
+        count, err := query.Where("age", ">=", 18).
+            Where("status", "=", "active").
+            Count()
+        if err == nil {
+            log.Printf("成年活跃用户数量: %d", count)
+        }
+    }
+
+    // ===== 高级查询演示 =====
+    
+    // 复杂条件查询
+    complexQuery, err := db.Table("users", "default")
+    if err == nil {
+        result, err := complexQuery.
+            Select("id", "name", "email").
+            Where("age", "BETWEEN", []interface{}{20, 40}).
+            WhereIn("status", []interface{}{"active", "pending"}).
+            OrderBy("age", "ASC").
+            OrderBy("name", "DESC").
+            Limit(10).
+            Get()
+        if err == nil {
+            log.Printf("复杂查询结果数量: %d", len(result))
+        }
+    }
+
+    // 聚合查询
+    aggregateQuery, err := db.Table("users", "default")
+    if err == nil {
+        // 统计数量
+        totalCount, _ := aggregateQuery.Count()
+        log.Printf("用户总数: %d", totalCount)
+        
+        // 求和
+        totalAge, _ := aggregateQuery.Sum("age")
+        log.Printf("年龄总和: %v", totalAge)
+        
+        // 平均值
+        avgAge, _ := aggregateQuery.Avg("age")
+        log.Printf("平均年龄: %v", avgAge)
+    }
+
+    // CRUD 操作
+    crudQuery, err := db.Table("users", "default")
+    if err == nil {
+        // 插入
+        userID, err := crudQuery.Insert(map[string]interface{}{
+            "name":   "新用户",
+            "email":  "newuser@example.com",
+            "age":    25,
+            "status": "active",
+        })
+        if err == nil {
+            log.Printf("新用户ID: %v", userID)
+        }
+
+        // 更新
+        affected, err := crudQuery.Where("id", "=", userID).
+            Update(map[string]interface{}{
+                "age": 26,
+            })
+        if err == nil {
+            log.Printf("更新了 %d 条记录", affected)
+        }
+
+        // 删除
+        deleted, err := crudQuery.Where("id", "=", userID).Delete()
+        if err == nil {
+            log.Printf("删除了 %d 条记录", deleted)
+        }
+    }
+}
+
 ### 🔍 First/Find 增强功能
 
 新的 First 和 Find 方法支持同时填充当前模型和传入的指针，并返回原始 map 数据：
