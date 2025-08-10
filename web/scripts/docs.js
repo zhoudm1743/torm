@@ -1,3 +1,6 @@
+// 确保TORM命名空间存在
+window.TORM = window.TORM || {};
+
 // 文档系统
 class DocsSystem {
     constructor() {
@@ -85,6 +88,16 @@ class DocsSystem {
                 this.toggleSidebar();
             });
         }
+        
+        // 文档导航点击事件
+        document.addEventListener('click', (e) => {
+            const docLink = e.target.closest('[data-doc]');
+            if (docLink) {
+                e.preventDefault();
+                const docName = docLink.getAttribute('data-doc');
+                this.loadDoc(docName);
+            }
+        });
         
         // 监听窗口大小变化
         window.addEventListener('resize', debounce(() => {
@@ -355,7 +368,7 @@ class DocsSystem {
             item.classList.remove('active');
         });
         
-        const activeItem = document.querySelector(`[onclick="loadDoc('${docName}')"]`);
+        const activeItem = document.querySelector(`[data-doc="${docName}"]`);
         if (activeItem) {
             activeItem.classList.add('active');
         }
@@ -415,30 +428,42 @@ function loadDoc(docName) {
     }
 }
 
-// 工具函数
-function debounce(func, wait) {
-    let timeout;
-    return function executedFunction(...args) {
-        const later = () => {
+// 添加到TORM命名空间
+TORM.loadDoc = loadDoc;
+window.loadDoc = loadDoc; // 保持向后兼容
+
+// 工具函数（如果已存在则不重复定义）
+if (typeof debounce === 'undefined') {
+    function debounce(func, wait) {
+        let timeout;
+        return function executedFunction(...args) {
+            const later = () => {
+                clearTimeout(timeout);
+                func(...args);
+            };
             clearTimeout(timeout);
-            func(...args);
+            timeout = setTimeout(later, wait);
         };
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
-    };
+    }
+    TORM.debounce = debounce;
+    window.debounce = debounce; // 保持向后兼容
 }
 
-function throttle(func, limit) {
-    let inThrottle;
-    return function() {
-        const args = arguments;
-        const context = this;
-        if (!inThrottle) {
-            func.apply(context, args);
-            inThrottle = true;
-            setTimeout(() => inThrottle = false, limit);
+if (typeof throttle === 'undefined') {
+    function throttle(func, limit) {
+        let inThrottle;
+        return function() {
+            const args = arguments;
+            const context = this;
+            if (!inThrottle) {
+                func.apply(context, args);
+                inThrottle = true;
+                setTimeout(() => inThrottle = false, limit);
+            }
         }
     }
+    TORM.throttle = throttle;
+    window.throttle = throttle; // 保持向后兼容
 }
 
 // 页面加载完成后初始化
@@ -573,6 +598,11 @@ const errorStyles = `
 `;
 
 // 动态添加样式
-const styleSheet = document.createElement('style');
-styleSheet.textContent = errorStyles;
-document.head.appendChild(styleSheet); 
+const docsStyleSheet = document.createElement('style');
+docsStyleSheet.textContent = errorStyles;
+document.head.appendChild(docsStyleSheet);
+
+// 标记脚本已加载
+if (window.TORM) {
+    TORM.markScriptLoaded('docs.js');
+} 

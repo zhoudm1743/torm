@@ -1,3 +1,6 @@
+// 创建TORM命名空间
+window.TORM = window.TORM || {};
+
 // 主要JavaScript功能
 document.addEventListener('DOMContentLoaded', function() {
     initNavigation();
@@ -53,12 +56,13 @@ function initNavigation() {
 // 标签切换功能
 function initTabSwitching() {
     const tabButtons = document.querySelectorAll('.tab-btn');
-    const tabContents = document.querySelectorAll('.tab-content');
     
     tabButtons.forEach(button => {
         button.addEventListener('click', function() {
-            const targetTab = this.getAttribute('onclick').match(/'(.+)'/)[1];
-            showTab(targetTab);
+            const targetTab = this.getAttribute('data-tab');
+            if (targetTab) {
+                showTab(targetTab);
+            }
         });
     });
 }
@@ -81,15 +85,19 @@ function showTab(tabName) {
     }
     
     // 激活对应按钮
-    const targetButton = document.querySelector(`[onclick="showTab('${tabName}')"]`);
+    const targetButton = document.querySelector(`[data-tab="${tabName}"]`);
     if (targetButton) {
         targetButton.classList.add('active');
     }
 }
 
+// 添加到TORM命名空间
+TORM.showTab = showTab;
+window.showTab = showTab; // 保持向后兼容
+
 // 复制功能
 function initCopyFunction() {
-    const copyButton = document.querySelector('.copy-btn');
+    const copyButton = document.getElementById('copy-install-btn');
     if (copyButton) {
         copyButton.addEventListener('click', copyInstallCommand);
     }
@@ -109,6 +117,10 @@ function copyInstallCommand() {
         fallbackCopy(command);
     }
 }
+
+// 添加到TORM命名空间
+TORM.copyInstallCommand = copyInstallCommand;
+window.copyInstallCommand = copyInstallCommand; // 保持向后兼容
 
 function fallbackCopy(text) {
     const textArea = document.createElement('textarea');
@@ -131,7 +143,9 @@ function fallbackCopy(text) {
 }
 
 function showCopyFeedback() {
-    const copyBtn = document.querySelector('.copy-btn');
+    const copyBtn = document.getElementById('copy-install-btn');
+    if (!copyBtn) return;
+    
     const originalText = copyBtn.textContent;
     
     copyBtn.textContent = '已复制!';
@@ -148,8 +162,14 @@ function initScrollEffects() {
     // 平滑滚动到锚点
     document.querySelectorAll('a[href^="#"]').forEach(anchor => {
         anchor.addEventListener('click', function (e) {
+            const href = this.getAttribute('href');
+            // 跳过空锚点或只有#的链接
+            if (!href || href === '#' || href.length <= 1) {
+                return;
+            }
+            
             e.preventDefault();
-            const target = document.querySelector(this.getAttribute('href'));
+            const target = document.querySelector(href);
             if (target) {
                 target.scrollIntoView({
                     behavior: 'smooth',
@@ -312,9 +332,9 @@ const responsiveStyles = `
 `;
 
 // 动态添加响应式样式
-const styleSheet = document.createElement('style');
-styleSheet.textContent = responsiveStyles;
-document.head.appendChild(styleSheet);
+const mainStyleSheet = document.createElement('style');
+mainStyleSheet.textContent = responsiveStyles;
+document.head.appendChild(mainStyleSheet);
 
 // GitHub统计获取（可选功能）
 async function fetchGitHubStats() {
@@ -365,4 +385,9 @@ document.addEventListener('keydown', function(e) {
 // 性能优化：节流滚动事件
 window.addEventListener('scroll', throttle(function() {
     // 滚动相关的性能敏感操作
-}, 16)); // 约60fps 
+}, 16)); // 约60fps
+
+// 标记脚本已加载
+if (window.TORM) {
+    TORM.markScriptLoaded('main.js');
+} 

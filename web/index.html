@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TORM - Go语言的优雅ORM库</title>
+    <link rel="icon" href="assets/logo.svg" type="image/x-icon">
     <link rel="stylesheet" href="styles/main.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -51,7 +52,7 @@
                     </h1>
                     <div class="hero-install">
                         <code class="install-command">go get -u github.com/zhoudm1743/torm</code>
-                        <button class="copy-btn" onclick="copyInstallCommand()">复制</button>
+                        <button class="copy-btn" id="copy-install-btn">复制</button>
                     </div>
                     <div class="hero-stats">
                         <div class="stat-item">
@@ -125,9 +126,9 @@
             <div class="container">
                 <h2 class="section-title">快速上手</h2>
                 <div class="demo-tabs">
-                    <button class="tab-btn active" onclick="showTab('basic')">基础操作</button>
-                    <button class="tab-btn" onclick="showTab('migration')">数据迁移</button>
-                    <button class="tab-btn" onclick="showTab('transaction')">事务处理</button>
+                    <button class="tab-btn active" data-tab="basic">基础操作</button>
+                    <button class="tab-btn" data-tab="migration">数据迁移</button>
+                    <button class="tab-btn" data-tab="transaction">事务处理</button>
                 </div>
                 <div class="demo-content">
                     <div class="tab-content active" id="basic">
@@ -135,24 +136,17 @@
 
 import (
     "context"
+    "fmt"
     "log"
     "torm/pkg/db"
+    "torm/pkg/model"
 )
 
-type User struct {
-    ID    int64  `db:"id" json:"id"`
-    Name  string `db:"name" json:"name"`
-    Email string `db:"email" json:"email"`
-}
-
 func main() {
+    // 配置数据库（SQLite最简单）
     config := &db.Config{
-        Driver:   "mysql",
-        Host:     "localhost",
-        Port:     3306,
-        Database: "blog",
-        Username: "root",
-        Password: "password",
+        Driver:   "sqlite",
+        Database: "example.db",
     }
     
     err := db.AddConnection("default", config)
@@ -160,21 +154,27 @@ func main() {
         log.Fatal(err)
     }
     
-    conn, _ := db.DB("default")
     ctx := context.Background()
     
     // 创建用户
-    _, err = conn.Exec(ctx, 
-        "INSERT INTO users (name, email) VALUES (?, ?)", 
-        "张三", "zhangsan@example.com")
+    user := model.NewUser()
+    user.SetName("张三").SetEmail("zhangsan@example.com").SetAge(25)
+    user.Save(ctx)
+    fmt.Printf("✅ 用户创建成功! ID: %v\n", user.GetID())
     
-    // 查询用户
-    row := conn.QueryRow(ctx, 
-        "SELECT id, name, email FROM users WHERE email = ?", 
-        "zhangsan@example.com")
+    // 查找用户
+    foundUser := model.NewUser()
+    foundUser.Find(ctx, user.GetID())
+    fmt.Printf("找到用户: %s (%s)\n", foundUser.GetName(), foundUser.GetEmail())
     
-    var user User
-    row.Scan(&user.ID, &user.Name, &user.Email)
+    // 更新用户
+    foundUser.SetAge(26)
+    foundUser.Save(ctx)
+    fmt.Println("✅ 用户更新成功!")
+    
+    // 删除用户
+    foundUser.Delete(ctx)
+    fmt.Println("✅ 用户删除成功!")
 }</code></pre>
                     </div>
                     <div class="tab-content" id="migration">
@@ -182,13 +182,17 @@ func main() {
 
 import (
     "context"
+    "fmt"
+    "torm/pkg/db"
     "torm/pkg/migration"
 )
 
 func main() {
+    // 获取数据库连接
+    conn, _ := db.DB("default")
     migrator := migration.NewMigrator(conn, nil)
     
-    // 注册迁移
+    // 注册迁移 - 创建用户表
     migrator.RegisterFunc(
         "20240101_000001",
         "创建用户表",
@@ -198,19 +202,14 @@ func main() {
             table := &migration.Table{
                 Name: "users",
                 Columns: []*migration.Column{
-                    {
-                        Name:          "id",
-                        Type:          migration.ColumnTypeBigInt,
-                        PrimaryKey:    true,
-                        AutoIncrement: true,
-                        NotNull:       true,
-                    },
-                    {
-                        Name:    "name",
-                        Type:    migration.ColumnTypeVarchar,
-                        Length:  100,
-                        NotNull: true,
-                    },
+                    {Name: "id", Type: migration.ColumnTypeBigInt, PrimaryKey: true, AutoIncrement: true},
+                    {Name: "name", Type: migration.ColumnTypeVarchar, Length: 100, NotNull: true},
+                    {Name: "email", Type: migration.ColumnTypeVarchar, Length: 100, NotNull: true},
+                    {Name: "age", Type: migration.ColumnTypeInt, NotNull: true},
+                    {Name: "created_at", Type: migration.ColumnTypeDateTime, Default: "CURRENT_TIMESTAMP"},
+                },
+                Indexes: []*migration.Index{
+                    {Name: "idx_users_email", Columns: []string{"email"}, Unique: true},
                 },
             }
             
@@ -223,38 +222,74 @@ func main() {
     )
     
     // 执行迁移
-    migrator.Up(ctx)
+    ctx := context.Background()
+    err := migrator.Up(ctx)
+    if err != nil {
+        fmt.Printf("迁移失败: %v\n", err)
+        return
+    }
+    fmt.Println("✅ 数据库迁移完成!")
 }</code></pre>
                     </div>
                     <div class="tab-content" id="transaction">
                         <pre><code class="language-go">package main
 
-func transferMoney(ctx context.Context, conn db.ConnectionInterface, 
-                  fromID, toID int64, amount float64) error {
+import (
+    "context"
+    "fmt"
+    "torm/pkg/db"
+    "torm/pkg/model"
+)
+
+// 转账示例 - 演示事务处理
+func transferMoney(ctx context.Context, fromUserID, toUserID int64, amount float64) error {
+    conn, _ := db.DB("default")
+    
+    // 开始事务
     tx, err := conn.Begin(ctx)
     if err != nil {
         return err
     }
-    defer tx.Rollback()
+    defer tx.Rollback() // 确保在出错时回滚
     
     // 扣除发送方余额
     _, err = tx.Exec(ctx, 
-        "UPDATE accounts SET balance = balance - ? WHERE id = ?", 
-        amount, fromID)
+        "UPDATE accounts SET balance = balance - ? WHERE user_id = ?", 
+        amount, fromUserID)
     if err != nil {
-        return err
+        return fmt.Errorf("扣除余额失败: %v", err)
     }
     
     // 增加接收方余额
     _, err = tx.Exec(ctx, 
-        "UPDATE accounts SET balance = balance + ? WHERE id = ?", 
-        amount, toID)
+        "UPDATE accounts SET balance = balance + ? WHERE user_id = ?", 
+        amount, toUserID)
     if err != nil {
-        return err
+        return fmt.Errorf("增加余额失败: %v", err)
+    }
+    
+    // 记录转账日志
+    _, err = tx.Exec(ctx,
+        "INSERT INTO transfer_logs (from_user_id, to_user_id, amount, created_at) VALUES (?, ?, ?, NOW())",
+        fromUserID, toUserID, amount)
+    if err != nil {
+        return fmt.Errorf("记录日志失败: %v", err)
     }
     
     // 提交事务
     return tx.Commit()
+}
+
+func main() {
+    ctx := context.Background()
+    
+    // 执行转账
+    err := transferMoney(ctx, 1, 2, 100.00)
+    if err != nil {
+        fmt.Printf("转账失败: %v\n", err)
+    } else {
+        fmt.Println("✅ 转账成功!")
+    }
 }</code></pre>
                     </div>
                 </div>
@@ -321,11 +356,12 @@ func transferMoney(ctx context.Context, conn db.ConnectionInterface,
                 </div>
             </div>
             <div class="footer-bottom">
-                <p>&copy; 2024 TORM. 文档基于 CC BY 4.0 协议.</p>
+                <p>&copy; 2024 TORM. </p>
             </div>
         </div>
     </footer>
 
+    <script src="scripts/config.js"></script>
     <script src="scripts/main.js"></script>
 </body>
 </html> 

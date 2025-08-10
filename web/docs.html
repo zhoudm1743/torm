@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>文档 - TORM</title>
+    <link rel="icon" href="assets/logo.svg" type="image/x-icon">
     <link rel="stylesheet" href="styles/main.css">
     <link rel="stylesheet" href="styles/docs.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -60,28 +61,28 @@
                 <div class="nav-section">
                     <h4>开始使用</h4>
                     <ul>
-                        <li><a href="#" onclick="loadDoc('home')" class="nav-item active">介绍</a></li>
-                        <li><a href="#" onclick="loadDoc('installation')" class="nav-item">安装指南</a></li>
-                        <li><a href="#" onclick="loadDoc('quick-start')" class="nav-item">快速开始</a></li>
-                        <li><a href="#" onclick="loadDoc('configuration')" class="nav-item">配置</a></li>
+                        <li><a href="#" data-doc="home" class="nav-item active">介绍</a></li>
+                        <li><a href="#" data-doc="installation" class="nav-item">安装指南</a></li>
+                        <li><a href="#" data-doc="quick-start" class="nav-item">快速开始</a></li>
+                        <li><a href="#" data-doc="configuration" class="nav-item">配置</a></li>
                     </ul>
                 </div>
                 
                 <div class="nav-section">
                     <h4>核心功能</h4>
                     <ul>
-                        <li><a href="#" onclick="loadDoc('database-support')" class="nav-item">数据库支持</a></li>
-                        <li><a href="#" onclick="loadDoc('migrations')" class="nav-item">数据迁移</a></li>
-                        <li><a href="#" onclick="loadDoc('examples')" class="nav-item">示例代码</a></li>
+                        <li><a href="#" data-doc="database-support" class="nav-item">数据库支持</a></li>
+                        <li><a href="#" data-doc="migrations" class="nav-item">数据迁移</a></li>
+                        <li><a href="#" data-doc="examples" class="nav-item">示例代码</a></li>
                     </ul>
                 </div>
                 
                 <div class="nav-section">
                     <h4>开发指南</h4>
                     <ul>
-                        <li><a href="#" onclick="loadDoc('contributing')" class="nav-item">贡献指南</a></li>
-                        <li><a href="#" onclick="loadDoc('troubleshooting')" class="nav-item">故障排除</a></li>
-                        <li><a href="#" onclick="loadDoc('changelog')" class="nav-item">更新日志</a></li>
+                        <li><a href="#" data-doc="contributing" class="nav-item">贡献指南</a></li>
+                        <li><a href="#" data-doc="troubleshooting" class="nav-item">故障排除</a></li>
+                        <li><a href="#" data-doc="changelog" class="nav-item">更新日志</a></li>
                     </ul>
                 </div>
             </nav>
@@ -133,6 +134,7 @@
     </button>
 
     <!-- 脚本 -->
+    <script src="scripts/config.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/5.1.1/marked.min.js"></script>
