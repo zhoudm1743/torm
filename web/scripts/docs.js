@@ -33,24 +33,78 @@ class DocsSystem {
                 title: '数据库支持',
                 file: '../wiki/Database-Support.md',
                 prev: 'configuration',
+                next: 'query-builder'
+            },
+            'query-builder': {
+                title: '查询构建器',
+                file: '../wiki/Query-Builder.md',
+                prev: 'database-support',
+                next: 'model-system'
+            },
+            'model-system': {
+                title: '模型系统',
+                file: '../wiki/Model-System.md',
+                prev: 'query-builder',
+                next: 'relationships'
+            },
+            'relationships': {
+                title: '关联关系',
+                file: '../wiki/Relationships.md',
+                prev: 'model-system',
+                next: 'transactions'
+            },
+            'transactions': {
+                title: '事务处理',
+                file: '../wiki/Transactions.md',
+                prev: 'relationships',
                 next: 'migrations'
             },
             'migrations': {
                 title: '数据迁移',
                 file: '../wiki/Migrations.md',
-                prev: 'database-support',
+                prev: 'transactions',
+                next: 'caching'
+            },
+            'caching': {
+                title: '缓存系统',
+                file: '../wiki/Caching.md',
+                prev: 'migrations',
+                next: 'logging'
+            },
+            'logging': {
+                title: '日志系统',
+                file: '../wiki/Logging.md',
+                prev: 'caching',
+                next: 'performance'
+            },
+            'performance': {
+                title: '性能优化',
+                file: '../wiki/Performance.md',
+                prev: 'logging',
+                next: 'best-practices'
+            },
+            'best-practices': {
+                title: '最佳实践',
+                file: '../wiki/Best-Practices.md',
+                prev: 'performance',
                 next: 'examples'
             },
             'examples': {
                 title: '示例代码',
                 file: '../wiki/Examples.md',
-                prev: 'migrations',
+                prev: 'best-practices',
+                next: 'api-reference'
+            },
+            'api-reference': {
+                title: 'API参考',
+                file: '../wiki/API-Reference.md',
+                prev: 'examples',
                 next: 'contributing'
             },
             'contributing': {
                 title: '贡献指南',
                 file: '../wiki/Contributing.md',
-                prev: 'examples',
+                prev: 'api-reference',
                 next: 'troubleshooting'
             },
             'troubleshooting': {

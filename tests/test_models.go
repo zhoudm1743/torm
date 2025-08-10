@@ -124,7 +124,7 @@ func (u *User) Fill(data map[string]interface{}) *User {
 
 // Find 根据主键查找用户
 func (u *User) Find(id interface{}) error {
-	err := u.BaseModel.Find(id)
+	_, err := u.BaseModel.Find(id)
 	if err != nil {
 		return err
 	}
@@ -270,7 +270,7 @@ func (p *Profile) Fill(data map[string]interface{}) *Profile {
 
 // Find 根据主键查找资料
 func (p *Profile) Find(id interface{}) error {
-	err := p.BaseModel.Find(id)
+	_, err := p.BaseModel.Find(id)
 	if err != nil {
 		return err
 	}
