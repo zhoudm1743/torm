@@ -1,7 +1,6 @@
 package db
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"sync"
@@ -28,7 +27,7 @@ func NewMySQLConnection(config *Config, logger LoggerInterface) (ConnectionInter
 }
 
 // Connect 连接到数据库
-func (c *MySQLConnection) Connect(ctx context.Context) error {
+func (c *MySQLConnection) Connect() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -49,7 +48,7 @@ func (c *MySQLConnection) Connect(ctx context.Context) error {
 	db.SetConnMaxIdleTime(c.config.ConnMaxIdleTime)
 
 	// 测试连接
-	if err := db.PingContext(ctx); err != nil {
+	if err := db.Ping(); err != nil {
 		db.Close()
 		return fmt.Errorf("failed to ping mysql database: %w", err)
 	}
@@ -89,7 +88,7 @@ func (c *MySQLConnection) Close() error {
 }
 
 // Ping 测试连接
-func (c *MySQLConnection) Ping(ctx context.Context) error {
+func (c *MySQLConnection) Ping() error {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -97,7 +96,7 @@ func (c *MySQLConnection) Ping(ctx context.Context) error {
 		return fmt.Errorf("connection not established")
 	}
 
-	return c.db.PingContext(ctx)
+	return c.db.Ping()
 }
 
 // IsConnected 检查是否已连接
@@ -108,7 +107,7 @@ func (c *MySQLConnection) IsConnected() bool {
 }
 
 // Query 执行查询
-func (c *MySQLConnection) Query(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+func (c *MySQLConnection) Query(query string, args ...interface{}) (*sql.Rows, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -117,7 +116,7 @@ func (c *MySQLConnection) Query(ctx context.Context, query string, args ...inter
 	}
 
 	start := time.Now()
-	rows, err := c.db.QueryContext(ctx, query, args...)
+	rows, err := c.db.Query(query, args...)
 	duration := time.Since(start)
 
 	if c.logger != nil {
@@ -132,7 +131,7 @@ func (c *MySQLConnection) Query(ctx context.Context, query string, args ...inter
 }
 
 // QueryRow 执行单行查询
-func (c *MySQLConnection) QueryRow(ctx context.Context, query string, args ...interface{}) *sql.Row {
+func (c *MySQLConnection) QueryRow(query string, args ...interface{}) *sql.Row {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -141,7 +140,7 @@ func (c *MySQLConnection) QueryRow(ctx context.Context, query string, args ...in
 	}
 
 	start := time.Now()
-	row := c.db.QueryRowContext(ctx, query, args...)
+	row := c.db.QueryRow(query, args...)
 	duration := time.Since(start)
 
 	if c.logger != nil && c.config.LogQueries {
@@ -152,7 +151,7 @@ func (c *MySQLConnection) QueryRow(ctx context.Context, query string, args ...in
 }
 
 // Exec 执行SQL语句
-func (c *MySQLConnection) Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+func (c *MySQLConnection) Exec(query string, args ...interface{}) (sql.Result, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -161,7 +160,7 @@ func (c *MySQLConnection) Exec(ctx context.Context, query string, args ...interf
 	}
 
 	start := time.Now()
-	result, err := c.db.ExecContext(ctx, query, args...)
+	result, err := c.db.Exec(query, args...)
 	duration := time.Since(start)
 
 	if c.logger != nil {
@@ -176,12 +175,12 @@ func (c *MySQLConnection) Exec(ctx context.Context, query string, args ...interf
 }
 
 // Begin 开始事务
-func (c *MySQLConnection) Begin(ctx context.Context) (TransactionInterface, error) {
-	return c.BeginTx(ctx, nil)
+func (c *MySQLConnection) Begin() (TransactionInterface, error) {
+	return c.BeginTx(nil)
 }
 
 // BeginTx 开始事务（带选项）
-func (c *MySQLConnection) BeginTx(ctx context.Context, opts *sql.TxOptions) (TransactionInterface, error) {
+func (c *MySQLConnection) BeginTx(opts *sql.TxOptions) (TransactionInterface, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -189,7 +188,7 @@ func (c *MySQLConnection) BeginTx(ctx context.Context, opts *sql.TxOptions) (Tra
 		return nil, fmt.Errorf("connection not established")
 	}
 
-	tx, err := c.db.BeginTx(ctx, opts)
+	tx, err := c.db.Begin()
 	if err != nil {
 		return nil, err
 	}
@@ -231,9 +230,9 @@ type MySQLTransaction struct {
 }
 
 // Query 在事务中执行查询
-func (t *MySQLTransaction) Query(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+func (t *MySQLTransaction) Query(query string, args ...interface{}) (*sql.Rows, error) {
 	start := time.Now()
-	rows, err := t.tx.QueryContext(ctx, query, args...)
+	rows, err := t.tx.Query(query, args...)
 	duration := time.Since(start)
 
 	if t.logger != nil {
@@ -248,9 +247,9 @@ func (t *MySQLTransaction) Query(ctx context.Context, query string, args ...inte
 }
 
 // QueryRow 在事务中执行单行查询
-func (t *MySQLTransaction) QueryRow(ctx context.Context, query string, args ...interface{}) *sql.Row {
+func (t *MySQLTransaction) QueryRow(query string, args ...interface{}) *sql.Row {
 	start := time.Now()
-	row := t.tx.QueryRowContext(ctx, query, args...)
+	row := t.tx.QueryRow(query, args...)
 	duration := time.Since(start)
 
 	if t.logger != nil && t.config.LogQueries {
@@ -261,9 +260,9 @@ func (t *MySQLTransaction) QueryRow(ctx context.Context, query string, args ...i
 }
 
 // Exec 在事务中执行SQL语句
-func (t *MySQLTransaction) Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+func (t *MySQLTransaction) Exec(query string, args ...interface{}) (sql.Result, error) {
 	start := time.Now()
-	result, err := t.tx.ExecContext(ctx, query, args...)
+	result, err := t.tx.Exec(query, args...)
 	duration := time.Since(start)
 
 	if t.logger != nil {

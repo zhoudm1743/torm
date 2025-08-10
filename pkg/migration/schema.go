@@ -1,7 +1,6 @@
 package migration
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -98,27 +97,27 @@ func NewSchemaBuilder(conn db.ConnectionInterface) *SchemaBuilder {
 }
 
 // CreateTable 创建表
-func (sb *SchemaBuilder) CreateTable(ctx context.Context, table *Table) error {
+func (sb *SchemaBuilder) CreateTable(table *Table) error {
 	sql, err := sb.generateCreateTableSQL(table)
 	if err != nil {
 		return err
 	}
 
-	_, err = sb.conn.Exec(ctx, sql)
+	_, err = sb.conn.Exec(sql)
 	if err != nil {
 		return fmt.Errorf("failed to create table %s: %w", table.Name, err)
 	}
 
 	// 创建索引
 	for _, index := range table.Indexes {
-		if err := sb.CreateIndex(ctx, table.Name, index); err != nil {
+		if err := sb.CreateIndex(table.Name, index); err != nil {
 			return fmt.Errorf("failed to create index %s: %w", index.Name, err)
 		}
 	}
 
 	// 创建外键
 	for _, fk := range table.ForeignKeys {
-		if err := sb.CreateForeignKey(ctx, table.Name, fk); err != nil {
+		if err := sb.CreateForeignKey(table.Name, fk); err != nil {
 			return fmt.Errorf("failed to create foreign key %s: %w", fk.Name, err)
 		}
 	}
@@ -127,9 +126,9 @@ func (sb *SchemaBuilder) CreateTable(ctx context.Context, table *Table) error {
 }
 
 // DropTable 删除表
-func (sb *SchemaBuilder) DropTable(ctx context.Context, tableName string) error {
+func (sb *SchemaBuilder) DropTable(tableName string) error {
 	sql := fmt.Sprintf("DROP TABLE IF EXISTS %s", sb.quoteName(tableName))
-	_, err := sb.conn.Exec(ctx, sql)
+	_, err := sb.conn.Exec(sql)
 	if err != nil {
 		return fmt.Errorf("failed to drop table %s: %w", tableName, err)
 	}
@@ -137,13 +136,13 @@ func (sb *SchemaBuilder) DropTable(ctx context.Context, tableName string) error 
 }
 
 // AddColumn 添加列
-func (sb *SchemaBuilder) AddColumn(ctx context.Context, tableName string, column *Column) error {
+func (sb *SchemaBuilder) AddColumn(tableName string, column *Column) error {
 	sql, err := sb.generateAddColumnSQL(tableName, column)
 	if err != nil {
 		return err
 	}
 
-	_, err = sb.conn.Exec(ctx, sql)
+	_, err = sb.conn.Exec(sql)
 	if err != nil {
 		return fmt.Errorf("failed to add column %s to table %s: %w", column.Name, tableName, err)
 	}
@@ -151,9 +150,9 @@ func (sb *SchemaBuilder) AddColumn(ctx context.Context, tableName string, column
 }
 
 // DropColumn 删除列
-func (sb *SchemaBuilder) DropColumn(ctx context.Context, tableName, columnName string) error {
+func (sb *SchemaBuilder) DropColumn(tableName, columnName string) error {
 	sql := sb.generateDropColumnSQL(tableName, columnName)
-	_, err := sb.conn.Exec(ctx, sql)
+	_, err := sb.conn.Exec(sql)
 	if err != nil {
 		return fmt.Errorf("failed to drop column %s from table %s: %w", columnName, tableName, err)
 	}
@@ -161,13 +160,13 @@ func (sb *SchemaBuilder) DropColumn(ctx context.Context, tableName, columnName s
 }
 
 // ModifyColumn 修改列
-func (sb *SchemaBuilder) ModifyColumn(ctx context.Context, tableName string, column *Column) error {
+func (sb *SchemaBuilder) ModifyColumn(tableName string, column *Column) error {
 	sql, err := sb.generateModifyColumnSQL(tableName, column)
 	if err != nil {
 		return err
 	}
 
-	_, err = sb.conn.Exec(ctx, sql)
+	_, err = sb.conn.Exec(sql)
 	if err != nil {
 		return fmt.Errorf("failed to modify column %s in table %s: %w", column.Name, tableName, err)
 	}
@@ -175,9 +174,9 @@ func (sb *SchemaBuilder) ModifyColumn(ctx context.Context, tableName string, col
 }
 
 // CreateIndex 创建索引
-func (sb *SchemaBuilder) CreateIndex(ctx context.Context, tableName string, index *Index) error {
+func (sb *SchemaBuilder) CreateIndex(tableName string, index *Index) error {
 	sql := sb.generateCreateIndexSQL(tableName, index)
-	_, err := sb.conn.Exec(ctx, sql)
+	_, err := sb.conn.Exec(sql)
 	if err != nil {
 		return fmt.Errorf("failed to create index %s: %w", index.Name, err)
 	}
@@ -185,9 +184,9 @@ func (sb *SchemaBuilder) CreateIndex(ctx context.Context, tableName string, inde
 }
 
 // DropIndex 删除索引
-func (sb *SchemaBuilder) DropIndex(ctx context.Context, tableName, indexName string) error {
+func (sb *SchemaBuilder) DropIndex(tableName, indexName string) error {
 	sql := sb.generateDropIndexSQL(tableName, indexName)
-	_, err := sb.conn.Exec(ctx, sql)
+	_, err := sb.conn.Exec(sql)
 	if err != nil {
 		return fmt.Errorf("failed to drop index %s: %w", indexName, err)
 	}
@@ -195,14 +194,14 @@ func (sb *SchemaBuilder) DropIndex(ctx context.Context, tableName, indexName str
 }
 
 // CreateForeignKey 创建外键
-func (sb *SchemaBuilder) CreateForeignKey(ctx context.Context, tableName string, fk *ForeignKey) error {
+func (sb *SchemaBuilder) CreateForeignKey(tableName string, fk *ForeignKey) error {
 	if sb.driver == "sqlite" {
 		// SQLite 在表创建后不支持添加外键
 		return nil
 	}
 
 	sql := sb.generateCreateForeignKeySQL(tableName, fk)
-	_, err := sb.conn.Exec(ctx, sql)
+	_, err := sb.conn.Exec(sql)
 	if err != nil {
 		return fmt.Errorf("failed to create foreign key %s: %w", fk.Name, err)
 	}
@@ -210,14 +209,14 @@ func (sb *SchemaBuilder) CreateForeignKey(ctx context.Context, tableName string,
 }
 
 // DropForeignKey 删除外键
-func (sb *SchemaBuilder) DropForeignKey(ctx context.Context, tableName, fkName string) error {
+func (sb *SchemaBuilder) DropForeignKey(tableName, fkName string) error {
 	if sb.driver == "sqlite" {
 		// SQLite 不支持删除外键
 		return nil
 	}
 
 	sql := sb.generateDropForeignKeySQL(tableName, fkName)
-	_, err := sb.conn.Exec(ctx, sql)
+	_, err := sb.conn.Exec(sql)
 	if err != nil {
 		return fmt.Errorf("failed to drop foreign key %s: %w", fkName, err)
 	}

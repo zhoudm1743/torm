@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // QueryBuilder 查询构造器
@@ -21,6 +22,7 @@ type QueryBuilder struct {
 	offsetNum  int
 	distinct   bool
 	// 移除bindings字段，改为在构建SQL时动态收集
+	ctx context.Context // 添加context字段
 }
 
 // WhereClause WHERE子句
@@ -291,57 +293,103 @@ func (q *QueryBuilder) Page(page, pageSize int) QueryInterface {
 	return q.Limit(pageSize).Offset(offset)
 }
 
-// Get 执行查询获取所有结果
-func (q *QueryBuilder) Get(ctx context.Context) ([]map[string]interface{}, error) {
+// WithContext 设置查询的上下文
+func (q *QueryBuilder) WithContext(ctx context.Context) QueryInterface {
+	clone := q.Clone().(*QueryBuilder)
+	clone.ctx = ctx
+	return clone
+}
+
+// WithTimeout 设置查询超时
+func (q *QueryBuilder) WithTimeout(timeout time.Duration) QueryInterface {
+	ctx, _ := context.WithTimeout(context.Background(), timeout)
+	return q.WithContext(ctx)
+}
+
+// getContext 获取查询上下文，如果没有设置则使用默认值
+func (q *QueryBuilder) getContext() context.Context {
+	if q.ctx != nil {
+		return q.ctx
+	}
+	return context.Background()
+}
+
+// Get 执行查询并返回所有记录
+func (q *QueryBuilder) Get() ([]map[string]interface{}, error) {
 	sql, bindings, err := q.ToSQL()
 	if err != nil {
 		return nil, err
 	}
 
-	rows, err := q.connection.Query(ctx, sql, bindings...)
+	// 对于支持context的连接，使用内部方法
+	ctx := q.getContext()
+	rows, err := q.queryWithContext(ctx, sql, bindings...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	return q.scanRows(rows)
-}
-
-// First 执行查询获取第一条结果
-func (q *QueryBuilder) First(ctx context.Context) (map[string]interface{}, error) {
-	results, err := q.Limit(1).Get(ctx)
+	columns, err := rows.Columns()
 	if err != nil {
 		return nil, err
 	}
 
-	if len(results) == 0 {
-		return nil, fmt.Errorf("no results found")
+	var results []map[string]interface{}
+	for rows.Next() {
+		values := make([]interface{}, len(columns))
+		valuePtrs := make([]interface{}, len(columns))
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		if err := rows.Scan(valuePtrs...); err != nil {
+			return nil, err
+		}
+
+		row := make(map[string]interface{})
+		for i, col := range columns {
+			row[col] = values[i]
+		}
+		results = append(results, row)
 	}
 
+	return results, rows.Err()
+}
+
+// First 执行查询并返回第一条记录
+func (q *QueryBuilder) First() (map[string]interface{}, error) {
+	results, err := q.Limit(1).Get()
+	if err != nil {
+		return nil, err
+	}
+	if len(results) == 0 {
+		return nil, fmt.Errorf("no records found")
+	}
 	return results[0], nil
 }
 
 // Find 根据ID查找记录
-func (q *QueryBuilder) Find(ctx context.Context, id interface{}) (map[string]interface{}, error) {
-	return q.Where("id", "=", id).First(ctx)
+func (q *QueryBuilder) Find(id interface{}) (map[string]interface{}, error) {
+	return q.Where("id", "=", id).First()
 }
 
 // Count 获取记录数量
-func (q *QueryBuilder) Count(ctx context.Context) (int64, error) {
+func (q *QueryBuilder) Count() (int64, error) {
 	sql, bindings, err := q.buildCountSQL()
 	if err != nil {
 		return 0, err
 	}
 
-	row := q.connection.QueryRow(ctx, sql, bindings...)
+	ctx := q.getContext()
+	row := q.queryRowWithContext(ctx, sql, bindings...)
 	var count int64
 	err = row.Scan(&count)
 	return count, err
 }
 
-// Exists 检查记录是否存在
-func (q *QueryBuilder) Exists(ctx context.Context) (bool, error) {
-	count, err := q.Count(ctx)
+// Exists 检查是否存在记录
+func (q *QueryBuilder) Exists() (bool, error) {
+	count, err := q.Count()
 	if err != nil {
 		return false, err
 	}
@@ -349,13 +397,14 @@ func (q *QueryBuilder) Exists(ctx context.Context) (bool, error) {
 }
 
 // Insert 插入记录
-func (q *QueryBuilder) Insert(ctx context.Context, data map[string]interface{}) (int64, error) {
+func (q *QueryBuilder) Insert(data map[string]interface{}) (int64, error) {
 	sql, bindings, err := q.buildInsertSQL(data)
 	if err != nil {
 		return 0, err
 	}
 
-	result, err := q.connection.Exec(ctx, sql, bindings...)
+	ctx := q.getContext()
+	result, err := q.execWithContext(ctx, sql, bindings...)
 	if err != nil {
 		return 0, err
 	}
@@ -364,9 +413,9 @@ func (q *QueryBuilder) Insert(ctx context.Context, data map[string]interface{}) 
 }
 
 // InsertBatch 批量插入记录
-func (q *QueryBuilder) InsertBatch(ctx context.Context, data []map[string]interface{}) (int64, error) {
+func (q *QueryBuilder) InsertBatch(data []map[string]interface{}) (int64, error) {
 	if len(data) == 0 {
-		return 0, nil
+		return 0, fmt.Errorf("no data to insert")
 	}
 
 	sql, bindings, err := q.buildInsertBatchSQL(data)
@@ -374,7 +423,8 @@ func (q *QueryBuilder) InsertBatch(ctx context.Context, data []map[string]interf
 		return 0, err
 	}
 
-	result, err := q.connection.Exec(ctx, sql, bindings...)
+	ctx := q.getContext()
+	result, err := q.execWithContext(ctx, sql, bindings...)
 	if err != nil {
 		return 0, err
 	}
@@ -383,13 +433,14 @@ func (q *QueryBuilder) InsertBatch(ctx context.Context, data []map[string]interf
 }
 
 // Update 更新记录
-func (q *QueryBuilder) Update(ctx context.Context, data map[string]interface{}) (int64, error) {
+func (q *QueryBuilder) Update(data map[string]interface{}) (int64, error) {
 	sql, bindings, err := q.buildUpdateSQL(data)
 	if err != nil {
 		return 0, err
 	}
 
-	result, err := q.connection.Exec(ctx, sql, bindings...)
+	ctx := q.getContext()
+	result, err := q.execWithContext(ctx, sql, bindings...)
 	if err != nil {
 		return 0, err
 	}
@@ -398,13 +449,14 @@ func (q *QueryBuilder) Update(ctx context.Context, data map[string]interface{}) 
 }
 
 // Delete 删除记录
-func (q *QueryBuilder) Delete(ctx context.Context) (int64, error) {
+func (q *QueryBuilder) Delete() (int64, error) {
 	sql, bindings, err := q.buildDeleteSQL()
 	if err != nil {
 		return 0, err
 	}
 
-	result, err := q.connection.Exec(ctx, sql, bindings...)
+	ctx := q.getContext()
+	result, err := q.execWithContext(ctx, sql, bindings...)
 	if err != nil {
 		return 0, err
 	}
@@ -436,6 +488,7 @@ func (q *QueryBuilder) clone() *QueryBuilder {
 		limitNum:   q.limitNum,
 		offsetNum:  q.offsetNum,
 		distinct:   q.distinct,
+		ctx:        q.ctx, // 克隆context
 	}
 
 	copy(newQuery.fields, q.fields)
@@ -792,4 +845,37 @@ func (q *QueryBuilder) scanRows(rows *sql.Rows) ([]map[string]interface{}, error
 	}
 
 	return results, rows.Err()
+}
+
+// queryWithContext 内部方法：执行带context的查询
+func (q *QueryBuilder) queryWithContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	// 尝试使用带context的方法，如果不支持则回退到普通方法
+	if ctxConn, ok := q.connection.(interface {
+		QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+	}); ok {
+		return ctxConn.QueryContext(ctx, query, args...)
+	}
+	return q.connection.Query(query, args...)
+}
+
+// queryRowWithContext 内部方法：执行带context的单行查询
+func (q *QueryBuilder) queryRowWithContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+	// 尝试使用带context的方法，如果不支持则回退到普通方法
+	if ctxConn, ok := q.connection.(interface {
+		QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+	}); ok {
+		return ctxConn.QueryRowContext(ctx, query, args...)
+	}
+	return q.connection.QueryRow(query, args...)
+}
+
+// execWithContext 内部方法：执行带context的SQL语句
+func (q *QueryBuilder) execWithContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	// 尝试使用带context的方法，如果不支持则回退到普通方法
+	if ctxConn, ok := q.connection.(interface {
+		ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	}); ok {
+		return ctxConn.ExecContext(ctx, query, args...)
+	}
+	return q.connection.Exec(query, args...)
 }

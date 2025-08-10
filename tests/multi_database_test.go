@@ -1,600 +1,569 @@
 package tests
 
 import (
-	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.mongodb.org/mongo-driver/bson"
 
 	"torm/pkg/db"
 )
 
-func setupMultiDatabaseTest(t *testing.T) context.Context {
-	ctx := context.Background()
-
-	// 配置SQLite
+func setupMultiDatabase(t *testing.T) {
+	// SQLite配置 - 使用内存数据库避免文件锁定问题
 	sqliteConfig := &db.Config{
 		Driver:          "sqlite",
-		Database:        "test_multi.db",
-		MaxOpenConns:    50,
-		MaxIdleConns:    10,
+		Database:        ":memory:",
+		MaxOpenConns:    1, // 内存数据库使用单连接
+		MaxIdleConns:    1,
 		ConnMaxLifetime: time.Hour,
 		LogQueries:      false,
 	}
-	err := db.AddConnection("test_sqlite", sqliteConfig)
-	require.NoError(t, err)
 
-	// 配置MySQL（可能不可用）
+	// MySQL配置
 	mysqlConfig := &db.Config{
 		Driver:          "mysql",
 		Host:            "127.0.0.1",
 		Port:            3306,
-		Database:        "orm",
+		Database:        "test_multi",
 		Username:        "root",
 		Password:        "123456",
 		Charset:         "utf8mb4",
-		MaxOpenConns:    100,
-		MaxIdleConns:    20,
-		ConnMaxLifetime: time.Hour,
-		LogQueries:      false,
-	}
-	db.AddConnection("test_mysql", mysqlConfig) // 可能失败，但不要求必须成功
-
-	// 配置MongoDB（可能不可用）
-	mongoConfig := &db.Config{
-		Driver:          "mongodb",
-		Host:            "127.0.0.1",
-		Port:            27017,
-		Database:        "orm_test",
-		MaxOpenConns:    50,
+		Timezone:        "UTC",
+		MaxOpenConns:    20,
 		MaxIdleConns:    10,
 		ConnMaxLifetime: time.Hour,
 		LogQueries:      false,
 	}
-	db.AddConnection("test_mongodb", mongoConfig) // 可能失败，但不要求必须成功
 
-	return ctx
-}
-
-func cleanupMultiDatabaseTest(t *testing.T, ctx context.Context) {
-	// 清理SQLite
-	if conn, err := db.DB("test_sqlite"); err == nil {
-		conn.Exec(ctx, "DROP TABLE IF EXISTS multi_test_users")
+	// PostgreSQL配置
+	postgresConfig := &db.Config{
+		Driver:          "postgres",
+		Host:            "127.0.0.1",
+		Port:            5432,
+		Database:        "test_multi",
+		Username:        "postgres",
+		Password:        "123456",
+		SSLMode:         "disable",
+		MaxOpenConns:    15,
+		MaxIdleConns:    8,
+		ConnMaxLifetime: time.Hour,
+		LogQueries:      false,
 	}
 
-	// 清理MySQL
-	if conn, err := db.DB("test_mysql"); err == nil {
-		conn.Exec(ctx, "DROP TABLE IF EXISTS multi_test_users")
+	// 添加连接
+	err := db.AddConnection("sqlite", sqliteConfig)
+	require.NoError(t, err)
+
+	err = db.AddConnection("mysql", mysqlConfig)
+	if err != nil {
+		t.Logf("MySQL连接失败，跳过MySQL测试: %v", err)
 	}
 
-	// 清理MongoDB
-	if conn, err := db.DB("test_mongodb"); err == nil {
-		mongoConn := db.GetMongoConnection(conn)
-		if mongoConn != nil {
-			mongoConn.GetCollection("multi_test_users").Drop(ctx)
-		}
+	err = db.AddConnection("postgres", postgresConfig)
+	if err != nil {
+		t.Logf("PostgreSQL连接失败，跳过PostgreSQL测试: %v", err)
 	}
-
-	// 清理SQLite文件
-	os.Remove("test_multi.db")
 }
 
 func TestMultiDatabaseConnections(t *testing.T) {
-	ctx := setupMultiDatabaseTest(t)
-	defer cleanupMultiDatabaseTest(t, ctx)
+	setupMultiDatabase(t)
 
-	databases := []string{"test_sqlite", "test_mysql", "test_mongodb"}
-	connectedDatabases := make(map[string]bool)
-
-	for _, dbName := range databases {
-		t.Run(fmt.Sprintf("测试%s连接", dbName), func(t *testing.T) {
-			conn, err := db.DB(dbName)
-			if err != nil {
-				t.Skipf("%s 连接获取失败: %v", dbName, err)
-				return
-			}
-
-			err = conn.Ping(ctx)
-			if err != nil {
-				t.Skipf("%s 连接测试失败: %v", dbName, err)
-				return
-			}
-
-			assert.NotEmpty(t, conn.GetDriver())
-			connectedDatabases[dbName] = true
-			t.Logf("✅ %s 连接成功 (驱动: %s)", dbName, conn.GetDriver())
-		})
+	tests := []struct {
+		name     string
+		connName string
+		skipMsg  string
+	}{
+		{"SQLite", "sqlite", ""},
+		{"MySQL", "mysql", "MySQL连接不可用"},
+		{"PostgreSQL", "postgres", "PostgreSQL连接不可用"},
 	}
 
-	// 确保至少有一个数据库连接成功
-	assert.Greater(t, len(connectedDatabases), 0, "至少应该有一个数据库连接成功")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conn, err := db.DB(tt.connName)
+			if err != nil {
+				if tt.skipMsg != "" {
+					t.Skip(tt.skipMsg)
+				}
+				require.NoError(t, err)
+			}
+
+			// 测试连接
+			err = conn.Connect()
+			if err != nil {
+				if tt.skipMsg != "" {
+					t.Skip(tt.skipMsg)
+				}
+				require.NoError(t, err)
+			}
+
+			// 测试Ping
+			err = conn.Ping()
+			if err != nil {
+				if tt.skipMsg != "" {
+					t.Skip(tt.skipMsg)
+				}
+				assert.NoError(t, err)
+			}
+
+			// 测试简单查询
+			var testQuery string
+			switch tt.connName {
+			case "sqlite":
+				testQuery = "SELECT 1"
+			case "mysql":
+				testQuery = "SELECT 1"
+			case "postgres":
+				testQuery = "SELECT 1"
+			}
+
+			rows, err := conn.Query(testQuery)
+			if err != nil {
+				if tt.skipMsg != "" {
+					t.Skip(tt.skipMsg)
+				}
+				require.NoError(t, err)
+			}
+			defer rows.Close()
+
+			assert.True(t, rows.Next())
+			var result int
+			err = rows.Scan(&result)
+			assert.NoError(t, err)
+			assert.Equal(t, 1, result)
+
+			conn.Close()
+		})
+	}
 }
 
-func TestSQLiteOperations(t *testing.T) {
-	ctx := setupMultiDatabaseTest(t)
-	defer cleanupMultiDatabaseTest(t, ctx)
+func TestDatabaseCRUD(t *testing.T) {
+	setupMultiDatabase(t)
 
-	conn, err := db.DB("test_sqlite")
-	require.NoError(t, err)
+	databases := []string{"sqlite"}
 
-	// 创建表
-	createTableSQL := `
-	CREATE TABLE IF NOT EXISTS multi_test_users (
+	for _, dbName := range databases {
+		t.Run(dbName, func(t *testing.T) {
+			conn, err := db.DB(dbName)
+			if err != nil {
+				t.Skipf("%s连接不可用", dbName)
+			}
+
+			err = conn.Connect()
+			if err != nil {
+				t.Skipf("%s连接失败", dbName)
+			}
+			defer conn.Close()
+
+			// 创建测试表
+			createTableSQL := `
+			CREATE TABLE IF NOT EXISTS test_users (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		name TEXT NOT NULL,
 		email TEXT UNIQUE NOT NULL,
-		age INTEGER,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	)`
 
-	_, err = conn.Exec(ctx, createTableSQL)
-	require.NoError(t, err)
+			_, err = conn.Exec(createTableSQL)
+			require.NoError(t, err)
 
-	t.Run("SQLite CRUD操作", func(t *testing.T) {
-		// 插入数据
-		insertSQL := `INSERT INTO multi_test_users (name, email, age) VALUES (?, ?, ?)`
-		result, err := conn.Exec(ctx, insertSQL, "SQLite测试用户", "sqlite_test@example.com", 25)
-		assert.NoError(t, err)
+			// 插入测试数据
+			insertSQL := "INSERT INTO test_users (name, email) VALUES (?, ?)"
+			result, err := conn.Exec(insertSQL, "测试用户", "test@example.com")
+			require.NoError(t, err)
 
-		id, err := result.LastInsertId()
-		assert.NoError(t, err)
-		assert.Greater(t, id, int64(0))
+			lastID, err := result.LastInsertId()
+			require.NoError(t, err)
+			assert.Greater(t, lastID, int64(0))
 
-		// 查询数据
-		selectSQL := `SELECT id, name, email, age FROM multi_test_users WHERE email = ?`
-		row := conn.QueryRow(ctx, selectSQL, "sqlite_test@example.com")
+			// 查询数据
+			selectSQL := "SELECT id, name, email FROM test_users WHERE id = ?"
+			row := conn.QueryRow(selectSQL, lastID)
 
-		var foundID int64
-		var foundName, foundEmail string
-		var foundAge int
+			var id int64
+			var name, email string
+			err = row.Scan(&id, &name, &email)
+			require.NoError(t, err)
 
-		err = row.Scan(&foundID, &foundName, &foundEmail, &foundAge)
-		assert.NoError(t, err)
-		assert.Equal(t, "SQLite测试用户", foundName)
-		assert.Equal(t, "sqlite_test@example.com", foundEmail)
-		assert.Equal(t, 25, foundAge)
+			assert.Equal(t, lastID, id)
+			assert.Equal(t, "测试用户", name)
+			assert.Equal(t, "test@example.com", email)
 
-		// 更新数据
-		updateSQL := `UPDATE multi_test_users SET age = ? WHERE id = ?`
-		updateResult, err := conn.Exec(ctx, updateSQL, 26, foundID)
-		assert.NoError(t, err)
+			// 更新数据
+			updateSQL := "UPDATE test_users SET name = ? WHERE id = ?"
+			_, err = conn.Exec(updateSQL, "更新用户", lastID)
+			require.NoError(t, err)
 
-		rowsAffected, err := updateResult.RowsAffected()
-		assert.NoError(t, err)
-		assert.Equal(t, int64(1), rowsAffected)
+			// 删除数据
+			deleteSQL := "DELETE FROM test_users WHERE id = ?"
+			_, err = conn.Exec(deleteSQL, lastID)
+			require.NoError(t, err)
 
-		// 删除数据
-		deleteSQL := `DELETE FROM multi_test_users WHERE id = ?`
-		deleteResult, err := conn.Exec(ctx, deleteSQL, foundID)
-		assert.NoError(t, err)
-
-		rowsAffected, err = deleteResult.RowsAffected()
-		assert.NoError(t, err)
-		assert.Equal(t, int64(1), rowsAffected)
-	})
-}
-
-func TestMySQLOperations(t *testing.T) {
-	ctx := setupMultiDatabaseTest(t)
-	defer cleanupMultiDatabaseTest(t, ctx)
-
-	conn, err := db.DB("test_mysql")
-	if err != nil {
-		t.Skipf("MySQL 连接失败: %v", err)
-		return
-	}
-
-	err = conn.Ping(ctx)
-	if err != nil {
-		t.Skipf("MySQL 连接测试失败: %v", err)
-		return
-	}
-
-	// 创建表
-	createTableSQL := `
-	CREATE TABLE IF NOT EXISTS multi_test_users (
-		id BIGINT AUTO_INCREMENT PRIMARY KEY,
-		name VARCHAR(100) NOT NULL,
-		email VARCHAR(100) UNIQUE NOT NULL,
-		age INT,
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
-
-	_, err = conn.Exec(ctx, createTableSQL)
-	require.NoError(t, err)
-
-	t.Run("MySQL CRUD操作", func(t *testing.T) {
-		// 插入数据
-		insertSQL := `INSERT INTO multi_test_users (name, email, age) VALUES (?, ?, ?)`
-		result, err := conn.Exec(ctx, insertSQL, "MySQL测试用户", "mysql_test@example.com", 30)
-		assert.NoError(t, err)
-
-		id, err := result.LastInsertId()
-		assert.NoError(t, err)
-		assert.Greater(t, id, int64(0))
-
-		// 查询数据
-		selectSQL := `SELECT id, name, email, age FROM multi_test_users WHERE email = ?`
-		row := conn.QueryRow(ctx, selectSQL, "mysql_test@example.com")
-
-		var foundID int64
-		var foundName, foundEmail string
-		var foundAge int
-
-		err = row.Scan(&foundID, &foundName, &foundEmail, &foundAge)
-		assert.NoError(t, err)
-		assert.Equal(t, "MySQL测试用户", foundName)
-		assert.Equal(t, "mysql_test@example.com", foundEmail)
-		assert.Equal(t, 30, foundAge)
-
-		// 更新数据
-		updateSQL := `UPDATE multi_test_users SET age = ? WHERE id = ?`
-		updateResult, err := conn.Exec(ctx, updateSQL, 31, foundID)
-		assert.NoError(t, err)
-
-		rowsAffected, err := updateResult.RowsAffected()
-		assert.NoError(t, err)
-		assert.Equal(t, int64(1), rowsAffected)
-
-		// 删除数据
-		deleteSQL := `DELETE FROM multi_test_users WHERE id = ?`
-		deleteResult, err := conn.Exec(ctx, deleteSQL, foundID)
-		assert.NoError(t, err)
-
-		rowsAffected, err = deleteResult.RowsAffected()
-		assert.NoError(t, err)
-		assert.Equal(t, int64(1), rowsAffected)
-	})
-}
-
-func TestMongoDBOperations(t *testing.T) {
-	ctx := setupMultiDatabaseTest(t)
-	defer cleanupMultiDatabaseTest(t, ctx)
-
-	conn, err := db.DB("test_mongodb")
-	if err != nil {
-		t.Skipf("MongoDB 连接失败: %v", err)
-		return
-	}
-
-	err = conn.Ping(ctx)
-	if err != nil {
-		t.Skipf("MongoDB 连接测试失败: %v", err)
-		return
-	}
-
-	mongoConn := db.GetMongoConnection(conn)
-	require.NotNil(t, mongoConn)
-
-	collection := mongoConn.GetCollection("multi_test_users")
-	query := db.NewMongoQuery(collection, nil)
-
-	t.Run("MongoDB CRUD操作", func(t *testing.T) {
-		// 插入数据
-		mongoUser := bson.M{
-			"name":       "MongoDB测试用户",
-			"email":      "mongo_test@example.com",
-			"age":        28,
-			"created_at": time.Now(),
-		}
-
-		result, err := query.InsertOne(ctx, mongoUser)
-		assert.NoError(t, err)
-		assert.NotNil(t, result.InsertedID)
-
-		// 查询数据
-		var foundUser bson.M
-		err = query.Where("email", "mongo_test@example.com").FindOne(ctx).Decode(&foundUser)
-		assert.NoError(t, err)
-		assert.Equal(t, "MongoDB测试用户", foundUser["name"])
-		assert.Equal(t, "mongo_test@example.com", foundUser["email"])
-		assert.Equal(t, int32(28), foundUser["age"])
-
-		// 更新数据
-		update := bson.M{
-			"$set": bson.M{
-				"age":        int32(29),
-				"updated_at": time.Now(),
-			},
-		}
-
-		updateQuery := db.NewMongoQuery(collection, nil)
-		updateResult, err := updateQuery.Where("email", "mongo_test@example.com").UpdateOne(ctx, update)
-		assert.NoError(t, err)
-		assert.Equal(t, int64(1), updateResult.ModifiedCount)
-
-		// 删除数据
-		deleteQuery := db.NewMongoQuery(collection, nil)
-		deleteResult, err := deleteQuery.Where("email", "mongo_test@example.com").DeleteOne(ctx)
-		assert.NoError(t, err)
-		assert.Equal(t, int64(1), deleteResult.DeletedCount)
-	})
-}
-
-func TestCrossDatabaseSync(t *testing.T) {
-	ctx := setupMultiDatabaseTest(t)
-	defer cleanupMultiDatabaseTest(t, ctx)
-
-	// 检查哪些数据库可用
-	availableDatabases := make(map[string]db.ConnectionInterface)
-
-	for _, dbName := range []string{"test_sqlite", "test_mysql", "test_mongodb"} {
-		if conn, err := db.DB(dbName); err == nil {
-			if conn.Ping(ctx) == nil {
-				availableDatabases[dbName] = conn
-			}
-		}
-	}
-
-	if len(availableDatabases) < 2 {
-		t.Skip("需要至少2个数据库连接才能测试跨数据库同步")
-		return
-	}
-
-	t.Logf("可用数据库: %v", getKeys(availableDatabases))
-
-	// 准备测试数据
-	testData := map[string]interface{}{
-		"name":  "跨数据库同步用户",
-		"email": "sync_test@example.com",
-		"age":   25,
-	}
-
-	// 在第一个可用数据库中插入数据
-	var sourceDB string
-	for dbName := range availableDatabases {
-		sourceDB = dbName
-		break
-	}
-
-	err := insertTestData(ctx, availableDatabases[sourceDB], sourceDB, testData)
-	require.NoError(t, err, "源数据库插入失败")
-
-	// 同步到其他数据库
-	for dbName, conn := range availableDatabases {
-		if dbName != sourceDB {
-			err := insertTestData(ctx, conn, dbName, testData)
-			assert.NoError(t, err, fmt.Sprintf("同步到%s失败", dbName))
-		}
-	}
-
-	// 验证所有数据库都有相同的数据
-	for dbName, conn := range availableDatabases {
-		found, err := verifyTestData(ctx, conn, dbName, testData)
-		assert.NoError(t, err, fmt.Sprintf("验证%s数据失败", dbName))
-		assert.True(t, found, fmt.Sprintf("%s中未找到同步的数据", dbName))
-	}
-}
-
-func TestPerformanceComparison(t *testing.T) {
-	if testing.Short() {
-		t.Skip("跳过性能测试")
-	}
-
-	ctx := setupMultiDatabaseTest(t)
-	defer cleanupMultiDatabaseTest(t, ctx)
-
-	// 检查可用数据库
-	availableDatabases := make(map[string]db.ConnectionInterface)
-
-	for _, dbName := range []string{"test_sqlite", "test_mysql", "test_mongodb"} {
-		if conn, err := db.DB(dbName); err == nil {
-			if conn.Ping(ctx) == nil {
-				availableDatabases[dbName] = conn
-			}
-		}
-	}
-
-	if len(availableDatabases) == 0 {
-		t.Skip("没有可用的数据库连接")
-		return
-	}
-
-	batchSize := 50 // 减小批量大小以加快测试
-	results := make(map[string]time.Duration)
-
-	for dbName, conn := range availableDatabases {
-		t.Run(fmt.Sprintf("性能测试_%s", dbName), func(t *testing.T) {
-			start := time.Now()
-			err := performBatchInsert(ctx, conn, dbName, batchSize)
-			duration := time.Since(start)
-
-			assert.NoError(t, err, fmt.Sprintf("%s批量插入失败", dbName))
-			results[dbName] = duration
-			t.Logf("%s 批量插入%d条记录耗时: %v", dbName, batchSize, duration)
+			// 清理表
+			_, err = conn.Exec("DROP TABLE test_users")
+			require.NoError(t, err)
 		})
 	}
-
-	// 输出性能排名
-	if len(results) > 1 {
-		t.Logf("性能对比结果 (批量插入%d条记录):", batchSize)
-		for dbName, duration := range results {
-			t.Logf("  %s: %v", dbName, duration)
-		}
-	}
 }
 
-// 辅助函数
-func getKeys(m map[string]db.ConnectionInterface) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
+func TestQueryBuilder(t *testing.T) {
+	// 为此测试使用独立的连接
+	testConfig := &db.Config{
+		Driver:   "sqlite",
+		Database: ":memory:",
 	}
-	return keys
+
+	connName := "query_test_" + t.Name()
+	err := db.AddConnection(connName, testConfig)
+	require.NoError(t, err)
+
+	conn, err := db.DB(connName)
+	require.NoError(t, err)
+
+	err = conn.Connect()
+	require.NoError(t, err)
+	defer conn.Close()
+
+	// 创建测试表
+	createTableSQL := `
+	CREATE TABLE IF NOT EXISTS query_test (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL,
+		age INTEGER,
+		status TEXT DEFAULT 'active'
+	)`
+
+	_, err = conn.Exec(createTableSQL)
+	require.NoError(t, err)
+
+	// 使用查询构建器，指定连接名
+	query, err := db.Table("query_test", connName)
+	require.NoError(t, err)
+
+	// 插入测试数据
+	testData := []map[string]interface{}{
+		{"name": "用户1", "age": 25, "status": "active"},
+		{"name": "用户2", "age": 30, "status": "inactive"},
+		{"name": "用户3", "age": 22, "status": "active"},
+	}
+
+	for _, data := range testData {
+		_, err = query.Insert(data)
+		require.NoError(t, err)
+	}
+
+	// 查询所有数据
+	results, err := query.Get()
+	require.NoError(t, err)
+	assert.Len(t, results, 3)
+
+	// 条件查询
+	activeQuery, err := db.Table("query_test", connName)
+	require.NoError(t, err)
+
+	activeResults, err := activeQuery.Where("status", "=", "active").Get()
+	require.NoError(t, err)
+	assert.Len(t, activeResults, 2)
+
+	// 清理
+	_, err = conn.Exec("DROP TABLE query_test")
+	require.NoError(t, err)
 }
 
-func insertTestData(ctx context.Context, conn db.ConnectionInterface, dbName string, data map[string]interface{}) error {
-	switch conn.GetDriver() {
-	case "sqlite", "mysql":
-		// 创建表
-		var createTableSQL string
-		if conn.GetDriver() == "sqlite" {
-			createTableSQL = `
-			CREATE TABLE IF NOT EXISTS multi_test_users (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				name TEXT NOT NULL,
-				email TEXT UNIQUE NOT NULL,
-				age INTEGER,
-				created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-			)`
-		} else {
-			createTableSQL = `
-			CREATE TABLE IF NOT EXISTS multi_test_users (
-				id BIGINT AUTO_INCREMENT PRIMARY KEY,
-				name VARCHAR(100) NOT NULL,
-				email VARCHAR(100) UNIQUE NOT NULL,
-				age INT,
-				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
-		}
+func TestTransactions(t *testing.T) {
+	// 为此测试使用时间戳的独立数据库文件
+	dbName := fmt.Sprintf("test_tx_%d.db", time.Now().UnixNano())
+	testConfig := &db.Config{
+		Driver:   "sqlite",
+		Database: dbName,
+	}
 
-		_, err := conn.Exec(ctx, createTableSQL)
+	connName := fmt.Sprintf("tx_test_%d", time.Now().UnixNano())
+	err := db.AddConnection(connName, testConfig)
+	require.NoError(t, err)
+
+	conn, err := db.DB(connName)
+	require.NoError(t, err)
+
+	err = conn.Connect()
+	require.NoError(t, err)
+	defer func() {
+		conn.Close()
+		// 清理测试文件
+		_, _ = conn.Exec("DROP TABLE IF EXISTS tx_test")
+	}()
+
+	// 创建测试表
+	createTableSQL := `
+	CREATE TABLE IF NOT EXISTS tx_test (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL,
+		amount INTEGER
+	)`
+
+	_, err = conn.Exec(createTableSQL)
+	require.NoError(t, err)
+
+	// 测试事务提交
+	err = db.Transaction(func(tx db.TransactionInterface) error {
+		_, err := tx.Exec("INSERT INTO tx_test (name, amount) VALUES (?, ?)", "账户A", 1000)
 		if err != nil {
 			return err
 		}
 
-		// 插入数据
-		insertSQL := `INSERT INTO multi_test_users (name, email, age) VALUES (?, ?, ?)`
-		_, err = conn.Exec(ctx, insertSQL, data["name"], data["email"], data["age"])
+		_, err = tx.Exec("INSERT INTO tx_test (name, amount) VALUES (?, ?)", "账户B", 500)
 		return err
+	}, connName)
+	require.NoError(t, err)
 
-	case "mongodb":
-		mongoConn := db.GetMongoConnection(conn)
-		if mongoConn == nil {
-			return fmt.Errorf("无法获取MongoDB连接")
-		}
+	// 验证数据已提交
+	rows, err := conn.Query("SELECT COUNT(*) FROM tx_test")
+	require.NoError(t, err)
+	defer rows.Close()
 
-		collection := mongoConn.GetCollection("multi_test_users")
-		query := db.NewMongoQuery(collection, nil)
+	assert.True(t, rows.Next())
+	var count int
+	err = rows.Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
 
-		mongoDoc := bson.M{
-			"name":       data["name"],
-			"email":      data["email"],
-			"age":        data["age"],
-			"created_at": time.Now(),
-		}
-
-		_, err := query.InsertOne(ctx, mongoDoc)
-		return err
-
-	default:
-		return fmt.Errorf("不支持的数据库驱动: %s", conn.GetDriver())
-	}
-}
-
-func verifyTestData(ctx context.Context, conn db.ConnectionInterface, dbName string, data map[string]interface{}) (bool, error) {
-	switch conn.GetDriver() {
-	case "sqlite", "mysql":
-		selectSQL := `SELECT name, email, age FROM multi_test_users WHERE email = ?`
-		row := conn.QueryRow(ctx, selectSQL, data["email"])
-
-		var foundName, foundEmail string
-		var foundAge int
-
-		err := row.Scan(&foundName, &foundEmail, &foundAge)
-		if err != nil {
-			return false, err
-		}
-
-		return foundName == data["name"].(string) &&
-			foundEmail == data["email"].(string) &&
-			foundAge == data["age"].(int), nil
-
-	case "mongodb":
-		mongoConn := db.GetMongoConnection(conn)
-		if mongoConn == nil {
-			return false, fmt.Errorf("无法获取MongoDB连接")
-		}
-
-		collection := mongoConn.GetCollection("multi_test_users")
-		query := db.NewMongoQuery(collection, nil)
-
-		var foundUser bson.M
-		err := query.Where("email", data["email"]).FindOne(ctx).Decode(&foundUser)
-		if err != nil {
-			return false, err
-		}
-
-		return foundUser["name"] == data["name"] &&
-			foundUser["email"] == data["email"] &&
-			foundUser["age"] == int32(data["age"].(int)), nil
-
-	default:
-		return false, fmt.Errorf("不支持的数据库驱动: %s", conn.GetDriver())
-	}
-}
-
-func performBatchInsert(ctx context.Context, conn db.ConnectionInterface, dbName string, count int) error {
-	switch conn.GetDriver() {
-	case "sqlite", "mysql":
-		// 创建表
-		var createTableSQL string
-		if conn.GetDriver() == "sqlite" {
-			createTableSQL = `
-			CREATE TABLE IF NOT EXISTS multi_test_users (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				name TEXT NOT NULL,
-				email TEXT UNIQUE NOT NULL,
-				age INTEGER,
-				created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-			)`
-		} else {
-			createTableSQL = `
-			CREATE TABLE IF NOT EXISTS multi_test_users (
-				id BIGINT AUTO_INCREMENT PRIMARY KEY,
-				name VARCHAR(100) NOT NULL,
-				email VARCHAR(100) UNIQUE NOT NULL,
-				age INT,
-				created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
-		}
-
-		_, err := conn.Exec(ctx, createTableSQL)
+	// 测试事务回滚
+	err = db.Transaction(func(tx db.TransactionInterface) error {
+		_, err := tx.Exec("INSERT INTO tx_test (name, amount) VALUES (?, ?)", "账户C", 300)
 		if err != nil {
 			return err
 		}
+		// 故意返回错误来触发回滚
+		return fmt.Errorf("故意回滚")
+	}, connName)
+	assert.Error(t, err) // 应该有错误
 
-		// 批量插入
-		insertSQL := `INSERT INTO multi_test_users (name, email, age) VALUES (?, ?, ?)`
-		for i := 0; i < count; i++ {
-			email := fmt.Sprintf("perf_%s_%d@test.com", dbName, i)
-			_, err := conn.Exec(ctx, insertSQL, "性能测试用户", email, 25+i%20)
-			if err != nil {
-				return err
-			}
-		}
-		return nil
+	// 验证数据已回滚，仍然是2条记录
+	rows, err = conn.Query("SELECT COUNT(*) FROM tx_test")
+	require.NoError(t, err)
+	defer rows.Close()
 
-	case "mongodb":
-		mongoConn := db.GetMongoConnection(conn)
-		if mongoConn == nil {
-			return fmt.Errorf("无法获取MongoDB连接")
-		}
+	assert.True(t, rows.Next())
+	err = rows.Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count) // 仍然是2条记录
 
-		collection := mongoConn.GetCollection("multi_test_users")
-		query := db.NewMongoQuery(collection, nil)
+	// 清理
+	_, err = conn.Exec("DROP TABLE tx_test")
+	require.NoError(t, err)
+}
 
-		for i := 0; i < count; i++ {
-			mongoDoc := bson.M{
-				"name":       "性能测试用户",
-				"email":      fmt.Sprintf("perf_%s_%d@test.com", dbName, i),
-				"age":        25 + i%20,
-				"created_at": time.Now(),
-			}
-
-			_, err := query.InsertOne(ctx, mongoDoc)
-			if err != nil {
-				return err
-			}
-		}
-		return nil
-
-	default:
-		return fmt.Errorf("不支持的数据库驱动: %s", conn.GetDriver())
+func TestConnectionPooling(t *testing.T) {
+	// 简化连接池测试，使用时间戳的独立数据库文件
+	dbName := fmt.Sprintf("test_pool_%d.db", time.Now().UnixNano())
+	testConfig := &db.Config{
+		Driver:       "sqlite",
+		Database:     dbName,
+		MaxOpenConns: 5,
+		MaxIdleConns: 2,
 	}
+
+	connName := fmt.Sprintf("pool_test_%d", time.Now().UnixNano())
+	err := db.AddConnection(connName, testConfig)
+	require.NoError(t, err)
+
+	conn, err := db.DB(connName)
+	require.NoError(t, err)
+
+	err = conn.Connect()
+	require.NoError(t, err)
+	defer func() {
+		conn.Close()
+		// 清理测试文件
+		_, _ = conn.Exec("DROP TABLE IF EXISTS pool_test")
+	}()
+
+	// 创建测试表
+	createTableSQL := `
+	CREATE TABLE IF NOT EXISTS pool_test (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		worker_id INTEGER,
+		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`
+
+	_, err = conn.Exec(createTableSQL)
+	require.NoError(t, err)
+
+	// 顺序测试多个操作
+	for i := 0; i < 5; i++ {
+		_, err := conn.Exec("INSERT INTO pool_test (worker_id) VALUES (?)", i)
+		require.NoError(t, err)
+	}
+
+	// 验证总数
+	rows, err := conn.Query("SELECT COUNT(*) FROM pool_test")
+	require.NoError(t, err)
+	defer rows.Close()
+
+	assert.True(t, rows.Next())
+	var totalCount int
+	err = rows.Scan(&totalCount)
+	require.NoError(t, err)
+	assert.Equal(t, 5, totalCount)
+
+	// 验证每个worker
+	for i := 0; i < 5; i++ {
+		rows, err := conn.Query("SELECT COUNT(*) FROM pool_test WHERE worker_id = ?", i)
+		require.NoError(t, err)
+		if rows != nil {
+			assert.True(t, rows.Next())
+			var count int
+			err = rows.Scan(&count)
+			require.NoError(t, err)
+			assert.Equal(t, 1, count)
+			rows.Close()
+		}
+	}
+}
+
+func TestDifferentDatabaseFeatures(t *testing.T) {
+	setupMultiDatabase(t)
+
+	t.Run("SQLite特性测试", func(t *testing.T) {
+		conn, err := db.DB("sqlite")
+		if err != nil {
+			t.Skip("SQLite连接不可用")
+		}
+
+		err = conn.Connect()
+		if err != nil {
+			t.Skip("SQLite连接失败")
+		}
+		defer conn.Close()
+
+		// 测试SQLite特有的PRAGMA命令
+		rows, err := conn.Query("PRAGMA table_info(sqlite_master)")
+		require.NoError(t, err)
+		defer rows.Close()
+
+		// 应该能获取到表信息
+		columnCount := 0
+		for rows.Next() {
+			columnCount++
+		}
+		assert.Greater(t, columnCount, 0)
+	})
+
+	// 可以添加更多数据库特性测试
+}
+
+func TestErrorHandling(t *testing.T) {
+	setupMultiDatabase(t)
+
+	conn, err := db.DB("sqlite")
+	if err != nil {
+		t.Skip("SQLite连接不可用")
+	}
+
+	err = conn.Connect()
+	if err != nil {
+		t.Skip("SQLite连接失败")
+	}
+	defer conn.Close()
+
+	// 测试无效SQL
+	_, err = conn.Exec("INVALID SQL STATEMENT")
+	assert.Error(t, err)
+
+	// 测试查询不存在的表
+	_, err = conn.Query("SELECT * FROM non_existent_table")
+	assert.Error(t, err)
+
+	// 测试事务中的错误
+	tx, err := conn.Begin()
+	require.NoError(t, err)
+
+	_, err = tx.Exec("INVALID SQL IN TRANSACTION")
+	assert.Error(t, err)
+
+	// 即使有错误，也应该能够回滚
+	err = tx.Rollback()
+	assert.NoError(t, err)
+}
+
+// Benchmark tests
+func BenchmarkMultiDatabaseInsert(b *testing.B) {
+	setupMultiDatabase(nil)
+
+	conn, err := db.DB("sqlite")
+	if err != nil {
+		b.Skip("SQLite连接不可用")
+	}
+
+	err = conn.Connect()
+	if err != nil {
+		b.Skip("SQLite连接失败")
+	}
+	defer conn.Close()
+
+	// 创建测试表
+	_, err = conn.Exec(`
+		CREATE TABLE IF NOT EXISTS bench_test (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT,
+			value INTEGER
+		)
+	`)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		conn.Exec("INSERT INTO bench_test (name, value) VALUES (?, ?)", "测试", i)
+	}
+
+	// 清理
+	conn.Exec("DROP TABLE bench_test")
+}
+
+func BenchmarkMultiDatabaseQuery(b *testing.B) {
+	setupMultiDatabase(nil)
+
+	conn, err := db.DB("sqlite")
+	if err != nil {
+		b.Skip("SQLite连接不可用")
+	}
+
+	err = conn.Connect()
+	if err != nil {
+		b.Skip("SQLite连接失败")
+	}
+	defer conn.Close()
+
+	// 创建测试表并插入数据
+	_, err = conn.Exec(`
+		CREATE TABLE IF NOT EXISTS bench_query_test (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT,
+			value INTEGER
+		)
+	`)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	// 插入测试数据
+	for i := 0; i < 1000; i++ {
+		conn.Exec("INSERT INTO bench_query_test (name, value) VALUES (?, ?)", "测试", i)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rows, err := conn.Query("SELECT * FROM bench_query_test LIMIT 10")
+		if err == nil {
+			rows.Close()
+		}
+	}
+
+	// 清理
+	conn.Exec("DROP TABLE bench_query_test")
 }

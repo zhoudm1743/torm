@@ -1,7 +1,6 @@
 package cache
 
 import (
-	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -39,7 +38,7 @@ func NewMemoryCache() *MemoryCache {
 }
 
 // Get 获取缓存值
-func (c *MemoryCache) Get(ctx context.Context, key string) (interface{}, error) {
+func (c *MemoryCache) Get(key string) (interface{}, error) {
 	c.mu.RLock()
 	item, exists := c.items[key]
 	c.mu.RUnlock()
@@ -49,15 +48,15 @@ func (c *MemoryCache) Get(ctx context.Context, key string) (interface{}, error) 
 	}
 
 	if item.IsExpired() {
-		c.Delete(ctx, key)
-		return nil, fmt.Errorf("cache key '%s' expired", key)
+		c.Delete(key)
+		return nil, fmt.Errorf("cache key '%s' has expired", key)
 	}
 
 	return item.Value, nil
 }
 
 // Set 设置缓存值
-func (c *MemoryCache) Set(ctx context.Context, key string, value interface{}, ttl time.Duration) error {
+func (c *MemoryCache) Set(key string, value interface{}, ttl time.Duration) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -75,7 +74,7 @@ func (c *MemoryCache) Set(ctx context.Context, key string, value interface{}, tt
 }
 
 // Delete 删除缓存值
-func (c *MemoryCache) Delete(ctx context.Context, key string) error {
+func (c *MemoryCache) Delete(key string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -84,7 +83,7 @@ func (c *MemoryCache) Delete(ctx context.Context, key string) error {
 }
 
 // Clear 清空所有缓存
-func (c *MemoryCache) Clear(ctx context.Context) error {
+func (c *MemoryCache) Clear() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -93,7 +92,7 @@ func (c *MemoryCache) Clear(ctx context.Context) error {
 }
 
 // Has 检查缓存键是否存在
-func (c *MemoryCache) Has(ctx context.Context, key string) (bool, error) {
+func (c *MemoryCache) Has(key string) (bool, error) {
 	c.mu.RLock()
 	item, exists := c.items[key]
 	c.mu.RUnlock()
@@ -103,7 +102,7 @@ func (c *MemoryCache) Has(ctx context.Context, key string) (bool, error) {
 	}
 
 	if item.IsExpired() {
-		c.Delete(ctx, key)
+		c.Delete(key)
 		return false, nil
 	}
 

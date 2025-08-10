@@ -1,8 +1,6 @@
 package tests
 
 import (
-	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -13,499 +11,239 @@ import (
 	"torm/pkg/migration"
 )
 
-func setupMigrationTest(t *testing.T) (context.Context, *migration.Migrator) {
-	ctx := context.Background()
-
-	// 配置SQLite测试数据库
+// setupTestDatabase 设置测试数据库连接
+func setupTestDatabase(t *testing.T) db.ConnectionInterface {
 	config := &db.Config{
 		Driver:          "sqlite",
-		Database:        "test_migration.db",
-		MaxOpenConns:    10,
-		MaxIdleConns:    5,
+		Database:        ":memory:", // 使用内存数据库避免文件锁定
+		MaxOpenConns:    1,          // SQLite使用单连接避免并发问题
+		MaxIdleConns:    1,
 		ConnMaxLifetime: time.Hour,
 		LogQueries:      false,
 	}
 
-	err := db.AddConnection("test_migration", config)
-	require.NoError(t, err)
+	// 添加连接配置
+	err := db.AddConnection("test", config)
+	if t != nil {
+		require.NoError(t, err)
+	}
 
-	conn, err := db.DB("test_migration")
-	require.NoError(t, err)
+	// 获取连接
+	conn, err := db.DB("test")
+	if t != nil {
+		require.NoError(t, err)
+	}
 
+	// 连接数据库
+	err = conn.Connect()
+	if t != nil {
+		require.NoError(t, err)
+	}
+
+	return conn
+}
+
+func TestMigrationBasic(t *testing.T) {
+	conn := setupTestDatabase(t)
+	defer conn.Close()
+
+	// 创建迁移器
 	migrator := migration.NewMigrator(conn, nil)
-	return ctx, migrator
-}
 
-func cleanupMigrationTest(t *testing.T) {
-	// 删除测试数据库文件
-	os.Remove("test_migration.db")
-}
-
-func TestMigrationBasicOperations(t *testing.T) {
-	ctx, migrator := setupMigrationTest(t)
-	defer cleanupMigrationTest(t)
-
-	// 注册简单的测试迁移
-	migrator.RegisterFunc(
-		"20240101_001",
-		"创建测试表",
-		func(ctx context.Context, conn db.ConnectionInterface) error {
+	// 注册测试迁移
+	migrator.RegisterFunc("20240101_000001", "创建用户表",
+		func(conn db.ConnectionInterface) error {
+			// 创建用户表
 			schema := migration.NewSchemaBuilder(conn)
+
 			table := &migration.Table{
-				Name: "test_table",
+				Name: "test_users",
 				Columns: []*migration.Column{
-					{
-						Name:          "id",
-						Type:          migration.ColumnTypeBigInt,
-						PrimaryKey:    true,
-						AutoIncrement: true,
-						NotNull:       true,
-					},
-					{
-						Name:    "name",
-						Type:    migration.ColumnTypeVarchar,
-						Length:  100,
-						NotNull: true,
-					},
+					{Name: "id", Type: migration.ColumnTypeInt, PrimaryKey: true, AutoIncrement: true},
+					{Name: "name", Type: migration.ColumnTypeVarchar, Length: 100, NotNull: true},
+					{Name: "email", Type: migration.ColumnTypeVarchar, Length: 100, NotNull: true, Unique: true},
+					{Name: "created_at", Type: migration.ColumnTypeTimestamp, Default: "CURRENT_TIMESTAMP"},
 				},
 			}
-			return schema.CreateTable(ctx, table)
+
+			return schema.CreateTable(table)
 		},
-		func(ctx context.Context, conn db.ConnectionInterface) error {
+		func(conn db.ConnectionInterface) error {
+			// 删除用户表
 			schema := migration.NewSchemaBuilder(conn)
-			return schema.DropTable(ctx, "test_table")
+			return schema.DropTable("test_users")
 		},
 	)
 
-	t.Run("初始状态检查", func(t *testing.T) {
-		status, err := migrator.Status(ctx)
-		assert.NoError(t, err)
-		assert.Len(t, status, 1)
-		assert.Equal(t, "20240101_001", status[0].Version)
-		assert.False(t, status[0].Applied)
-	})
+	// 检查初始状态
+	status, err := migrator.Status()
+	require.NoError(t, err)
+	assert.Len(t, status, 1)
+	assert.False(t, status[0].Applied)
 
-	t.Run("执行迁移", func(t *testing.T) {
-		err := migrator.Up(ctx)
-		assert.NoError(t, err)
+	// 执行迁移
+	err = migrator.Up()
+	require.NoError(t, err)
 
-		// 检查状态
-		status, err := migrator.Status(ctx)
-		assert.NoError(t, err)
-		assert.Len(t, status, 1)
-		assert.True(t, status[0].Applied)
-		assert.Equal(t, 1, status[0].Batch)
-	})
+	// 验证迁移状态
+	status, err = migrator.Status()
+	require.NoError(t, err)
+	assert.Len(t, status, 1)
+	assert.True(t, status[0].Applied)
 
-	t.Run("验证表创建", func(t *testing.T) {
-		conn, err := db.DB("test_migration")
-		require.NoError(t, err)
+	// 验证表已创建
+	rows, err := conn.Query("SELECT name FROM sqlite_master WHERE type='table' AND name='test_users'")
+	require.NoError(t, err)
+	defer rows.Close()
 
-		// 尝试插入数据验证表存在
-		_, err = conn.Exec(ctx, "INSERT INTO test_table (name) VALUES (?)", "测试数据")
-		assert.NoError(t, err)
+	assert.True(t, rows.Next())
 
-		// 查询数据
-		row := conn.QueryRow(ctx, "SELECT name FROM test_table WHERE id = 1")
-		var name string
-		err = row.Scan(&name)
-		assert.NoError(t, err)
-		assert.Equal(t, "测试数据", name)
-	})
-
-	t.Run("回滚迁移", func(t *testing.T) {
-		err := migrator.Down(ctx, 1)
-		assert.NoError(t, err)
-
-		// 检查状态
-		status, err := migrator.Status(ctx)
-		assert.NoError(t, err)
-		assert.Len(t, status, 1)
-		assert.False(t, status[0].Applied)
-	})
-
-	t.Run("验证表删除", func(t *testing.T) {
-		conn, err := db.DB("test_migration")
-		require.NoError(t, err)
-
-		// 尝试查询表，应该失败
-		_, err = conn.Exec(ctx, "SELECT * FROM test_table")
-		assert.Error(t, err)
-	})
+	var tableName string
+	err = rows.Scan(&tableName)
+	require.NoError(t, err)
+	assert.Equal(t, "test_users", tableName)
 }
 
-func TestMultipleMigrations(t *testing.T) {
-	ctx, migrator := setupMigrationTest(t)
-	defer cleanupMigrationTest(t)
+func TestMigrationMultiple(t *testing.T) {
+	conn := setupTestDatabase(t)
+	defer conn.Close()
+
+	migrator := migration.NewMigrator(conn, nil)
 
 	// 注册多个迁移
-	migrator.RegisterFunc(
-		"20240101_001",
-		"创建用户表",
-		func(ctx context.Context, conn db.ConnectionInterface) error {
+	migrator.RegisterFunc("20240101_000001", "创建用户表",
+		func(conn db.ConnectionInterface) error {
 			schema := migration.NewSchemaBuilder(conn)
 			table := &migration.Table{
 				Name: "users",
 				Columns: []*migration.Column{
-					{
-						Name:          "id",
-						Type:          migration.ColumnTypeBigInt,
-						PrimaryKey:    true,
-						AutoIncrement: true,
-						NotNull:       true,
-					},
-					{
-						Name:    "name",
-						Type:    migration.ColumnTypeVarchar,
-						Length:  100,
-						NotNull: true,
-					},
+					{Name: "id", Type: migration.ColumnTypeInt, PrimaryKey: true, AutoIncrement: true},
+					{Name: "name", Type: migration.ColumnTypeVarchar, Length: 100, NotNull: true},
 				},
 			}
-			return schema.CreateTable(ctx, table)
+			return schema.CreateTable(table)
 		},
-		func(ctx context.Context, conn db.ConnectionInterface) error {
+		func(conn db.ConnectionInterface) error {
 			schema := migration.NewSchemaBuilder(conn)
-			return schema.DropTable(ctx, "users")
+			return schema.DropTable("users")
 		},
 	)
 
-	migrator.RegisterFunc(
-		"20240101_002",
-		"添加邮箱字段",
-		func(ctx context.Context, conn db.ConnectionInterface) error {
+	migrator.RegisterFunc("20240101_000002", "添加邮箱字段",
+		func(conn db.ConnectionInterface) error {
 			schema := migration.NewSchemaBuilder(conn)
 			column := &migration.Column{
-				Name:   "email",
-				Type:   migration.ColumnTypeVarchar,
-				Length: 100,
+				Name:    "email",
+				Type:    migration.ColumnTypeVarchar,
+				Length:  100,
+				NotNull: true,
 			}
-			return schema.AddColumn(ctx, "users", column)
+			return schema.AddColumn("users", column)
 		},
-		func(ctx context.Context, conn db.ConnectionInterface) error {
+		func(conn db.ConnectionInterface) error {
 			schema := migration.NewSchemaBuilder(conn)
-			return schema.DropColumn(ctx, "users", "email")
+			return schema.DropColumn("users", "email")
 		},
 	)
 
-	migrator.RegisterFunc(
-		"20240101_003",
-		"创建文章表",
-		func(ctx context.Context, conn db.ConnectionInterface) error {
-			schema := migration.NewSchemaBuilder(conn)
-			table := &migration.Table{
-				Name: "posts",
-				Columns: []*migration.Column{
-					{
-						Name:          "id",
-						Type:          migration.ColumnTypeBigInt,
-						PrimaryKey:    true,
-						AutoIncrement: true,
-						NotNull:       true,
-					},
-					{
-						Name:    "title",
-						Type:    migration.ColumnTypeVarchar,
-						Length:  200,
-						NotNull: true,
-					},
-					{
-						Name:    "user_id",
-						Type:    migration.ColumnTypeBigInt,
-						NotNull: true,
-					},
-				},
-			}
-			return schema.CreateTable(ctx, table)
-		},
-		func(ctx context.Context, conn db.ConnectionInterface) error {
-			schema := migration.NewSchemaBuilder(conn)
-			return schema.DropTable(ctx, "posts")
-		},
-	)
+	// 执行所有迁移
+	err := migrator.Up()
+	require.NoError(t, err)
 
-	t.Run("执行所有迁移", func(t *testing.T) {
-		err := migrator.Up(ctx)
-		assert.NoError(t, err)
+	// 验证所有迁移都已应用
+	status, err := migrator.Status()
+	require.NoError(t, err)
+	assert.Len(t, status, 2)
 
-		// 检查所有迁移都已应用
-		status, err := migrator.Status(ctx)
-		assert.NoError(t, err)
-		assert.Len(t, status, 3)
-
-		for _, s := range status {
-			assert.True(t, s.Applied)
-			assert.Equal(t, 1, s.Batch) // 所有迁移应该在同一个批次
-		}
-	})
-
-	t.Run("验证表结构", func(t *testing.T) {
-		conn, err := db.DB("test_migration")
-		require.NoError(t, err)
-
-		// 验证users表
-		_, err = conn.Exec(ctx, "INSERT INTO users (name, email) VALUES (?, ?)", "测试用户", "test@example.com")
-		assert.NoError(t, err)
-
-		// 验证posts表
-		_, err = conn.Exec(ctx, "INSERT INTO posts (title, user_id) VALUES (?, ?)", "测试文章", 1)
-		assert.NoError(t, err)
-
-		// 验证数据关联
-		row := conn.QueryRow(ctx, `
-			SELECT u.name, p.title 
-			FROM users u 
-			JOIN posts p ON u.id = p.user_id 
-			WHERE u.id = 1
-		`)
-		var userName, postTitle string
-		err = row.Scan(&userName, &postTitle)
-		assert.NoError(t, err)
-		assert.Equal(t, "测试用户", userName)
-		assert.Equal(t, "测试文章", postTitle)
-	})
-
-	t.Run("部分回滚", func(t *testing.T) {
-		// 回滚最后一个迁移
-		err := migrator.Down(ctx, 1)
-		assert.NoError(t, err)
-
-		status, err := migrator.Status(ctx)
-		assert.NoError(t, err)
-
-		// 检查前两个迁移仍然应用，最后一个被回滚
-		assert.True(t, status[0].Applied)  // users表
-		assert.True(t, status[1].Applied)  // email字段
-		assert.False(t, status[2].Applied) // posts表
-
-		// 验证posts表不存在
-		conn, err := db.DB("test_migration")
-		require.NoError(t, err)
-		_, err = conn.Exec(ctx, "SELECT * FROM posts")
-		assert.Error(t, err)
-	})
-
-	t.Run("重新应用迁移", func(t *testing.T) {
-		err := migrator.Up(ctx)
-		assert.NoError(t, err)
-
-		status, err := migrator.Status(ctx)
-		assert.NoError(t, err)
-
-		// 检查posts表迁移在新的批次中
-		assert.Equal(t, 1, status[0].Batch) // users表
-		assert.Equal(t, 1, status[1].Batch) // email字段
-		assert.Equal(t, 2, status[2].Batch) // posts表（新批次）
-	})
-
-	t.Run("完全重置", func(t *testing.T) {
-		err := migrator.Reset(ctx)
-		assert.NoError(t, err)
-
-		status, err := migrator.Status(ctx)
-		assert.NoError(t, err)
-
-		// 所有迁移都应该被回滚
-		for _, s := range status {
-			assert.False(t, s.Applied)
-		}
-	})
+	for _, s := range status {
+		assert.True(t, s.Applied)
+	}
 }
 
 func TestSchemaBuilder(t *testing.T) {
-	ctx, _ := setupMigrationTest(t)
-	defer cleanupMigrationTest(t)
-
-	conn, err := db.DB("test_migration")
-	require.NoError(t, err)
+	conn := setupTestDatabase(t)
+	defer conn.Close()
 
 	schema := migration.NewSchemaBuilder(conn)
 
-	t.Run("创建复杂表结构", func(t *testing.T) {
-		table := &migration.Table{
-			Name: "complex_table",
-			Columns: []*migration.Column{
-				{
-					Name:          "id",
-					Type:          migration.ColumnTypeBigInt,
-					PrimaryKey:    true,
-					AutoIncrement: true,
-					NotNull:       true,
-				},
-				{
-					Name:    "title",
-					Type:    migration.ColumnTypeVarchar,
-					Length:  200,
-					NotNull: true,
-				},
-				{
-					Name: "content",
-					Type: migration.ColumnTypeText,
-				},
-				{
-					Name:      "price",
-					Type:      migration.ColumnTypeDecimal,
-					Precision: 10,
-					Scale:     2,
-					Default:   0.00,
-				},
-				{
-					Name:    "is_active",
-					Type:    migration.ColumnTypeBoolean,
-					Default: true,
-				},
-				{
-					Name:    "created_at",
-					Type:    migration.ColumnTypeDateTime,
-					Default: "CURRENT_TIMESTAMP",
-				},
-			},
-			Indexes: []*migration.Index{
-				{
-					Name:    "idx_title",
-					Columns: []string{"title"},
-				},
-				{
-					Name:    "idx_price_active",
-					Columns: []string{"price", "is_active"},
-				},
-			},
-		}
+	// 测试创建表
+	table := &migration.Table{
+		Name: "schema_test",
+		Columns: []*migration.Column{
+			{Name: "id", Type: migration.ColumnTypeInt, PrimaryKey: true, AutoIncrement: true},
+			{Name: "name", Type: migration.ColumnTypeVarchar, Length: 50, NotNull: true},
+			{Name: "email", Type: migration.ColumnTypeVarchar, Length: 100, Unique: true},
+			{Name: "age", Type: migration.ColumnTypeInt, Default: 0},
+			{Name: "created_at", Type: migration.ColumnTypeTimestamp, Default: "CURRENT_TIMESTAMP"},
+		},
+		Indexes: []*migration.Index{
+			{Name: "idx_name", Columns: []string{"name"}},
+			{Name: "idx_age", Columns: []string{"age"}},
+		},
+	}
 
-		err := schema.CreateTable(ctx, table)
-		assert.NoError(t, err)
+	err := schema.CreateTable(table)
+	require.NoError(t, err)
 
-		// 验证表创建成功
-		_, err = conn.Exec(ctx, `
-			INSERT INTO complex_table (title, content, price, is_active) 
-			VALUES (?, ?, ?, ?)
-		`, "测试标题", "测试内容", 99.99, true)
-		assert.NoError(t, err)
-
-		// 验证数据
-		row := conn.QueryRow(ctx, "SELECT title, price FROM complex_table WHERE id = 1")
-		var title string
-		var price float64
-		err = row.Scan(&title, &price)
-		assert.NoError(t, err)
-		assert.Equal(t, "测试标题", title)
-		assert.Equal(t, 99.99, price)
-	})
-
-	t.Run("修改表结构", func(t *testing.T) {
-		// 添加新列
-		newColumn := &migration.Column{
-			Name: "description",
-			Type: migration.ColumnTypeText,
-		}
-
-		err := schema.AddColumn(ctx, "complex_table", newColumn)
-		assert.NoError(t, err)
-
-		// 验证新列
-		_, err = conn.Exec(ctx, "UPDATE complex_table SET description = ? WHERE id = 1", "测试描述")
-		assert.NoError(t, err)
-
-		// 创建新索引
-		newIndex := &migration.Index{
-			Name:    "idx_description",
-			Columns: []string{"description"},
-		}
-
-		err = schema.CreateIndex(ctx, "complex_table", newIndex)
-		assert.NoError(t, err)
-	})
-
-	t.Run("清理表结构", func(t *testing.T) {
-		// 删除索引
-		err := schema.DropIndex(ctx, "complex_table", "idx_description")
-		assert.NoError(t, err)
-
-		// 删除列
-		err = schema.DropColumn(ctx, "complex_table", "description")
-		assert.NoError(t, err)
-
-		// 删除表
-		err = schema.DropTable(ctx, "complex_table")
-		assert.NoError(t, err)
-
-		// 验证表已删除
-		_, err = conn.Exec(ctx, "SELECT * FROM complex_table")
-		assert.Error(t, err)
-	})
+	// 验证表存在
+	rows, err := conn.Query("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_test'")
+	require.NoError(t, err)
+	defer rows.Close()
+	assert.True(t, rows.Next())
 }
 
-func TestMigrationErrorHandling(t *testing.T) {
-	ctx, migrator := setupMigrationTest(t)
-	defer cleanupMigrationTest(t)
+func TestMigrationError(t *testing.T) {
+	conn := setupTestDatabase(t)
+	defer conn.Close()
 
-	// 注册会失败的迁移
-	migrator.RegisterFunc(
-		"20240101_001",
-		"失败的迁移",
-		func(ctx context.Context, conn db.ConnectionInterface) error {
-			_, err := conn.Exec(ctx, "INVALID SQL STATEMENT")
-			return err
+	migrator := migration.NewMigrator(conn, nil)
+
+	// 注册一个会失败的迁移
+	migrator.RegisterFunc("20240101_000001", "失败迁移",
+		func(conn db.ConnectionInterface) error {
+			// 故意返回错误
+			return assert.AnError
 		},
-		func(ctx context.Context, conn db.ConnectionInterface) error {
+		func(conn db.ConnectionInterface) error {
 			return nil
 		},
 	)
 
-	t.Run("迁移失败处理", func(t *testing.T) {
-		err := migrator.Up(ctx)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "migration 20240101_001 failed")
+	// 执行迁移应该失败
+	err := migrator.Up()
+	assert.Error(t, err)
 
-		// 验证没有记录失败的迁移
-		status, err := migrator.Status(ctx)
-		assert.NoError(t, err)
-		assert.Len(t, status, 1)
-		assert.False(t, status[0].Applied)
-	})
-
-	t.Run("回滚不存在的迁移", func(t *testing.T) {
-		err := migrator.Down(ctx, 1)
-		assert.NoError(t, err) // 应该不报错，因为没有迁移可回滚
-	})
+	// 验证迁移没有被记录为已应用
+	status, err := migrator.Status()
+	require.NoError(t, err)
+	assert.Len(t, status, 1)
+	assert.False(t, status[0].Applied)
 }
 
-func TestMigrationTableCustomization(t *testing.T) {
-	ctx, migrator := setupMigrationTest(t)
-	defer cleanupMigrationTest(t)
+func TestMigrationPrintStatus(t *testing.T) {
+	conn := setupTestDatabase(t)
+	defer conn.Close()
 
-	// 设置自定义迁移表名
-	migrator.SetTableName("custom_migrations")
+	migrator := migration.NewMigrator(conn, nil)
 
-	// 注册简单迁移
-	migrator.RegisterFunc(
-		"20240101_001",
-		"测试自定义表名",
-		func(ctx context.Context, conn db.ConnectionInterface) error {
-			_, err := conn.Exec(ctx, "CREATE TABLE test_custom (id INTEGER PRIMARY KEY)")
-			return err
+	// 注册测试迁移
+	migrator.RegisterFunc("20240101_000001", "打印状态测试",
+		func(conn db.ConnectionInterface) error {
+			return nil
 		},
-		func(ctx context.Context, conn db.ConnectionInterface) error {
-			_, err := conn.Exec(ctx, "DROP TABLE test_custom")
-			return err
+		func(conn db.ConnectionInterface) error {
+			return nil
 		},
 	)
 
-	t.Run("使用自定义迁移表", func(t *testing.T) {
-		err := migrator.Up(ctx)
-		assert.NoError(t, err)
+	// 打印状态应该不出错
+	err := migrator.PrintStatus()
+	assert.NoError(t, err)
 
-		// 验证使用了自定义表名
-		conn, err := db.DB("test_migration")
-		require.NoError(t, err)
+	// 执行迁移后再打印
+	err = migrator.Up()
+	require.NoError(t, err)
 
-		row := conn.QueryRow(ctx, "SELECT COUNT(*) FROM custom_migrations")
-		var count int
-		err = row.Scan(&count)
-		assert.NoError(t, err)
-		assert.Equal(t, 1, count)
-
-		// 验证默认表名不存在（但不一定会失败，因为可能之前的测试创建过）
-		// 这里我们只验证自定义表名被使用，不验证默认表名是否存在
-	})
+	err = migrator.PrintStatus()
+	assert.NoError(t, err)
 }

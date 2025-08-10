@@ -28,7 +28,10 @@ func NewMongoDBConnection(config *Config, logger LoggerInterface) (ConnectionInt
 }
 
 // Connect 连接到MongoDB数据库
-func (c *MongoDBConnection) Connect(ctx context.Context) error {
+func (c *MongoDBConnection) Connect() error {
+	// 创建内部context
+	ctx := context.Background()
+
 	uri := c.config.DSN()
 	if c.logger != nil {
 		c.logger.Debug("Connecting to MongoDB", "uri", uri)
@@ -94,10 +97,12 @@ func (c *MongoDBConnection) Close() error {
 }
 
 // Ping 测试连接
-func (c *MongoDBConnection) Ping(ctx context.Context) error {
+func (c *MongoDBConnection) Ping() error {
 	if c.client == nil {
 		return fmt.Errorf("MongoDB connection is not established")
 	}
+	// 创建内部context
+	ctx := context.Background()
 	return c.client.Ping(ctx, readpref.Primary())
 }
 
@@ -106,8 +111,8 @@ func (c *MongoDBConnection) IsConnected() bool {
 	if c.client == nil {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+	// 创建内部context
+	ctx := context.Background()
 	return c.client.Ping(ctx, readpref.Primary()) == nil
 }
 

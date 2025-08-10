@@ -1,7 +1,6 @@
 package model
 
 import (
-	"context"
 	"fmt"
 	"reflect"
 	"strings"
@@ -22,7 +21,7 @@ const (
 // RelationInterface 关联关系接口
 type RelationInterface interface {
 	// 获取关联数据
-	Get(ctx context.Context) (interface{}, error)
+	Get() (interface{}, error)
 	// 获取关联查询构造器
 	GetQuery() (db.QueryInterface, error)
 	// 获取关联类型
@@ -32,9 +31,9 @@ type RelationInterface interface {
 	// 设置约束条件
 	Where(field string, operator string, value interface{}) RelationInterface
 	// 添加关联
-	Associate(ctx context.Context, model interface{}) error
+	Associate(model interface{}) error
 	// 移除关联
-	Dissociate(ctx context.Context, model interface{}) error
+	Dissociate(model interface{}) error
 }
 
 // BaseRelation 基础关联关系
@@ -196,7 +195,7 @@ func NewHasOne(parent interface{}, related interface{}, foreignKey, localKey str
 }
 
 // Get 获取关联数据
-func (h *HasOne) Get(ctx context.Context) (interface{}, error) {
+func (h *HasOne) Get() (interface{}, error) {
 	query, err := h.GetQuery()
 	if err != nil {
 		return nil, err
@@ -207,7 +206,7 @@ func (h *HasOne) Get(ctx context.Context) (interface{}, error) {
 		return nil, nil
 	}
 
-	data, err := query.Where(h.foreignKey, "=", parentKey).First(ctx)
+	data, err := query.Where(h.foreignKey, "=", parentKey).First()
 	if err != nil {
 		return nil, err
 	}
@@ -228,7 +227,7 @@ func (h *HasOne) Where(field string, operator string, value interface{}) Relatio
 }
 
 // Associate 关联模型
-func (h *HasOne) Associate(ctx context.Context, model interface{}) error {
+func (h *HasOne) Associate(model interface{}) error {
 	parentKey := h.getParentKey()
 	if parentKey == nil {
 		return fmt.Errorf("parent key is nil")
@@ -250,7 +249,7 @@ func (h *HasOne) Associate(ctx context.Context, model interface{}) error {
 			})
 
 			// 调用Save方法
-			results := saveMethod.Call([]reflect.Value{reflect.ValueOf(ctx)})
+			results := saveMethod.Call([]reflect.Value{})
 			if len(results) > 0 {
 				if err, ok := results[0].Interface().(error); ok && err != nil {
 					return err
@@ -264,10 +263,10 @@ func (h *HasOne) Associate(ctx context.Context, model interface{}) error {
 }
 
 // Dissociate 取消关联
-func (h *HasOne) Dissociate(ctx context.Context, model interface{}) error {
+func (h *HasOne) Dissociate(model interface{}) error {
 	if baseModel, ok := model.(*BaseModel); ok {
 		baseModel.SetAttribute(h.foreignKey, nil)
-		return baseModel.Save(ctx)
+		return baseModel.Save()
 	}
 
 	return fmt.Errorf("model does not implement required interface")
@@ -300,7 +299,7 @@ func NewHasMany(parent interface{}, related interface{}, foreignKey, localKey st
 }
 
 // Get 获取关联数据
-func (h *HasMany) Get(ctx context.Context) (interface{}, error) {
+func (h *HasMany) Get() (interface{}, error) {
 	query, err := h.GetQuery()
 	if err != nil {
 		return nil, err
@@ -311,7 +310,7 @@ func (h *HasMany) Get(ctx context.Context) (interface{}, error) {
 		return []interface{}{}, nil
 	}
 
-	data, err := query.Where(h.foreignKey, "=", parentKey).Get(ctx)
+	data, err := query.Where(h.foreignKey, "=", parentKey).Get()
 	if err != nil {
 		return nil, err
 	}
@@ -337,7 +336,7 @@ func (h *HasMany) Where(field string, operator string, value interface{}) Relati
 }
 
 // Associate 关联模型
-func (h *HasMany) Associate(ctx context.Context, model interface{}) error {
+func (h *HasMany) Associate(model interface{}) error {
 	parentKey := h.getParentKey()
 	if parentKey == nil {
 		return fmt.Errorf("parent key is nil")
@@ -345,17 +344,17 @@ func (h *HasMany) Associate(ctx context.Context, model interface{}) error {
 
 	if baseModel, ok := model.(*BaseModel); ok {
 		baseModel.SetAttribute(h.foreignKey, parentKey)
-		return baseModel.Save(ctx)
+		return baseModel.Save()
 	}
 
 	return fmt.Errorf("model does not implement required interface")
 }
 
 // Dissociate 取消关联
-func (h *HasMany) Dissociate(ctx context.Context, model interface{}) error {
+func (h *HasMany) Dissociate(model interface{}) error {
 	if baseModel, ok := model.(*BaseModel); ok {
 		baseModel.SetAttribute(h.foreignKey, nil)
-		return baseModel.Save(ctx)
+		return baseModel.Save()
 	}
 
 	return fmt.Errorf("model does not implement required interface")
@@ -386,7 +385,7 @@ func NewBelongsTo(parent interface{}, related interface{}, foreignKey, ownerKey 
 }
 
 // Get 获取关联数据
-func (b *BelongsTo) Get(ctx context.Context) (interface{}, error) {
+func (b *BelongsTo) Get() (interface{}, error) {
 	query, err := b.GetQuery()
 	if err != nil {
 		return nil, err
@@ -398,7 +397,7 @@ func (b *BelongsTo) Get(ctx context.Context) (interface{}, error) {
 		return nil, nil
 	}
 
-	data, err := query.Where(b.localKey, "=", foreignKeyValue).First(ctx)
+	data, err := query.Where(b.localKey, "=", foreignKeyValue).First()
 	if err != nil {
 		return nil, err
 	}
@@ -426,7 +425,7 @@ func (b *BelongsTo) Where(field string, operator string, value interface{}) Rela
 }
 
 // Associate 关联模型
-func (b *BelongsTo) Associate(ctx context.Context, model interface{}) error {
+func (b *BelongsTo) Associate(model interface{}) error {
 	// 获取关联模型的主键值
 	var relatedKey interface{}
 	if baseModel, ok := model.(*BaseModel); ok {
@@ -440,17 +439,17 @@ func (b *BelongsTo) Associate(ctx context.Context, model interface{}) error {
 	// 设置父模型的外键值
 	if parentModel, ok := b.parent.(*BaseModel); ok {
 		parentModel.SetAttribute(b.foreignKey, relatedKey)
-		return parentModel.Save(ctx)
+		return parentModel.Save()
 	}
 
 	return fmt.Errorf("parent model does not implement required interface")
 }
 
 // Dissociate 取消关联
-func (b *BelongsTo) Dissociate(ctx context.Context, model interface{}) error {
+func (b *BelongsTo) Dissociate(model interface{}) error {
 	if parentModel, ok := b.parent.(*BaseModel); ok {
 		parentModel.SetAttribute(b.foreignKey, nil)
-		return parentModel.Save(ctx)
+		return parentModel.Save()
 	}
 
 	return fmt.Errorf("parent model does not implement required interface")
@@ -490,7 +489,7 @@ func NewManyToMany(parent interface{}, related interface{}, pivotTable, pivotFor
 }
 
 // Get 获取关联数据
-func (m *ManyToMany) Get(ctx context.Context) (interface{}, error) {
+func (m *ManyToMany) Get() (interface{}, error) {
 	parentKey := m.getParentKey()
 	if parentKey == nil {
 		return []interface{}{}, nil
@@ -513,7 +512,7 @@ func (m *ManyToMany) Get(ctx context.Context) (interface{}, error) {
 		query = query.Where(where.Field, where.Operator, where.Value)
 	}
 
-	data, err := query.Get(ctx)
+	data, err := query.Get()
 	if err != nil {
 		return nil, err
 	}
@@ -538,7 +537,7 @@ func (m *ManyToMany) Where(field string, operator string, value interface{}) Rel
 }
 
 // Associate 关联模型
-func (m *ManyToMany) Associate(ctx context.Context, model interface{}) error {
+func (m *ManyToMany) Associate(model interface{}) error {
 	parentKey := m.getParentKey()
 	if parentKey == nil {
 		return fmt.Errorf("parent key is nil")
@@ -562,7 +561,7 @@ func (m *ManyToMany) Associate(ctx context.Context, model interface{}) error {
 	exists, err := query.
 		Where(m.pivotForeignKey, "=", parentKey).
 		Where(m.pivotRelatedKey, "=", relatedKey).
-		Exists(ctx)
+		Exists()
 
 	if err != nil {
 		return err
@@ -573,7 +572,7 @@ func (m *ManyToMany) Associate(ctx context.Context, model interface{}) error {
 	}
 
 	// 插入中间表记录
-	_, err = query.Insert(ctx, map[string]interface{}{
+	_, err = query.Insert(map[string]interface{}{
 		m.pivotForeignKey: parentKey,
 		m.pivotRelatedKey: relatedKey,
 	})
@@ -582,7 +581,7 @@ func (m *ManyToMany) Associate(ctx context.Context, model interface{}) error {
 }
 
 // Dissociate 取消关联
-func (m *ManyToMany) Dissociate(ctx context.Context, model interface{}) error {
+func (m *ManyToMany) Dissociate(model interface{}) error {
 	parentKey := m.getParentKey()
 	if parentKey == nil {
 		return fmt.Errorf("parent key is nil")
@@ -606,7 +605,7 @@ func (m *ManyToMany) Dissociate(ctx context.Context, model interface{}) error {
 	_, err = query.
 		Where(m.pivotForeignKey, "=", parentKey).
 		Where(m.pivotRelatedKey, "=", relatedKey).
-		Delete(ctx)
+		Delete()
 
 	return err
 }

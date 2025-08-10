@@ -9,19 +9,19 @@ import (
 // ConnectionInterface 数据库连接接口
 type ConnectionInterface interface {
 	// 连接管理
-	Connect(ctx context.Context) error
+	Connect() error
 	Close() error
-	Ping(ctx context.Context) error
+	Ping() error
 	IsConnected() bool
 
 	// 查询操作
-	Query(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
-	QueryRow(ctx context.Context, query string, args ...interface{}) *sql.Row
-	Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	Query(query string, args ...interface{}) (*sql.Rows, error)
+	QueryRow(query string, args ...interface{}) *sql.Row
+	Exec(query string, args ...interface{}) (sql.Result, error)
 
 	// 事务操作
-	Begin(ctx context.Context) (TransactionInterface, error)
-	BeginTx(ctx context.Context, opts *sql.TxOptions) (TransactionInterface, error)
+	Begin() (TransactionInterface, error)
+	BeginTx(opts *sql.TxOptions) (TransactionInterface, error)
 
 	// 连接信息
 	GetConfig() *Config
@@ -31,9 +31,9 @@ type ConnectionInterface interface {
 
 // TransactionInterface 事务接口
 type TransactionInterface interface {
-	Query(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
-	QueryRow(ctx context.Context, query string, args ...interface{}) *sql.Row
-	Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	Query(query string, args ...interface{}) (*sql.Rows, error)
+	QueryRow(query string, args ...interface{}) *sql.Row
+	Exec(query string, args ...interface{}) (sql.Result, error)
 	Commit() error
 	Rollback() error
 }
@@ -75,18 +75,22 @@ type QueryInterface interface {
 	Offset(offset int) QueryInterface
 	Page(page, pageSize int) QueryInterface
 
+	// 上下文控制
+	WithContext(ctx context.Context) QueryInterface
+	WithTimeout(timeout time.Duration) QueryInterface
+
 	// 执行查询
-	Get(ctx context.Context) ([]map[string]interface{}, error)
-	First(ctx context.Context) (map[string]interface{}, error)
-	Find(ctx context.Context, id interface{}) (map[string]interface{}, error)
-	Count(ctx context.Context) (int64, error)
-	Exists(ctx context.Context) (bool, error)
+	Get() ([]map[string]interface{}, error)
+	First() (map[string]interface{}, error)
+	Find(id interface{}) (map[string]interface{}, error)
+	Count() (int64, error)
+	Exists() (bool, error)
 
 	// 数据操作
-	Insert(ctx context.Context, data map[string]interface{}) (int64, error)
-	InsertBatch(ctx context.Context, data []map[string]interface{}) (int64, error)
-	Update(ctx context.Context, data map[string]interface{}) (int64, error)
-	Delete(ctx context.Context) (int64, error)
+	Insert(data map[string]interface{}) (int64, error)
+	InsertBatch(data []map[string]interface{}) (int64, error)
+	Update(data map[string]interface{}) (int64, error)
+	Delete() (int64, error)
 
 	// SQL构建
 	ToSQL() (string, []interface{}, error)
@@ -113,9 +117,9 @@ type ModelInterface interface {
 	GetConnection() string
 
 	// 数据操作
-	Save(ctx context.Context) error
-	Delete(ctx context.Context) error
-	Reload(ctx context.Context) error
+	Save() error
+	Delete() error
+	Reload() error
 
 	// 属性操作
 	GetAttribute(key string) interface{}
@@ -141,11 +145,11 @@ type ModelInterface interface {
 
 // CacheInterface 缓存接口
 type CacheInterface interface {
-	Get(ctx context.Context, key string) (interface{}, error)
-	Set(ctx context.Context, key string, value interface{}, ttl time.Duration) error
-	Delete(ctx context.Context, key string) error
-	Clear(ctx context.Context) error
-	Has(ctx context.Context, key string) (bool, error)
+	Get(key string) (interface{}, error)
+	Set(key string, value interface{}, ttl time.Duration) error
+	Delete(key string) error
+	Clear() error
+	Has(key string) (bool, error)
 }
 
 // LoggerInterface 日志接口

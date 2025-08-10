@@ -1,16 +1,15 @@
 # 示例代码
 
-本文档提供了TORM的完整使用示例，涵盖了从基础操作到高级功能的各种场景。
+本文档提供了TORM现代化ORM的完整使用示例，涵盖了从基础操作到高级功能的各种场景。
 
 ## 🚀 基础示例
 
-### 连接数据库
+### 连接数据库（现代化方式）
 
 ```go
 package main
 
 import (
-    "context"
     "log"
     "time"
     
@@ -42,151 +41,443 @@ func main() {
         log.Fatal(err)
     }
     
-    ctx := context.Background()
-    err = conn.Ping(ctx)
+    // ✅ 现代化API - 无需context参数
+    err = conn.Connect()
     if err != nil {
         log.Fatal(err)
     }
     
-    log.Println("数据库连接成功!")
+    // 可选的超时控制
+    // err = conn.Ping() // 默认无超时
+    
+    log.Println("✅ 数据库连接成功！")
 }
 ```
 
-### CRUD 操作
+### 查询构建器基础用法
 
 ```go
 package main
 
 import (
-    "context"
+    "fmt"
     "log"
     "time"
     
     "torm/pkg/db"
 )
 
-type User struct {
-    ID        int64     `db:"id" json:"id"`
-    Name      string    `db:"name" json:"name"`
-    Email     string    `db:"email" json:"email"`
-    Age       int       `db:"age" json:"age"`
-    CreatedAt time.Time `db:"created_at" json:"created_at"`
-}
-
 func main() {
-    // ... 数据库配置 ...
+    // 配置数据库...（省略）
     
-    ctx := context.Background()
-    conn, _ := db.DB("default")
-    
-    // 创建表
-    createTable(ctx, conn)
-    
-    // 插入数据
-    user := insertUser(ctx, conn, "张三", "zhangsan@example.com", 25)
-    
-    // 查询单个用户
-    foundUser := getUserByID(ctx, conn, user.ID)
-    log.Printf("找到用户: %+v", foundUser)
-    
-    // 查询多个用户
-    users := getUsersByAge(ctx, conn, 20, 30)
-    log.Printf("找到 %d 个用户", len(users))
-    
-    // 更新用户
-    updateUser(ctx, conn, user.ID, "李四", 26)
-    
-    // 删除用户
-    deleteUser(ctx, conn, user.ID)
-}
-
-func createTable(ctx context.Context, conn db.ConnectionInterface) {
-    sql := `
-    CREATE TABLE IF NOT EXISTS users (
-        id BIGINT AUTO_INCREMENT PRIMARY KEY,
-        name VARCHAR(100) NOT NULL,
-        email VARCHAR(100) UNIQUE NOT NULL,
-        age INT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )`
-    
-    _, err := conn.Exec(ctx, sql)
+    // ✅ 获取查询构建器 - 简洁的API
+    query, err := db.Table("users")
     if err != nil {
-        log.Fatal("创建表失败:", err)
+        log.Fatal(err)
     }
-}
-
-func insertUser(ctx context.Context, conn db.ConnectionInterface, name, email string, age int) *User {
-    sql := `INSERT INTO users (name, email, age) VALUES (?, ?, ?)`
     
-    result, err := conn.Exec(ctx, sql, name, email, age)
+    // 1. 插入数据
+    userID, err := query.Insert(map[string]interface{}{
+        "name":     "张三",
+        "email":    "zhangsan@example.com",
+        "age":      28,
+        "status":   "active",
+        "created_at": time.Now(),
+    })
     if err != nil {
-        log.Fatal("插入用户失败:", err)
+        log.Fatal(err)
     }
+    fmt.Printf("✅ 插入成功，用户ID: %v\n", userID)
     
-    id, _ := result.LastInsertId()
-    
-    return &User{
-        ID:        id,
-        Name:      name,
-        Email:     email,
-        Age:       age,
-        CreatedAt: time.Now(),
-    }
-}
-
-func getUserByID(ctx context.Context, conn db.ConnectionInterface, id int64) *User {
-    sql := `SELECT id, name, email, age, created_at FROM users WHERE id = ?`
-    
-    row := conn.QueryRow(ctx, sql, id)
-    
-    user := &User{}
-    err := row.Scan(&user.ID, &user.Name, &user.Email, &user.Age, &user.CreatedAt)
+    // 2. 查询数据
+    users, err := query.
+        Where("status", "=", "active").
+        Where("age", ">=", 18).
+        OrderBy("created_at", "desc").
+        Limit(10).
+        Get()
     if err != nil {
-        log.Fatal("查询用户失败:", err)
+        log.Fatal(err)
     }
+    fmt.Printf("✅ 找到 %d 个用户\n", len(users))
     
-    return user
-}
-
-func getUsersByAge(ctx context.Context, conn db.ConnectionInterface, minAge, maxAge int) []*User {
-    sql := `SELECT id, name, email, age, created_at FROM users WHERE age BETWEEN ? AND ? ORDER BY created_at DESC`
-    
-    rows, err := conn.Query(ctx, sql, minAge, maxAge)
+    // 3. 更新数据
+    affected, err := query.
+        Where("id", "=", userID).
+        Update(map[string]interface{}{
+            "age": 29,
+            "updated_at": time.Now(),
+        })
     if err != nil {
-        log.Fatal("查询用户失败:", err)
+        log.Fatal(err)
     }
-    defer rows.Close()
+    fmt.Printf("✅ 更新了 %d 条记录\n", affected)
     
-    var users []*User
-    for rows.Next() {
-        user := &User{}
-        err := rows.Scan(&user.ID, &user.Name, &user.Email, &user.Age, &user.CreatedAt)
+    // 4. 删除数据
+    deleted, err := query.
+        Where("id", "=", userID).
+        Delete()
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("✅ 删除了 %d 条记录\n", deleted)
+}
+```
+
+### 高级查询示例
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    "time"
+    
+    "torm/pkg/db"
+)
+
+func advancedQueryExamples() {
+    // 1. 复杂条件查询
+    query, _ := db.Table("users")
+    
+    results, err := query.
+        Select("users.name", "profiles.avatar", "COUNT(posts.id) as post_count").
+        LeftJoin("profiles", "users.id", "=", "profiles.user_id").
+        LeftJoin("posts", "users.id", "=", "posts.user_id").
+        Where("users.status", "=", "active").
+        WhereIn("users.role", []interface{}{"admin", "editor"}).
+        WhereBetween("users.age", 25, 65).
+        WhereNotNull("profiles.avatar").
+        GroupBy("users.id").
+        Having("post_count", ">", 0).
+        OrderBy("post_count", "desc").
+        Limit(20).
+        Get()
+    
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("✅ 复杂查询返回 %d 条记录\n", len(results))
+    
+    // 2. 聚合查询
+    stats, err := query.
+        Select(
+            "department", 
+            "COUNT(*) as user_count", 
+            "AVG(age) as avg_age",
+            "MAX(salary) as max_salary",
+            "MIN(created_at) as earliest_join",
+        ).
+        Where("status", "=", "active").
+        GroupBy("department").
+        Having("user_count", ">=", 5).
+        OrderBy("avg_age", "desc").
+        Get()
+    
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("✅ 统计查询返回 %d 个部门\n", len(stats))
+    
+    // 3. 子查询示例
+    subQuery, _ := db.Table("posts")
+    subQuerySQL, bindings, _ := subQuery.
+        Select("user_id").
+        Where("status", "=", "published").
+        GroupBy("user_id").
+        Having("COUNT(*)", ">", 10).
+        ToSQL()
+    
+    activeWriters, err := query.
+        Where("status", "=", "active").
+        WhereRaw("id IN ("+subQuerySQL+")", bindings...).
+        Get()
+    
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("✅ 找到 %d 个活跃作者\n", len(activeWriters))
+}
+```
+
+### 批量操作示例
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    "time"
+    
+    "torm/pkg/db"
+)
+
+func batchOperationsExample() {
+    query, _ := db.Table("users")
+    
+    // 1. 批量插入
+    users := []map[string]interface{}{
+        {
+            "name":       "用户1",
+            "email":      "user1@example.com",
+            "age":        25,
+            "status":     "active",
+            "created_at": time.Now(),
+        },
+        {
+            "name":       "用户2", 
+            "email":      "user2@example.com",
+            "age":        30,
+            "status":     "active",
+            "created_at": time.Now(),
+        },
+        {
+            "name":       "用户3",
+            "email":      "user3@example.com", 
+            "age":        35,
+            "status":     "pending",
+            "created_at": time.Now(),
+        },
+    }
+    
+    affected, err := query.InsertBatch(users)
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("✅ 批量插入 %d 条记录\n", affected)
+    
+    // 2. 批量更新
+    affected, err = query.
+        Where("status", "=", "pending").
+        Update(map[string]interface{}{
+            "status":     "active",
+            "updated_at": time.Now(),
+        })
+    
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("✅ 批量更新 %d 条记录\n", affected)
+    
+    // 3. 条件删除
+    affected, err = query.
+        Where("status", "=", "inactive").
+        Where("last_login", "<", time.Now().AddDate(0, -6, 0)). // 6个月未登录
+        Delete()
+    
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("✅ 清理了 %d 个非活跃用户\n", affected)
+}
+```
+
+### 事务处理示例
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+    "time"
+    
+    "torm/pkg/db"
+)
+
+func transactionExample() {
+    // ✅ 现代化事务API - 无需context
+    err := db.Transaction(func(tx db.TransactionInterface) error {
+        // 1. 创建用户
+        userResult, err := tx.Exec(`
+            INSERT INTO users (name, email, age, status, created_at) 
+            VALUES (?, ?, ?, ?, ?)
+        `, "事务用户", "transaction@example.com", 28, "active", time.Now())
+        
         if err != nil {
-            log.Fatal("扫描用户数据失败:", err)
+            return err // 自动回滚
         }
-        users = append(users, user)
+        
+        userID, err := userResult.LastInsertId()
+        if err != nil {
+            return err
+        }
+        
+        // 2. 创建用户资料
+        _, err = tx.Exec(`
+            INSERT INTO profiles (user_id, avatar, bio, created_at) 
+            VALUES (?, ?, ?, ?)
+        `, userID, "default-avatar.png", "新用户", time.Now())
+        
+        if err != nil {
+            return err // 自动回滚
+        }
+        
+        // 3. 记录操作日志
+        _, err = tx.Exec(`
+            INSERT INTO user_logs (user_id, action, details, created_at) 
+            VALUES (?, ?, ?, ?)
+        `, userID, "user_created", "用户注册", time.Now())
+        
+        if err != nil {
+            return err // 自动回滚
+        }
+        
+        fmt.Printf("✅ 事务中创建用户，ID: %d\n", userID)
+        return nil // 自动提交
+    })
+    
+    if err != nil {
+        log.Printf("❌ 事务失败: %v", err)
+        return
     }
     
-    return users
+    fmt.Println("✅ 事务执行成功！")
 }
 
-func updateUser(ctx context.Context, conn db.ConnectionInterface, id int64, name string, age int) {
-    sql := `UPDATE users SET name = ?, age = ? WHERE id = ?`
+// 复杂事务示例：银行转账
+func bankTransferExample() {
+    err := db.Transaction(func(tx db.TransactionInterface) error {
+        // 1. 检查转出账户余额
+        var fromBalance float64
+        err := tx.QueryRow(`
+            SELECT balance FROM accounts WHERE id = ? FOR UPDATE
+        `, 1).Scan(&fromBalance)
+        
+        if err != nil {
+            return fmt.Errorf("查询转出账户失败: %v", err)
+        }
+        
+        transferAmount := 1000.0
+        if fromBalance < transferAmount {
+            return fmt.Errorf("余额不足，当前余额: %.2f", fromBalance)
+        }
+        
+        // 2. 扣除转出账户余额
+        _, err = tx.Exec(`
+            UPDATE accounts SET balance = balance - ?, updated_at = ? 
+            WHERE id = ?
+        `, transferAmount, time.Now(), 1)
+        
+        if err != nil {
+            return fmt.Errorf("扣款失败: %v", err)
+        }
+        
+        // 3. 增加转入账户余额
+        _, err = tx.Exec(`
+            UPDATE accounts SET balance = balance + ?, updated_at = ? 
+            WHERE id = ?
+        `, transferAmount, time.Now(), 2)
+        
+        if err != nil {
+            return fmt.Errorf("入账失败: %v", err)
+        }
+        
+        // 4. 记录转账日志
+        _, err = tx.Exec(`
+            INSERT INTO transfer_logs (from_account, to_account, amount, status, created_at) 
+            VALUES (?, ?, ?, ?, ?)
+        `, 1, 2, transferAmount, "completed", time.Now())
+        
+        if err != nil {
+            return fmt.Errorf("记录日志失败: %v", err)
+        }
+        
+        fmt.Printf("✅ 转账成功: %.2f 元\n", transferAmount)
+        return nil
+    })
     
-    _, err := conn.Exec(ctx, sql, name, age, id)
     if err != nil {
-        log.Fatal("更新用户失败:", err)
+        log.Printf("❌ 转账失败: %v", err)
+        return
     }
+    
+    fmt.Println("✅ 转账事务完成！")
 }
+```
 
-func deleteUser(ctx context.Context, conn db.ConnectionInterface, id int64) {
-    sql := `DELETE FROM users WHERE id = ?`
+### 超时控制示例
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "time"
     
-    _, err := conn.Exec(ctx, sql, id)
+    "torm/pkg/db"
+)
+
+func timeoutControlExample() {
+    query, _ := db.Table("users")
+    
+    // 1. 使用WithTimeout进行超时控制
+    users, err := query.
+        WithTimeout(5 * time.Second).  // 5秒超时
+        Where("status", "=", "active").
+        OrderBy("created_at", "desc").
+        Limit(100).
+        Get()
+    
     if err != nil {
-        log.Fatal("删除用户失败:", err)
+        log.Printf("❌ 查询超时: %v", err)
+        return
     }
+    fmt.Printf("✅ 在5秒内查询到 %d 个用户\n", len(users))
+    
+    // 2. 使用WithContext进行更精细的控制
+    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    defer cancel()
+    
+    largeDataset, err := query.
+        WithContext(ctx).
+        Select("*").
+        OrderBy("id", "asc").
+        Get()
+    
+    if err != nil {
+        log.Printf("❌ 大数据查询失败: %v", err)
+        return
+    }
+    fmt.Printf("✅ 查询大数据集: %d 条记录\n", len(largeDataset))
+    
+    // 3. 长时间运行的操作超时控制
+    longRunningCtx, longCancel := context.WithTimeout(context.Background(), 30*time.Second)
+    defer longCancel()
+    
+    err = db.Transaction(func(tx db.TransactionInterface) error {
+        // 在事务内部也可以检查context状态
+        select {
+        case <-longRunningCtx.Done():
+            return longRunningCtx.Err()
+        default:
+        }
+        
+        // 执行长时间操作...
+        result, err := tx.Exec(`
+            UPDATE users SET status = 'verified' 
+            WHERE email_verified = 1 AND status = 'pending'
+        `)
+        if err != nil {
+            return err
+        }
+        
+        affected, _ := result.RowsAffected()
+        fmt.Printf("✅ 批量验证了 %d 个用户\n", affected)
+        
+        return nil
+    })
+    
+    if err != nil {
+        log.Printf("❌ 长时间操作失败: %v", err)
+        return
+    }
+    
+    fmt.Println("✅ 长时间操作完成！")
 }
 ```
 

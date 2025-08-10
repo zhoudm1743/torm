@@ -1,7 +1,6 @@
 package model
 
 import (
-	"context"
 	"fmt"
 	"reflect"
 	"strings"
@@ -146,15 +145,15 @@ func (m *BaseModel) Fill(attributes map[string]interface{}) *BaseModel {
 }
 
 // Save 保存模型到数据库
-func (m *BaseModel) Save(ctx context.Context) error {
+func (m *BaseModel) Save() error {
 	if m.isNew {
-		return m.create(ctx)
+		return m.create()
 	}
-	return m.update(ctx)
+	return m.update()
 }
 
 // create 创建新记录
-func (m *BaseModel) create(ctx context.Context) error {
+func (m *BaseModel) create() error {
 	// 添加时间戳
 	if m.timestamps {
 		now := time.Now()
@@ -183,7 +182,7 @@ func (m *BaseModel) create(ctx context.Context) error {
 	}
 
 	// 插入数据
-	id, err := query.Insert(ctx, m.attributes)
+	id, err := query.Insert(m.attributes)
 	if err != nil {
 		return err
 	}
@@ -206,7 +205,7 @@ func (m *BaseModel) create(ctx context.Context) error {
 }
 
 // update 更新记录
-func (m *BaseModel) update(ctx context.Context) error {
+func (m *BaseModel) update() error {
 	dirty := m.GetDirty()
 	if len(dirty) == 0 {
 		return nil // 没有更改，无需更新
@@ -240,7 +239,7 @@ func (m *BaseModel) update(ctx context.Context) error {
 		return fmt.Errorf("primary key value is required for update")
 	}
 
-	_, err = query.Where(m.primaryKey, "=", pkValue).Update(ctx, dirty)
+	_, err = query.Where(m.primaryKey, "=", pkValue).Update(dirty)
 	if err != nil {
 		return err
 	}
@@ -258,7 +257,7 @@ func (m *BaseModel) update(ctx context.Context) error {
 }
 
 // Delete 删除记录
-func (m *BaseModel) Delete(ctx context.Context) error {
+func (m *BaseModel) Delete() error {
 	if m.isNew {
 		return fmt.Errorf("cannot delete unsaved model")
 	}
@@ -284,14 +283,14 @@ func (m *BaseModel) Delete(ctx context.Context) error {
 		deleteData := map[string]interface{}{
 			m.deletedAt: time.Now(),
 		}
-		_, err = query.Where(m.primaryKey, "=", pkValue).Update(ctx, deleteData)
+		_, err = query.Where(m.primaryKey, "=", pkValue).Update(deleteData)
 		if err != nil {
 			return err
 		}
 		m.SetAttribute(m.deletedAt, deleteData[m.deletedAt])
 	} else {
 		// 硬删除
-		_, err = query.Where(m.primaryKey, "=", pkValue).Delete(ctx)
+		_, err = query.Where(m.primaryKey, "=", pkValue).Delete()
 		if err != nil {
 			return err
 		}
@@ -303,7 +302,7 @@ func (m *BaseModel) Delete(ctx context.Context) error {
 }
 
 // Reload 重新加载模型数据
-func (m *BaseModel) Reload(ctx context.Context) error {
+func (m *BaseModel) Reload() error {
 	if m.isNew {
 		return fmt.Errorf("cannot reload unsaved model")
 	}
@@ -320,7 +319,7 @@ func (m *BaseModel) Reload(ctx context.Context) error {
 	}
 
 	// 查询数据
-	data, err := query.Where(m.primaryKey, "=", pkValue).First(ctx)
+	data, err := query.Where(m.primaryKey, "=", pkValue).First()
 	if err != nil {
 		return err
 	}
@@ -341,13 +340,13 @@ func (m *BaseModel) syncOriginal() {
 }
 
 // Find 根据主键查找记录
-func (m *BaseModel) Find(ctx context.Context, id interface{}) error {
+func (m *BaseModel) Find(id interface{}) error {
 	query, err := db.Table(m.TableName(), m.connection)
 	if err != nil {
 		return err
 	}
 
-	data, err := query.Where(m.primaryKey, "=", id).First(ctx)
+	data, err := query.Where(m.primaryKey, "=", id).First()
 	if err != nil {
 		return err
 	}

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"sync"
-	"time"
 )
 
 // Manager 数据库管理器
@@ -102,11 +101,7 @@ func (m *Manager) createConnection(name string) (ConnectionInterface, error) {
 		return nil, fmt.Errorf("failed to create connection '%s': %w", name, err)
 	}
 
-	// 连接到数据库
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	if err := conn.Connect(ctx); err != nil {
+	if err := conn.Connect(); err != nil {
 		return nil, fmt.Errorf("failed to connect to database '%s': %w", name, err)
 	}
 
@@ -151,7 +146,7 @@ func (m *Manager) Raw(ctx context.Context, sql string, bindings []interface{}, c
 		return nil, err
 	}
 
-	rows, err := conn.Query(ctx, sql, bindings...)
+	rows, err := conn.Query(sql, bindings...)
 	if err != nil {
 		return nil, err
 	}
@@ -172,11 +167,11 @@ func (m *Manager) Exec(ctx context.Context, sql string, bindings []interface{}, 
 		return nil, err
 	}
 
-	return conn.Exec(ctx, sql, bindings...)
+	return conn.Exec(sql, bindings...)
 }
 
 // Transaction 执行事务
-func (m *Manager) Transaction(ctx context.Context, fn func(tx TransactionInterface) error, connectionName ...string) error {
+func (m *Manager) Transaction(fn func(tx TransactionInterface) error, connectionName ...string) error {
 	name := "default"
 	if len(connectionName) > 0 {
 		name = connectionName[0]
@@ -187,7 +182,7 @@ func (m *Manager) Transaction(ctx context.Context, fn func(tx TransactionInterfa
 		return err
 	}
 
-	tx, err := conn.Begin(ctx)
+	tx, err := conn.Begin()
 	if err != nil {
 		return err
 	}
@@ -368,16 +363,16 @@ func Table(tableName string, connectionName ...string) (QueryInterface, error) {
 }
 
 // Raw 执行原生SQL查询
-func Raw(ctx context.Context, sql string, bindings []interface{}, connectionName ...string) ([]map[string]interface{}, error) {
-	return defaultManager.Raw(ctx, sql, bindings, connectionName...)
+func Raw(sql string, bindings []interface{}, connectionName ...string) ([]map[string]interface{}, error) {
+	return defaultManager.Raw(context.Background(), sql, bindings, connectionName...)
 }
 
 // Exec 执行SQL语句
-func Exec(ctx context.Context, sql string, bindings []interface{}, connectionName ...string) (sql.Result, error) {
-	return defaultManager.Exec(ctx, sql, bindings, connectionName...)
+func Exec(sql string, bindings []interface{}, connectionName ...string) (sql.Result, error) {
+	return defaultManager.Exec(context.Background(), sql, bindings, connectionName...)
 }
 
 // Transaction 执行事务
-func Transaction(ctx context.Context, fn func(tx TransactionInterface) error, connectionName ...string) error {
-	return defaultManager.Transaction(ctx, fn, connectionName...)
+func Transaction(fn func(tx TransactionInterface) error, connectionName ...string) error {
+	return defaultManager.Transaction(fn, connectionName...)
 }

@@ -1,7 +1,6 @@
 package db
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 
@@ -11,9 +10,9 @@ import (
 
 // MongoConnectionInterface MongoDB连接接口
 type MongoConnectionInterface interface {
-	Connect(ctx context.Context) error
+	Connect() error
 	Close() error
-	Ping(ctx context.Context) error
+	Ping() error
 	IsConnected() bool
 	GetClient() *mongo.Client
 	GetDatabase() *mongo.Database
@@ -22,8 +21,8 @@ type MongoConnectionInterface interface {
 	GetDriver() string
 
 	// 事务支持
-	BeginMongo(ctx context.Context) (MongoTransactionInterface, error)
-	BeginMongoTx(ctx context.Context, opts *options.TransactionOptions) (MongoTransactionInterface, error)
+	BeginMongo() (MongoTransactionInterface, error)
+	BeginMongoTx(opts *options.TransactionOptions) (MongoTransactionInterface, error)
 }
 
 // MongoTransactionInterface MongoDB事务接口
@@ -39,27 +38,27 @@ type mongoConnectionAdapter struct {
 }
 
 // Query 适配器方法
-func (m *mongoConnectionAdapter) Query(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+func (m *mongoConnectionAdapter) Query(query string, args ...interface{}) (*sql.Rows, error) {
 	return nil, fmt.Errorf("Query method not supported for MongoDB, use GetCollection instead")
 }
 
 // QueryRow 适配器方法
-func (m *mongoConnectionAdapter) QueryRow(ctx context.Context, query string, args ...interface{}) *sql.Row {
+func (m *mongoConnectionAdapter) QueryRow(query string, args ...interface{}) *sql.Row {
 	return nil
 }
 
 // Exec 适配器方法
-func (m *mongoConnectionAdapter) Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+func (m *mongoConnectionAdapter) Exec(query string, args ...interface{}) (sql.Result, error) {
 	return nil, fmt.Errorf("Exec method not supported for MongoDB, use GetCollection instead")
 }
 
 // Begin 适配器方法
-func (m *mongoConnectionAdapter) Begin(ctx context.Context) (TransactionInterface, error) {
+func (m *mongoConnectionAdapter) Begin() (TransactionInterface, error) {
 	return nil, fmt.Errorf("Begin method not supported for MongoDB, use BeginMongo instead")
 }
 
 // BeginTx 适配器方法
-func (m *mongoConnectionAdapter) BeginTx(ctx context.Context, opts *sql.TxOptions) (TransactionInterface, error) {
+func (m *mongoConnectionAdapter) BeginTx(opts *sql.TxOptions) (TransactionInterface, error) {
 	return nil, fmt.Errorf("BeginTx method not supported for MongoDB, use BeginMongoTx instead")
 }
 

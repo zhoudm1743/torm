@@ -1,7 +1,6 @@
 package db
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"time"
@@ -26,7 +25,7 @@ func NewSQLiteConnection(config *Config, logger LoggerInterface) (ConnectionInte
 }
 
 // Connect 连接到SQLite数据库
-func (c *SQLiteConnection) Connect(ctx context.Context) error {
+func (c *SQLiteConnection) Connect() error {
 	dsn := c.config.DSN()
 	if c.logger != nil {
 		c.logger.Debug("Connecting to SQLite", "dsn", dsn)
@@ -55,7 +54,7 @@ func (c *SQLiteConnection) Connect(ctx context.Context) error {
 	}
 
 	// 测试连接
-	if err := db.PingContext(ctx); err != nil {
+	if err := db.Ping(); err != nil {
 		db.Close()
 		if c.logger != nil {
 			c.logger.Error("Failed to ping SQLite database", "error", err)
@@ -84,11 +83,11 @@ func (c *SQLiteConnection) Close() error {
 }
 
 // Ping 测试连接
-func (c *SQLiteConnection) Ping(ctx context.Context) error {
+func (c *SQLiteConnection) Ping() error {
 	if c.db == nil {
 		return fmt.Errorf("database connection is not established")
 	}
-	return c.db.PingContext(ctx)
+	return c.db.Ping()
 }
 
 // IsConnected 检查连接状态
@@ -96,19 +95,17 @@ func (c *SQLiteConnection) IsConnected() bool {
 	if c.db == nil {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	return c.db.PingContext(ctx) == nil
+	return c.db.Ping() == nil
 }
 
 // Query 执行查询
-func (c *SQLiteConnection) Query(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+func (c *SQLiteConnection) Query(query string, args ...interface{}) (*sql.Rows, error) {
 	if c.db == nil {
 		return nil, fmt.Errorf("database connection is not established")
 	}
 
 	start := time.Now()
-	rows, err := c.db.QueryContext(ctx, query, args...)
+	rows, err := c.db.Query(query, args...)
 	duration := time.Since(start)
 
 	if c.logger != nil && c.config.LogQueries {
@@ -126,14 +123,14 @@ func (c *SQLiteConnection) Query(ctx context.Context, query string, args ...inte
 }
 
 // QueryRow 执行单行查询
-func (c *SQLiteConnection) QueryRow(ctx context.Context, query string, args ...interface{}) *sql.Row {
+func (c *SQLiteConnection) QueryRow(query string, args ...interface{}) *sql.Row {
 	if c.db == nil {
 		// 返回一个会出错的Row
-		return (&sql.DB{}).QueryRowContext(ctx, query, args...)
+		return (&sql.DB{}).QueryRow(query, args...)
 	}
 
 	start := time.Now()
-	row := c.db.QueryRowContext(ctx, query, args...)
+	row := c.db.QueryRow(query, args...)
 	duration := time.Since(start)
 
 	if c.logger != nil && c.config.LogQueries {
@@ -144,13 +141,13 @@ func (c *SQLiteConnection) QueryRow(ctx context.Context, query string, args ...i
 }
 
 // Exec 执行SQL语句
-func (c *SQLiteConnection) Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+func (c *SQLiteConnection) Exec(query string, args ...interface{}) (sql.Result, error) {
 	if c.db == nil {
 		return nil, fmt.Errorf("database connection is not established")
 	}
 
 	start := time.Now()
-	result, err := c.db.ExecContext(ctx, query, args...)
+	result, err := c.db.Exec(query, args...)
 	duration := time.Since(start)
 
 	if c.logger != nil && c.config.LogQueries {
@@ -168,17 +165,17 @@ func (c *SQLiteConnection) Exec(ctx context.Context, query string, args ...inter
 }
 
 // Begin 开始事务
-func (c *SQLiteConnection) Begin(ctx context.Context) (TransactionInterface, error) {
-	return c.BeginTx(ctx, nil)
+func (c *SQLiteConnection) Begin() (TransactionInterface, error) {
+	return c.BeginTx(nil)
 }
 
 // BeginTx 开始事务（带选项）
-func (c *SQLiteConnection) BeginTx(ctx context.Context, opts *sql.TxOptions) (TransactionInterface, error) {
+func (c *SQLiteConnection) BeginTx(opts *sql.TxOptions) (TransactionInterface, error) {
 	if c.db == nil {
 		return nil, fmt.Errorf("database connection is not established")
 	}
 
-	tx, err := c.db.BeginTx(ctx, opts)
+	tx, err := c.db.Begin()
 	if err != nil {
 		if c.logger != nil {
 			c.logger.Error("Failed to begin SQLite transaction", "error", err)
@@ -223,13 +220,13 @@ type SQLiteTransaction struct {
 }
 
 // Query 在事务中执行查询
-func (t *SQLiteTransaction) Query(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+func (t *SQLiteTransaction) Query(query string, args ...interface{}) (*sql.Rows, error) {
 	if t.tx == nil {
 		return nil, fmt.Errorf("transaction is not active")
 	}
 
 	start := time.Now()
-	rows, err := t.tx.QueryContext(ctx, query, args...)
+	rows, err := t.tx.Query(query, args...)
 	duration := time.Since(start)
 
 	if t.logger != nil && t.config.LogQueries {
@@ -247,14 +244,14 @@ func (t *SQLiteTransaction) Query(ctx context.Context, query string, args ...int
 }
 
 // QueryRow 在事务中执行单行查询
-func (t *SQLiteTransaction) QueryRow(ctx context.Context, query string, args ...interface{}) *sql.Row {
+func (t *SQLiteTransaction) QueryRow(query string, args ...interface{}) *sql.Row {
 	if t.tx == nil {
 		// 返回一个会出错的Row
-		return (&sql.DB{}).QueryRowContext(ctx, query, args...)
+		return (&sql.DB{}).QueryRow(query, args...)
 	}
 
 	start := time.Now()
-	row := t.tx.QueryRowContext(ctx, query, args...)
+	row := t.tx.QueryRow(query, args...)
 	duration := time.Since(start)
 
 	if t.logger != nil && t.config.LogQueries {
@@ -265,13 +262,13 @@ func (t *SQLiteTransaction) QueryRow(ctx context.Context, query string, args ...
 }
 
 // Exec 在事务中执行SQL语句
-func (t *SQLiteTransaction) Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+func (t *SQLiteTransaction) Exec(query string, args ...interface{}) (sql.Result, error) {
 	if t.tx == nil {
 		return nil, fmt.Errorf("transaction is not active")
 	}
 
 	start := time.Now()
-	result, err := t.tx.ExecContext(ctx, query, args...)
+	result, err := t.tx.Exec(query, args...)
 	duration := time.Since(start)
 
 	if t.logger != nil && t.config.LogQueries {

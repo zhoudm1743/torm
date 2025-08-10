@@ -1,7 +1,6 @@
 package migration
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -13,9 +12,9 @@ import (
 // MigrationInterface 迁移接口
 type MigrationInterface interface {
 	// Up 执行迁移
-	Up(ctx context.Context, conn db.ConnectionInterface) error
+	Up(conn db.ConnectionInterface) error
 	// Down 回滚迁移
-	Down(ctx context.Context, conn db.ConnectionInterface) error
+	Down(conn db.ConnectionInterface) error
 	// Version 获取迁移版本号
 	Version() string
 	// Description 获取迁移描述
@@ -26,13 +25,13 @@ type MigrationInterface interface {
 type Migration struct {
 	version     string
 	description string
-	upFunc      func(ctx context.Context, conn db.ConnectionInterface) error
-	downFunc    func(ctx context.Context, conn db.ConnectionInterface) error
+	upFunc      func(conn db.ConnectionInterface) error
+	downFunc    func(conn db.ConnectionInterface) error
 }
 
 // NewMigration 创建新迁移
 func NewMigration(version, description string,
-	upFunc, downFunc func(ctx context.Context, conn db.ConnectionInterface) error) *Migration {
+	upFunc, downFunc func(conn db.ConnectionInterface) error) *Migration {
 	return &Migration{
 		version:     version,
 		description: description,
@@ -42,19 +41,19 @@ func NewMigration(version, description string,
 }
 
 // Up 执行迁移
-func (m *Migration) Up(ctx context.Context, conn db.ConnectionInterface) error {
+func (m *Migration) Up(conn db.ConnectionInterface) error {
 	if m.upFunc == nil {
 		return fmt.Errorf("up function not defined for migration %s", m.version)
 	}
-	return m.upFunc(ctx, conn)
+	return m.upFunc(conn)
 }
 
 // Down 回滚迁移
-func (m *Migration) Down(ctx context.Context, conn db.ConnectionInterface) error {
+func (m *Migration) Down(conn db.ConnectionInterface) error {
 	if m.downFunc == nil {
 		return fmt.Errorf("down function not defined for migration %s", m.version)
 	}
-	return m.downFunc(ctx, conn)
+	return m.downFunc(conn)
 }
 
 // Version 获取迁移版本号
@@ -116,13 +115,13 @@ func (m *Migrator) Register(migration MigrationInterface) *Migrator {
 
 // RegisterFunc 注册函数式迁移
 func (m *Migrator) RegisterFunc(version, description string,
-	upFunc, downFunc func(ctx context.Context, conn db.ConnectionInterface) error) *Migrator {
+	upFunc, downFunc func(conn db.ConnectionInterface) error) *Migrator {
 	migration := NewMigration(version, description, upFunc, downFunc)
 	return m.Register(migration)
 }
 
 // ensureMigrationTable 确保迁移表存在
-func (m *Migrator) ensureMigrationTable(ctx context.Context) error {
+func (m *Migrator) ensureMigrationTable() error {
 	if !m.autoCreate {
 		return nil
 	}
@@ -157,7 +156,7 @@ func (m *Migrator) ensureMigrationTable(ctx context.Context) error {
 		CREATE INDEX IF NOT EXISTS idx_%s_batch ON %s(batch);
 		`, m.tableName, m.tableName, m.tableName, m.tableName)
 
-		if _, err := m.conn.Exec(ctx, indexSQL); err != nil {
+		if _, err := m.conn.Exec(indexSQL); err != nil {
 			m.logError("Failed to create indexes", err)
 		}
 
@@ -177,7 +176,7 @@ func (m *Migrator) ensureMigrationTable(ctx context.Context) error {
 		CREATE INDEX IF NOT EXISTS idx_%s_batch ON %s(batch);
 		`, m.tableName, m.tableName, m.tableName, m.tableName)
 
-		if _, err := m.conn.Exec(ctx, indexSQL); err != nil {
+		if _, err := m.conn.Exec(indexSQL); err != nil {
 			m.logError("Failed to create indexes", err)
 		}
 
@@ -196,7 +195,7 @@ func (m *Migrator) ensureMigrationTable(ctx context.Context) error {
 		return fmt.Errorf("unsupported database driver: %s", m.conn.GetDriver())
 	}
 
-	_, err := m.conn.Exec(ctx, createTableSQL)
+	_, err := m.conn.Exec(createTableSQL)
 	if err != nil {
 		return fmt.Errorf("failed to create migration table: %w", err)
 	}
@@ -206,11 +205,11 @@ func (m *Migrator) ensureMigrationTable(ctx context.Context) error {
 }
 
 // getAppliedMigrations 获取已应用的迁移
-func (m *Migrator) getAppliedMigrations(ctx context.Context) (map[string]*MigrationRecord, error) {
+func (m *Migrator) getAppliedMigrations() (map[string]*MigrationRecord, error) {
 	applied := make(map[string]*MigrationRecord)
 
 	query := fmt.Sprintf("SELECT id, version, description, applied_at, batch FROM %s ORDER BY id", m.tableName)
-	rows, err := m.conn.Query(ctx, query)
+	rows, err := m.conn.Query(query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query applied migrations: %w", err)
 	}
@@ -229,9 +228,9 @@ func (m *Migrator) getAppliedMigrations(ctx context.Context) (map[string]*Migrat
 }
 
 // getNextBatch 获取下一个批次号
-func (m *Migrator) getNextBatch(ctx context.Context) (int, error) {
+func (m *Migrator) getNextBatch() (int, error) {
 	query := fmt.Sprintf("SELECT COALESCE(MAX(batch), 0) + 1 FROM %s", m.tableName)
-	row := m.conn.QueryRow(ctx, query)
+	row := m.conn.QueryRow(query)
 
 	var nextBatch int
 	err := row.Scan(&nextBatch)
@@ -243,9 +242,9 @@ func (m *Migrator) getNextBatch(ctx context.Context) (int, error) {
 }
 
 // recordMigration 记录迁移
-func (m *Migrator) recordMigration(ctx context.Context, migration MigrationInterface, batch int) error {
+func (m *Migrator) recordMigration(migration MigrationInterface, batch int) error {
 	query := fmt.Sprintf("INSERT INTO %s (version, description, batch) VALUES (?, ?, ?)", m.tableName)
-	_, err := m.conn.Exec(ctx, query, migration.Version(), migration.Description(), batch)
+	_, err := m.conn.Exec(query, migration.Version(), migration.Description(), batch)
 	if err != nil {
 		return fmt.Errorf("failed to record migration %s: %w", migration.Version(), err)
 	}
@@ -253,9 +252,9 @@ func (m *Migrator) recordMigration(ctx context.Context, migration MigrationInter
 }
 
 // removeMigrationRecord 移除迁移记录
-func (m *Migrator) removeMigrationRecord(ctx context.Context, version string) error {
+func (m *Migrator) removeMigrationRecord(version string) error {
 	query := fmt.Sprintf("DELETE FROM %s WHERE version = ?", m.tableName)
-	_, err := m.conn.Exec(ctx, query, version)
+	_, err := m.conn.Exec(query, version)
 	if err != nil {
 		return fmt.Errorf("failed to remove migration record %s: %w", version, err)
 	}
@@ -270,12 +269,12 @@ func (m *Migrator) sortMigrations(migrations []MigrationInterface) {
 }
 
 // Up 执行所有待执行的迁移
-func (m *Migrator) Up(ctx context.Context) error {
-	if err := m.ensureMigrationTable(ctx); err != nil {
+func (m *Migrator) Up() error {
+	if err := m.ensureMigrationTable(); err != nil {
 		return err
 	}
 
-	applied, err := m.getAppliedMigrations(ctx)
+	applied, err := m.getAppliedMigrations()
 	if err != nil {
 		return err
 	}
@@ -297,7 +296,7 @@ func (m *Migrator) Up(ctx context.Context) error {
 	m.sortMigrations(pending)
 
 	// 获取下一个批次号
-	batch, err := m.getNextBatch(ctx)
+	batch, err := m.getNextBatch()
 	if err != nil {
 		return err
 	}
@@ -309,7 +308,7 @@ func (m *Migrator) Up(ctx context.Context) error {
 		m.logInfo("Applying migration", "version", migration.Version(), "description", migration.Description())
 
 		start := time.Now()
-		err := migration.Up(ctx, m.conn)
+		err := migration.Up(m.conn)
 		duration := time.Since(start)
 
 		if err != nil {
@@ -318,7 +317,7 @@ func (m *Migrator) Up(ctx context.Context) error {
 		}
 
 		// 记录迁移
-		if err := m.recordMigration(ctx, migration, batch); err != nil {
+		if err := m.recordMigration(migration, batch); err != nil {
 			return err
 		}
 
@@ -330,8 +329,8 @@ func (m *Migrator) Up(ctx context.Context) error {
 }
 
 // Down 回滚指定数量的迁移
-func (m *Migrator) Down(ctx context.Context, steps int) error {
-	if err := m.ensureMigrationTable(ctx); err != nil {
+func (m *Migrator) Down(steps int) error {
+	if err := m.ensureMigrationTable(); err != nil {
 		return err
 	}
 
@@ -341,7 +340,7 @@ func (m *Migrator) Down(ctx context.Context, steps int) error {
 
 	// 获取已应用的迁移，按批次倒序
 	query := fmt.Sprintf("SELECT version FROM %s ORDER BY batch DESC, id DESC LIMIT ?", m.tableName)
-	rows, err := m.conn.Query(ctx, query, steps)
+	rows, err := m.conn.Query(query, steps)
 	if err != nil {
 		return fmt.Errorf("failed to query migrations to rollback: %w", err)
 	}
@@ -382,7 +381,7 @@ func (m *Migrator) Down(ctx context.Context, steps int) error {
 		m.logInfo("Rolling back migration", "version", version, "description", migration.Description())
 
 		start := time.Now()
-		err := migration.Down(ctx, m.conn)
+		err := migration.Down(m.conn)
 		duration := time.Since(start)
 
 		if err != nil {
@@ -391,7 +390,7 @@ func (m *Migrator) Down(ctx context.Context, steps int) error {
 		}
 
 		// 移除迁移记录
-		if err := m.removeMigrationRecord(ctx, version); err != nil {
+		if err := m.removeMigrationRecord(version); err != nil {
 			return err
 		}
 
@@ -403,12 +402,12 @@ func (m *Migrator) Down(ctx context.Context, steps int) error {
 }
 
 // Reset 重置所有迁移
-func (m *Migrator) Reset(ctx context.Context) error {
-	if err := m.ensureMigrationTable(ctx); err != nil {
+func (m *Migrator) Reset() error {
+	if err := m.ensureMigrationTable(); err != nil {
 		return err
 	}
 
-	applied, err := m.getAppliedMigrations(ctx)
+	applied, err := m.getAppliedMigrations()
 	if err != nil {
 		return err
 	}
@@ -418,16 +417,16 @@ func (m *Migrator) Reset(ctx context.Context) error {
 		return nil
 	}
 
-	return m.Down(ctx, len(applied))
+	return m.Down(len(applied))
 }
 
 // Status 获取迁移状态
-func (m *Migrator) Status(ctx context.Context) ([]*MigrationStatus, error) {
-	if err := m.ensureMigrationTable(ctx); err != nil {
+func (m *Migrator) Status() ([]*MigrationStatus, error) {
+	if err := m.ensureMigrationTable(); err != nil {
 		return nil, err
 	}
 
-	applied, err := m.getAppliedMigrations(ctx)
+	applied, err := m.getAppliedMigrations()
 	if err != nil {
 		return nil, err
 	}
@@ -475,16 +474,16 @@ func (s *MigrationStatus) String() string {
 }
 
 // Fresh 清空数据库并重新执行所有迁移
-func (m *Migrator) Fresh(ctx context.Context) error {
+func (m *Migrator) Fresh() error {
 	m.logInfo("Starting fresh migration")
 
 	// 重置所有迁移
-	if err := m.Reset(ctx); err != nil {
+	if err := m.Reset(); err != nil {
 		return fmt.Errorf("failed to reset migrations: %w", err)
 	}
 
 	// 执行所有迁移
-	if err := m.Up(ctx); err != nil {
+	if err := m.Up(); err != nil {
 		return fmt.Errorf("failed to apply migrations: %w", err)
 	}
 
@@ -508,8 +507,8 @@ func (m *Migrator) logError(message string, err error, args ...interface{}) {
 }
 
 // PrintStatus 打印迁移状态
-func (m *Migrator) PrintStatus(ctx context.Context) error {
-	status, err := m.Status(ctx)
+func (m *Migrator) PrintStatus() error {
+	status, err := m.Status()
 	if err != nil {
 		return err
 	}
