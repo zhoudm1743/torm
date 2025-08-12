@@ -6,6 +6,7 @@
 [![Version](https://img.shields.io/badge/version-1.1.0-orange.svg)](https://github.com/zhoudm1743/torm/releases)
 
 TORM是一个基于Go语言开发的高性能ORM（对象关系映射）框架，灵感来源于PHP ThinkORM。它提供了简洁易用的API、强大的查询构造器、完整的模型系统以及丰富的功能。
+如果您觉得TORM有帮助到您，请帮忙给个star
 
 ## 🌐 官方网站
 
