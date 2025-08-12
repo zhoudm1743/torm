@@ -105,23 +105,32 @@ func NewUserWithCompositePK() *UserWithCompositePK {
 package main
 
 import (
-    "examples/models"
     "log"
     
     "github.com/zhoudm1743/torm/db"
 )
 
+type User struct {
+    ID        int    `db:"id" json:"id"`
+    Name      string `db:"name" json:"name"`
+    Email     string `db:"email" json:"email"`
+    Age       int    `db:"age" json:"age"`
+    Status    string `db:"status" json:"status"`
+    CreatedAt string `db:"created_at" json:"created_at"`
+    UpdatedAt string `db:"updated_at" json:"updated_at"`
+}
+
 func main() {
     // 配置数据库连接
-    conf := &db.Config{
+    config := &db.Config{
         Driver:   "mysql",
         Host:     "localhost",
         Port:     3306,
         Username: "root",
-        Password: "123456",
-        Database: "orm",
+        Password: "password",
+        Database: "torm_example",
     }
-    err := db.AddConnection("default", conf)
+    err := db.AddConnection("default", config)
     if err != nil {
         log.Fatal(err)
     }

@@ -104,6 +104,10 @@ type QueryBuilder struct {
 	distinct   bool
 	// 移除bindings字段，改为在构建SQL时动态收集
 	ctx context.Context // 添加context字段
+
+	// 模型支持
+	boundModel    interface{} // 绑定的模型实例
+	modelMetadata interface{} // 模型元数据（从model包导入会造成循环依赖，使用interface{}）
 }
 
 // WhereClause WHERE子句
@@ -175,15 +179,45 @@ func (q *QueryBuilder) Distinct() QueryInterface {
 	return newQuery
 }
 
-// Where 添加WHERE条件
-func (q *QueryBuilder) Where(field string, operator string, value interface{}) QueryInterface {
+// Where 添加WHERE条件 - 支持多种调用方式
+// 1. Where(field, operator, value) - 传统方式
+// 2. Where(condition, args...) - TORM风格参数化查询
+func (q *QueryBuilder) Where(args ...interface{}) QueryInterface {
 	newQuery := q.clone()
-	newQuery.wheres = append(newQuery.wheres, WhereClause{
-		Type:     "and",
-		Field:    field,
-		Operator: operator,
-		Value:    value,
-	})
+
+	if len(args) == 0 {
+		return newQuery
+	}
+
+	// 支持传统的三参数方式: Where(field, operator, value)
+	if len(args) == 3 {
+		field, ok1 := args[0].(string)
+		operator, ok2 := args[1].(string)
+		if ok1 && ok2 && isValidSQLOperator(operator) {
+			newQuery.wheres = append(newQuery.wheres, WhereClause{
+				Type:     "and",
+				Field:    field,
+				Operator: operator,
+				Value:    args[2],
+			})
+			return newQuery
+		}
+	}
+
+	// 支持TORM风格的参数化查询: Where("name = ?", "张三") 或 Where("name = ? AND age >= ?", "张三", 22)
+	if len(args) >= 1 {
+		condition, ok := args[0].(string)
+		if ok {
+			bindings := args[1:]
+			newQuery.wheres = append(newQuery.wheres, WhereClause{
+				Type:        "and",
+				Raw:         condition,
+				RawBindings: bindings,
+			})
+			return newQuery
+		}
+	}
+
 	return newQuery
 }
 
@@ -256,15 +290,45 @@ func (q *QueryBuilder) WhereRaw(raw string, bindings ...interface{}) QueryInterf
 	return newQuery
 }
 
-// OrWhere 添加OR WHERE条件
-func (q *QueryBuilder) OrWhere(field string, operator string, value interface{}) QueryInterface {
+// OrWhere 添加OR WHERE条件 - 支持多种调用方式
+// 1. OrWhere(field, operator, value) - 传统方式
+// 2. OrWhere(condition, args...) - TORM风格参数化查询
+func (q *QueryBuilder) OrWhere(args ...interface{}) QueryInterface {
 	newQuery := q.clone()
-	newQuery.wheres = append(newQuery.wheres, WhereClause{
-		Type:     "or",
-		Field:    field,
-		Operator: operator,
-		Value:    value,
-	})
+
+	if len(args) == 0 {
+		return newQuery
+	}
+
+	// 支持传统的三参数方式: OrWhere(field, operator, value)
+	if len(args) == 3 {
+		field, ok1 := args[0].(string)
+		operator, ok2 := args[1].(string)
+		if ok1 && ok2 {
+			newQuery.wheres = append(newQuery.wheres, WhereClause{
+				Type:     "or",
+				Field:    field,
+				Operator: operator,
+				Value:    args[2],
+			})
+			return newQuery
+		}
+	}
+
+	// 支持TORM风格的参数化查询
+	if len(args) >= 1 {
+		condition, ok := args[0].(string)
+		if ok {
+			bindings := args[1:]
+			newQuery.wheres = append(newQuery.wheres, WhereClause{
+				Type:        "or",
+				Raw:         condition,
+				RawBindings: bindings,
+			})
+			return newQuery
+		}
+	}
+
 	return newQuery
 }
 
@@ -437,10 +501,75 @@ func (q *QueryBuilder) First(dest ...interface{}) (map[string]interface{}, error
 	return result, nil
 }
 
-// Find 根据ID查找记录
-// 如果传入指针，也会填充到指针指向的对象
-func (q *QueryBuilder) Find(id interface{}, dest ...interface{}) (map[string]interface{}, error) {
-	return q.Where("id", "=", id).First(dest...)
+// Find 根据ID查找记录，或执行Where条件查找多条记录
+// 用法1: Find(1, &user) - 根据ID查找
+// 用法2: Find(&users) - 查找所有符合条件的记录（需要之前调用Where）
+func (q *QueryBuilder) Find(args ...interface{}) (map[string]interface{}, error) {
+	if len(args) == 0 {
+		return nil, fmt.Errorf("find requires at least one argument")
+	}
+
+	// 如果第一个参数不是指针，说明是ID查找模式
+	firstArgValue := reflect.ValueOf(args[0])
+	if firstArgValue.Kind() != reflect.Ptr {
+		// ID查找模式: Find(id, dest...)
+		id := args[0]
+		dest := args[1:]
+		return q.Where("id", "=", id).First(dest...)
+	}
+
+	// 如果第一个参数是指针，说明是查找多条记录模式
+	dest := args[0]
+	results, err := q.Get()
+	if err != nil {
+		return nil, err
+	}
+
+	// 对于切片类型，填充多条记录
+	destValue := reflect.ValueOf(dest)
+	if destValue.Kind() == reflect.Ptr && destValue.Elem().Kind() == reflect.Slice {
+		sliceValue := destValue.Elem()
+		sliceType := sliceValue.Type()
+		elemType := sliceType.Elem()
+
+		// 创建新的切片
+		newSlice := reflect.MakeSlice(sliceType, 0, len(results))
+
+		for _, result := range results {
+			// 为切片元素类型创建新实例
+			var elem reflect.Value
+			if elemType.Kind() == reflect.Ptr {
+				elem = reflect.New(elemType.Elem())
+			} else {
+				elem = reflect.New(elemType)
+			}
+
+			// 填充数据
+			err = LoadModel(elem.Interface(), result)
+			if err != nil {
+				continue // 忽略单个记录的错误
+			}
+
+			// 添加到切片
+			if elemType.Kind() == reflect.Ptr {
+				newSlice = reflect.Append(newSlice, elem)
+			} else {
+				newSlice = reflect.Append(newSlice, elem.Elem())
+			}
+		}
+
+		// 设置切片
+		sliceValue.Set(newSlice)
+
+		// 返回第一条记录的map（如果存在）
+		if len(results) > 0 {
+			return results[0], nil
+		}
+		return nil, nil
+	}
+
+	// 对于单个记录，使用First方法
+	return q.First(dest)
 }
 
 // Count 获取记录数量
@@ -547,18 +676,20 @@ func (q *QueryBuilder) Clone() QueryInterface {
 // clone 内部克隆方法
 func (q *QueryBuilder) clone() *QueryBuilder {
 	newQuery := &QueryBuilder{
-		connection: q.connection,
-		table:      q.table,
-		fields:     make([]string, len(q.fields)),
-		wheres:     make([]WhereClause, len(q.wheres)),
-		joins:      make([]JoinClause, len(q.joins)),
-		orders:     make([]OrderClause, len(q.orders)),
-		groups:     make([]string, len(q.groups)),
-		havings:    make([]WhereClause, len(q.havings)),
-		limitNum:   q.limitNum,
-		offsetNum:  q.offsetNum,
-		distinct:   q.distinct,
-		ctx:        q.ctx, // 克隆context
+		connection:    q.connection,
+		table:         q.table,
+		fields:        make([]string, len(q.fields)),
+		wheres:        make([]WhereClause, len(q.wheres)),
+		joins:         make([]JoinClause, len(q.joins)),
+		orders:        make([]OrderClause, len(q.orders)),
+		groups:        make([]string, len(q.groups)),
+		havings:       make([]WhereClause, len(q.havings)),
+		limitNum:      q.limitNum,
+		offsetNum:     q.offsetNum,
+		distinct:      q.distinct,
+		ctx:           q.ctx, // 克隆context
+		boundModel:    q.boundModel,
+		modelMetadata: q.modelMetadata,
 	}
 
 	copy(newQuery.fields, q.fields)
@@ -1017,4 +1148,252 @@ func (q *QueryBuilder) execWithContext(ctx context.Context, query string, args .
 		return ctxConn.ExecContext(ctx, query, args...)
 	}
 	return q.connection.Exec(query, args...)
+}
+
+// isValidSQLOperator 检查是否为有效的SQL操作符
+func isValidSQLOperator(operator string) bool {
+	validOperators := map[string]bool{
+		"=":           true,
+		"!=":          true,
+		"<>":          true,
+		"<":           true,
+		"<=":          true,
+		">":           true,
+		">=":          true,
+		"LIKE":        true,
+		"NOT LIKE":    true,
+		"IN":          true,
+		"NOT IN":      true,
+		"BETWEEN":     true,
+		"NOT BETWEEN": true,
+		"IS":          true,
+		"IS NOT":      true,
+		"IS NULL":     true,
+		"IS NOT NULL": true,
+		"REGEXP":      true,
+		"NOT REGEXP":  true,
+		"RLIKE":       true,
+	}
+
+	return validOperators[strings.ToUpper(operator)]
+}
+
+// ===== 模型支持方法 =====
+
+// WithModel 绑定模型，启用模型特性
+func (q *QueryBuilder) WithModel(model interface{}) QueryInterface {
+	newQuery := q.clone()
+	newQuery.boundModel = model
+	newQuery.modelMetadata = model
+
+	// 自动应用软删除过滤
+	if model != nil {
+		deletedAtField := q.getModelDeletedAtField(model)
+		if deletedAtField != "" {
+			// 自动添加软删除过滤条件
+			newQuery = newQuery.WhereNull(deletedAtField).(*QueryBuilder)
+		}
+	}
+
+	return newQuery
+}
+
+// InsertModel 插入模型实例
+func (q *QueryBuilder) InsertModel(model interface{}) (int64, error) {
+	if model == nil {
+		return 0, fmt.Errorf("model cannot be nil")
+	}
+
+	// 将模型转换为map数据
+	data, err := q.modelToMap(model)
+	if err != nil {
+		return 0, err
+	}
+
+	// 应用模型的时间戳规则
+	data = q.applyTimestamps(data, model, "insert")
+
+	return q.Insert(data)
+}
+
+// UpdateModel 更新模型实例
+func (q *QueryBuilder) UpdateModel(model interface{}) (int64, error) {
+	if model == nil {
+		return 0, fmt.Errorf("model cannot be nil")
+	}
+
+	// 将模型转换为map数据
+	data, err := q.modelToMap(model)
+	if err != nil {
+		return 0, err
+	}
+
+	// 应用模型的时间戳规则
+	data = q.applyTimestamps(data, model, "update")
+
+	return q.Update(data)
+}
+
+// FindModel 查找并填充模型
+func (q *QueryBuilder) FindModel(id interface{}, model interface{}) error {
+	if model == nil {
+		return fmt.Errorf("model cannot be nil")
+	}
+
+	// 获取主键字段名
+	pkField := q.getModelPrimaryKey(model)
+	if pkField == "" {
+		pkField = "id" // 默认使用id
+	}
+
+	// 查询数据
+	result, err := q.Where(pkField, "=", id).First()
+	if err != nil {
+		return err
+	}
+
+	// 填充模型
+	return LoadModel(model, result)
+}
+
+// ===== 辅助方法 =====
+
+// modelToMap 将模型实例转换为map数据
+func (q *QueryBuilder) modelToMap(model interface{}) (map[string]interface{}, error) {
+	data := make(map[string]interface{})
+
+	modelValue := reflect.ValueOf(model)
+	if modelValue.Kind() == reflect.Ptr {
+		modelValue = modelValue.Elem()
+	}
+
+	if modelValue.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("model must be a struct or pointer to struct")
+	}
+
+	modelType := modelValue.Type()
+
+	for i := 0; i < modelType.NumField(); i++ {
+		field := modelType.Field(i)
+		fieldValue := modelValue.Field(i)
+
+		// 跳过BaseModel字段
+		if field.Name == "BaseModel" {
+			continue
+		}
+
+		// 获取db标签作为字段名
+		dbTag := field.Tag.Get("db")
+		if dbTag == "" || dbTag == "-" {
+			continue
+		}
+
+		// 解析db标签，提取字段名
+		fieldName := strings.Split(dbTag, ";")[0]
+
+		// 获取字段值，跳过零值
+		if fieldValue.CanInterface() && !fieldValue.IsZero() {
+			data[fieldName] = fieldValue.Interface()
+		}
+	}
+
+	return data, nil
+}
+
+// applyTimestamps 应用时间戳规则
+func (q *QueryBuilder) applyTimestamps(data map[string]interface{}, model interface{}, operation string) map[string]interface{} {
+	if model == nil {
+		return data
+	}
+
+	modelType := reflect.TypeOf(model)
+	if modelType.Kind() == reflect.Ptr {
+		modelType = modelType.Elem()
+	}
+
+	now := time.Now()
+
+	// 检查字段标签，查找autoCreateTime和autoUpdateTime
+	for i := 0; i < modelType.NumField(); i++ {
+		field := modelType.Field(i)
+		dbTag := field.Tag.Get("db")
+
+		if dbTag == "" || dbTag == "-" {
+			continue
+		}
+
+		parts := strings.Split(dbTag, ";")
+		fieldName := parts[0]
+
+		// 检查标签选项
+		for _, part := range parts[1:] {
+			switch part {
+			case "autoCreateTime":
+				if operation == "insert" {
+					data[fieldName] = now
+				}
+			case "autoUpdateTime":
+				if operation == "insert" || operation == "update" {
+					data[fieldName] = now
+				}
+			}
+		}
+	}
+
+	return data
+}
+
+// getModelPrimaryKey 获取模型的主键字段名
+func (q *QueryBuilder) getModelPrimaryKey(model interface{}) string {
+	if model == nil {
+		return ""
+	}
+
+	modelType := reflect.TypeOf(model)
+	if modelType.Kind() == reflect.Ptr {
+		modelType = modelType.Elem()
+	}
+
+	// 查找带有pk标签的字段
+	for i := 0; i < modelType.NumField(); i++ {
+		field := modelType.Field(i)
+		if field.Tag.Get("pk") != "" {
+			dbTag := field.Tag.Get("db")
+			if dbTag != "" && dbTag != "-" {
+				return strings.Split(dbTag, ";")[0]
+			}
+		}
+	}
+
+	return "id" // 默认返回id
+}
+
+// getModelDeletedAtField 获取模型的软删除字段名
+func (q *QueryBuilder) getModelDeletedAtField(model interface{}) string {
+	if model == nil {
+		return ""
+	}
+
+	modelType := reflect.TypeOf(model)
+	if modelType.Kind() == reflect.Ptr {
+		modelType = modelType.Elem()
+	}
+
+	// 查找DeletedTime类型的字段
+	for i := 0; i < modelType.NumField(); i++ {
+		field := modelType.Field(i)
+
+		// 检查字段类型名是否包含DeletedTime
+		fieldTypeName := field.Type.String()
+		if strings.Contains(fieldTypeName, "DeletedTime") {
+			dbTag := field.Tag.Get("db")
+			if dbTag != "" && dbTag != "-" {
+				return strings.Split(dbTag, ";")[0]
+			}
+			// 如果没有db标签，使用字段名的小写形式
+			return strings.ToLower(field.Name)
+		}
+	}
+
+	return "" // 没有软删除字段
 }

@@ -2,6 +2,29 @@
 
 TORM 采用 Active Record 模式的模型系统，让你可以用面向对象的方式操作数据库。每个模型对应一个数据库表，模型实例对应表中的一行记录。
 
+**重要说明**: TORM模型系统内置使用`db`包的`QueryInterface`进行数据库操作，通过`getQueryBuilder()`方法获取查询构建器，所有模型的查询方法都是对底层查询构建器的封装。
+
+**模型操作特性**:
+- **默认表操作**: 所有模型操作都默认操作当前模型对应的表，无需手动指定表名
+- **智能表名处理**: JOIN查询中如果字段名不包含表名，自动添加当前模型表名
+- **关联查询**: 关联查询自动使用相关模型的表名，完全基于模型定义
+
+### 模型 vs 查询构建器
+
+| 功能 | 模型方式 | 查询构建器方式 |
+|------|----------|----------------|
+| 基础查询 | `user.Where("status", "=", "active").Get()` | `db.Table("users").Where("status", "=", "active").Get()` |
+| 参数化查询 | ✅ `user.Where("name = ?", "张三").Get()` | ✅ `db.Table("users").Where("name = ?", "张三").Get()` |
+| 数据填充 | ✅ 自动填充模型属性 | ❌ 返回`map[string]interface{}` |
+| 生命周期钩子 | ✅ 支持BeforeSave、AfterCreate等 | ❌ 不支持 |
+| 时间戳管理 | ✅ 自动管理created_at、updated_at | ❌ 需要手动处理 |
+| 软删除 | ✅ 自动处理deleted_at | ❌ 需要手动添加条件 |
+
+**建议**: 
+- 简单查询使用**模型**或**查询构建器**（都支持参数化查询）
+- 业务逻辑和数据管理使用**模型**（自动处理生命周期和数据填充）
+- 复杂SQL查询使用**查询构建器**（更灵活的原生SQL支持）
+
 ## 📋 目录
 
 - [模型定义](#模型定义)
@@ -42,10 +65,11 @@ type User struct {
 // NewUser 创建用户模型实例
 func NewUser() *User {
     user := &User{
-        BaseModel: *model.NewBaseModel(),
+        BaseModel: *model.NewBaseModel(), // 内置db.QueryInterface
     }
-    user.SetTable("users")      // 设置表名
+    user.SetTable("users")        // 设置表名
     user.SetConnection("default") // 设置数据库连接
+    user.EnableTimestamps()       // 启用自动时间戳
     return user
 }
 ```
@@ -57,13 +81,36 @@ func NewUser() *User {
 ```go
 type User struct {
     model.BaseModel
-    ID       int64     `json:"id" db:"id" primary:"true"`           // 主键标签
-    Name     string    `json:"name" db:"name" validate:"required"`  // 验证标签
-    Email    string    `json:"email" db:"email" unique:"true"`      // 唯一索引
-    Password string    `json:"-" db:"password"`                     // 隐藏字段
-    Profile  string    `json:"profile" db:"profile" type:"json"`    // JSON字段
-    Avatar   *string   `json:"avatar" db:"avatar"`                  // 可空字段
-    CreatedAt time.Time `json:"created_at" db:"created_at" auto:"true"` // 自动时间戳
+    ID        uint       `json:"id" db:"id" pk:""`                           // 主键标签
+    Name      string     `json:"name" db:"name" validate:"required"`         // 验证标签
+    Email     string     `json:"email" db:"email" unique:"true"`             // 唯一索引
+    Password  string     `json:"-" db:"password"`                            // 隐藏字段
+    Profile   string     `json:"profile" db:"profile" type:"json"`           // JSON字段
+    Avatar    *string    `json:"avatar" db:"avatar"`                         // 可空字段
+    CreatedAt time.Time  `json:"created_at" db:"created_at;autoCreateTime"`  // 自动创建时间
+    UpdatedAt time.Time  `json:"updated_at" db:"updated_at;autoUpdateTime"`  // 自动更新时间
+    DeletedAt model.DeletedTime `json:"deleted_at" db:"deleted_at"`          // 软删除字段
+}
+```
+
+#### 支持的标签
+
+- **`pk`**: 主键标签，标记为主键字段
+- **`autoCreateTime`**: 自动创建时间，插入时自动设置当前时间
+- **`autoUpdateTime`**: 自动更新时间，插入和更新时自动设置当前时间
+- **`model.DeletedTime`**: 软删除字段类型，自动启用软删除功能
+
+#### 标签优先级
+
+结构体字段标签的优先级**高于**BaseModel的基础配置：
+
+```go
+func NewUser() *User {
+    user := &User{BaseModel: *model.NewBaseModel()}
+    user.SetTable("users")
+    user.SetConnection("default")
+    user.DetectConfigFromStruct(user) // 从标签检测配置，优先级更高
+    return user
 }
 ```
 
@@ -145,9 +192,13 @@ err := user.Find(1)  // 查找ID为1的用户
 user := NewUser()
 err := user.First()
 
-// 带条件查找
+// 带条件查找 - 传统方式
 user := NewUser()
 err := user.Where("email", "=", "user@example.com").First()
+
+// 带条件查找 - 参数化方式
+user2 := NewUser()
+err = user2.Where("email = ?", "user@example.com").First()
 
 // 查找或失败（找不到会返回错误）
 user := NewUser()
@@ -173,12 +224,19 @@ err := user.Where("id", "=", 1).Update(map[string]interface{}{
     "age":  27,
 })
 
-// 批量更新
+// 批量更新 - 适配db.Update
 user := NewUser()
-affected, err := user.Where("status", "=", "inactive").
+affected, err := user.Where("status = ?", "inactive").
     Update(map[string]interface{}{
         "status": "archived",
     })
+
+// 批量插入 - 适配db.InsertBatch
+insertedCount, err := user.InsertBatch([]map[string]interface{}{
+    {"name": "用户1", "email": "user1@example.com", "age": 25},
+    {"name": "用户2", "email": "user2@example.com", "age": 30},
+    {"name": "用户3", "email": "user3@example.com", "age": 28},
+})
 ```
 
 ### 删除记录
@@ -210,9 +268,18 @@ user := NewUser()
 // 获取所有记录
 users, err := user.All()
 
-// 条件查询
+// 条件查询 - 传统三参数方式
 users, err := user.Where("age", ">", 18).
     Where("status", "=", "active").
+    Get()
+
+// 条件查询 - 参数化查询方式
+users, err = user.Where("age > ? AND status = ?", 18, "active").Get()
+
+// 混合使用
+users, err = user.Where("age", ">", 18).           // 传统方式
+    Where("name LIKE ?", "%admin%").              // 参数化方式
+    Where("status", "=", "active").               // 传统方式
     Get()
 
 // 排序
@@ -233,16 +300,14 @@ user := NewUser()
 // 计数
 count, err := user.Where("status", "=", "active").Count()
 
-// 检查存在
-exists, err := user.Where("email", "=", "test@example.com").Exists()
+// 检查存在（使用HasRecords方法）
+exists, err := user.Where("email", "=", "test@example.com").HasRecords()
 
-// 最大值、最小值
-maxAge, err := user.Max("age")
-minAge, err := user.Min("age")
+// 检查记录是否存在
+exists, err := user.Where("email", "=", "test@example.com").HasRecords()
 
-// 求和、平均值
-totalAge, err := user.Sum("age")
-avgAge, err := user.Avg("age")
+// 注意：当前版本暂不支持Max、Min、Sum、Avg等聚合函数
+// 可以使用原生SQL查询实现复杂聚合操作
 ```
 
 ### 高级查询
@@ -250,8 +315,37 @@ avgAge, err := user.Avg("age")
 ```go
 user := NewUser()
 
-// 原生SQL
+// 原生SQL条件
 users, err := user.WhereRaw("YEAR(created_at) = ?", 2023).Get()
+
+// 复杂参数化查询
+users, err = user.Where("(age BETWEEN ? AND ?) OR status IN (?, ?)", 
+    18, 65, "active", "premium").Get()
+
+// OR条件
+users, err = user.Where("name = ?", "admin").
+    OrWhere("email = ?", "admin@example.com").Get()
+
+// JOIN查询 - 自动处理当前模型表名
+users, err = user.
+    LeftJoin("profiles", "user_id", "=", "id").  // 自动添加表名：profiles.user_id = users.id
+    Select("users.*", "profiles.avatar").
+    Where("status = ?", "active").Get()          // 自动使用users.status
+
+// 也可以显式指定表名
+users, err = user.
+    LeftJoin("profiles", "profiles.user_id", "=", "users.id").
+    Select("users.*", "profiles.avatar").
+    Where("users.status = ?", "active").Get()
+
+// 分组和聚合
+users, err = user.
+    SelectRaw("status, COUNT(*) as count").
+    GroupBy("status").
+    Having("count", ">", 10).Get()
+
+// 去重查询
+users, err = user.Select("city").Distinct().Get()
 
 // 子查询
 users, err := user.WhereExists(func(q db.QueryInterface) db.QueryInterface {
@@ -565,7 +659,7 @@ err = userRole2.Find() // Find方法会使用所有主键字段
 
 ## 🎯 作用域
 
-### 定义作用域
+### 自定义查询方法（替代作用域）
 
 ```go
 type User struct {
@@ -573,81 +667,90 @@ type User struct {
     // ... 字段定义
 }
 
-// 定义作用域方法
-func (u *User) ScopeActive(query db.QueryInterface) db.QueryInterface {
-    return query.Where("status", "=", "active")
+// 定义自定义查询方法 - 默认操作users表
+func (u *User) GetActiveUsers() ([]map[string]interface{}, error) {
+    return u.Where("status = ?", "active").Get()  // 自动查询users表
 }
 
-func (u *User) ScopeAdult(query db.QueryInterface) db.QueryInterface {
-    return query.Where("age", ">=", 18)
+func (u *User) GetAdultUsers() ([]map[string]interface{}, error) {
+    return u.Where("age >= ?", 18).Get()  // 自动查询users表
 }
 
-func (u *User) ScopeByCity(query db.QueryInterface, city string) db.QueryInterface {
-    return query.Where("city", "=", city)
+func (u *User) GetUsersByCity(city string) ([]map[string]interface{}, error) {
+    return u.Where("city = ?", city).Get()  // 自动查询users表
+}
+
+// 复合条件查询方法
+func (u *User) GetActiveAdultUsers() ([]map[string]interface{}, error) {
+    return u.Where("status = ? AND age >= ?", "active", 18).Get()  // 默认users表，无需指定
+}
+
+// 带JOIN的自定义查询 - 智能处理表名
+func (u *User) GetUsersWithProfiles() ([]map[string]interface{}, error) {
+    return u.LeftJoin("profiles", "user_id", "=", "id").  // 自动：profiles.user_id = users.id
+        Select("users.*", "profiles.avatar").
+        Where("status = ?", "active").Get()  // 自动：users.status
 }
 ```
 
-### 使用作用域
+### 使用自定义查询方法
 
 ```go
 user := NewUser()
 
-// 使用单个作用域
-users, err := user.Active().Get()
+// 使用自定义查询方法
+activeUsers, err := user.GetActiveUsers()
 
-// 链式使用多个作用域
-users, err := user.Active().Adult().Get()
+// 复合条件查询
+activeAdults, err := user.GetActiveAdultUsers()
 
-// 带参数的作用域
-users, err := user.Active().ByCity("北京").Get()
+// 带参数的查询
+beijingUsers, err := user.GetUsersByCity("北京")
 
-// 与其他查询条件结合
-users, err := user.Active().
-    Where("vip_level", ">", 3).
+// 与链式查询结合
+users, err := user.Where("vip_level", ">", 3).
+    Where("status", "=", "active").
     OrderBy("created_at", "desc").
     Get()
 ```
 
-### 全局作用域
+### 查询方法说明
 
 ```go
-type User struct {
-    model.BaseModel
-    // ... 字段定义
-}
+// 注意：当前版本暂不支持作用域（Scope）功能
+// 推荐使用自定义查询方法或直接链式调用Where方法
 
-func NewUser() *User {
-    user := &User{BaseModel: *model.NewBaseModel()}
-    user.SetTable("users")
-    
-    // 添加全局作用域（自动应用到所有查询）
-    user.AddGlobalScope("active", func(query db.QueryInterface) db.QueryInterface {
-        return query.Where("status", "!=", "deleted")
-    })
-    
-    return user
+// 示例：实现复杂查询逻辑
+func (u *User) GetPremiumUsers(minVipLevel int) ([]map[string]interface{}, error) {
+    return u.Where("status", "=", "active").
+        Where("vip_level", ">=", minVipLevel).
+        Where("deleted_at", "IS", nil).
+        OrderBy("created_at", "desc").
+        Get()
 }
-
-// 移除全局作用域
-user := NewUser()
-users, err := user.WithoutGlobalScope("active").Get() // 包含已删除用户
 ```
 
 ## 📤 序列化
 
-### JSON序列化
+### Map序列化
 
 ```go
 user := NewUser()
 err := user.Find(1)
 
-// 转换为JSON
-jsonData, err := user.ToJSON()
-
 // 转换为Map
 userData := user.ToMap()
 
-// 隐藏敏感字段
+// 获取所有属性
+attributes := user.GetAttributes()
+
+// 获取主键值
+keyValue := user.GetKey()
+
+// 注意：当前版本暂不支持ToJSON()方法
+// 可以使用encoding/json包手动序列化ToMap()的结果
+
+// 隐藏敏感字段（在结构体定义时）
 type User struct {
     model.BaseModel
     Name     string `json:"name"`
@@ -674,6 +777,18 @@ func (u *User) Serialize() map[string]interface{} {
         "avatar_url": u.getAvatarURL(),
         "is_admin":   u.isAdmin(),
     }
+}
+
+// 转换为JSON字符串（手动实现）
+func (u *User) ToJSONString() (string, error) {
+    import "encoding/json"
+    
+    data := u.ToMap()
+    jsonBytes, err := json.Marshal(data)
+    if err != nil {
+        return "", err
+    }
+    return string(jsonBytes), nil
 }
 
 func (u *User) getAvatarURL() string {
@@ -810,9 +925,168 @@ users, err := user.Where("email", "=", email). // email应该有索引
     Get()
 ```
 
+## 🔗 查询构建器模型支持
+
+TORM的查询构建器现在也支持模型特性！通过`WithModel()`方法绑定模型后，查询构建器能够：
+
+### 自动时间戳管理
+
+```go
+type User struct {
+    model.BaseModel
+    ID        uint      `db:"id" pk:""`
+    Name      string    `db:"name"`
+    CreatedAt time.Time `db:"created_at;autoCreateTime"`
+    UpdatedAt time.Time `db:"updated_at;autoUpdateTime"`
+}
+
+// 直接从模型创建查询构建器 - 自动表名 + 模型特性
+userModel := &User{}
+query, err := db.Model(userModel)  // 自动获取表名，自动启用模型特性
+
+// 插入时自动设置创建时间和更新时间
+newUser := &User{Name: "张三"}
+id, err := query.InsertModel(newUser)
+
+// 更新时自动设置更新时间
+user.Name = "李四"
+affected, err := query.Where("id = ?", id).UpdateModel(user)
+```
+
+### 自动软删除
+
+```go
+type User struct {
+    model.BaseModel
+    ID        uint      `db:"id" pk:""`
+    Name      string    `db:"name"`
+    DeletedAt model.DeletedTime `db:"deleted_at"`  // 启用软删除
+}
+
+// 软删除功能自动启用
+query, err := db.Model(&User{})  // 自动获取表名和软删除配置
+
+// 查询时自动排除软删除记录
+users, err := query.Where("status = ?", "active").Get()
+
+// 删除时自动设置deleted_at而不是物理删除
+affected, err := query.Where("id = ?", 1).Delete()
+```
+
+### 智能主键识别
+
+```go
+type Product struct {
+    model.BaseModel
+    UUID string `db:"uuid" pk:""`  // 自定义主键
+    Name string `db:"name"`
+}
+
+// 自动识别主键字段
+query, err := db.Model(&Product{})  // 自动获取表名和主键配置
+var product Product
+err := query.FindModel("some-uuid", &product)  // 自动使用uuid字段查询
+```
+
+### 方法对比
+
+| 功能 | 传统查询构建器 | 模型查询构建器 |
+|------|----------------|----------------|
+| 创建查询 | `db.Table("users")` | `db.Model(&User{})` |
+| 表名 | 手动指定 | 自动从模型获取 |
+| 插入数据 | `Insert(map[string]interface{}{...})` | `InsertModel(&User{...})` |
+| 更新数据 | `Update(map[string]interface{}{...})` | `UpdateModel(&User{...})` |
+| 查找数据 | `First()` 返回map | `FindModel(id, &user)` 直接填充结构体 |
+| 时间戳 | 手动设置 | 自动根据标签设置 |
+| 软删除 | 手动添加WHERE条件 | 自动过滤软删除记录 |
+| 主键 | 硬编码字段名 | 自动从标签识别 |
+
+### API演进对比
+
+```go
+// 旧方式：需要手动指定表名和绑定模型
+db.Table("users").WithModel(&User{}).Where("age > ?", 18).Get()
+
+// 新方式：一步到位，自动获取所有配置
+db.Model(&User{}).Where("age > ?", 18).Get()
+```
+
+### 表名获取优先级
+
+TORM的表名获取遵循以下优先级：
+
+```go
+user := &User{}
+
+// 优先级1：手动设置的表名（最高优先级）
+user.SetTable("custom_users")
+db.Model(user) // 使用 "custom_users"
+
+// 优先级2：结构体名称推断（没有手动设置时）
+// 没有调用SetTable()
+db.Model(&User{}) // 自动推断为 "users"
+
+// 优先级3：空表名回退到推断
+user.SetTable("")
+db.Model(user) // 回退推断为 "users"
+```
+
+#### 表名推断规则
+
+1. **手动设置优先**：`user.SetTable("table_name")` 
+2. **结构体名推断**：`User` → `users`（小写+复数）
+3. **复数形式简单**：直接添加"s"后缀
+
+## ⚠️ 重要说明
+
+### 架构设计
+TORM模型系统的核心设计原则：
+1. **内置db包**: 模型通过`getQueryBuilder()`方法使用`db.Table()`获取查询构建器
+2. **封装而非重复**: 所有模型查询方法都是对`db.QueryInterface`的封装
+3. **一致性**: 模型查询语法与查询构建器保持一致，都支持传统三参数`Where(field, operator, value)`语法
+
+### 当前版本限制
+- ❌ 不支持作用域（Scope）功能 - 推荐使用自定义查询方法
+- ❌ 不支持`ToJSON()`方法 - 使用`ToMap()`配合`encoding/json`
+- ❌ 不支持`Avg`、`Sum`、`Max`、`Min`等聚合函数 - 使用原生SQL查询
+- ❌ 不支持全局作用域 - 在查询时手动添加条件
+
+### 支持的查询方式
+- ✅ **传统三参数**: `Where(field, operator, value)` 
+- ✅ **参数化查询**: `Where(condition, args...)` 
+- ✅ **原生SQL条件**: `WhereRaw(sql, bindings...)`
+- ✅ **OR条件**: `OrWhere(...)` 支持参数化和传统方式
+
+### 全面适配db包功能
+- ✅ **字段选择**: `Select()`, `SelectRaw()`, `Distinct()`
+- ✅ **连接查询**: `Join()`, `LeftJoin()`, `RightJoin()`, `InnerJoin()`
+- ✅ **分组排序**: `GroupBy()`, `Having()`, `OrderBy()`, `OrderByRaw()`
+- ✅ **数据操作**: `Insert()`, `InsertBatch()`, `Update()`, `Delete()`
+- ✅ **查询执行**: `Find()`, `First()`, `Get()`, `Count()`, `CheckExists()`
+- ✅ **工具方法**: `ToSQL()`, `Clone()`, `Paginate()`
+
+### 推荐使用方式
+```go
+// ✅ 推荐：参数化查询（更安全、更简洁）
+users, err := user.Where("status = ? AND age >= ?", "active", 18).
+    OrderBy("created_at", "desc").
+    Get()
+
+// ✅ 推荐：混合使用
+users, err := user.Where("status", "=", "active").     // 传统方式
+    Where("name LIKE ?", "%admin%").                   // 参数化方式
+    WhereRaw("created_at > DATE_SUB(NOW(), INTERVAL ? DAY)", 30). // 原生SQL
+    Get()
+
+// ✅ 推荐：自定义查询方法
+func (u *User) GetActiveAdults() ([]map[string]interface{}, error) {
+    return u.Where("status = ? AND age >= ?", "active", 18).Get()
+}
+```
+
 ## 🔗 相关文档
 
 - [查询构建器](Query-Builder) - 了解底层查询构建器
-- [关联关系](Relationships) - 模型间的关联关系
+- [关联关系](Relationships) - 模型间的关联关系  
 - [数据迁移](Migrations) - 数据库结构管理
 - [验证系统](Validation) - 数据验证功能 

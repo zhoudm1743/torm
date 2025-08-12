@@ -123,8 +123,8 @@ func main() {
 
 TORM在多种场景下都表现出色：
 
-| 操作类型 | TORM | GORM | Xorm |
-|---------|------|------|------|
+| 操作类型 | TORM | 其他ORM-A | 其他ORM-B |
+|---------|------|---------|---------|
 | 简单查询 | **2.1ms** | 3.2ms | 2.8ms |
 | 复杂JOIN | **8.5ms** | 12.3ms | 11.1ms |
 | 批量插入 | **15ms** | 28ms | 22ms |
@@ -160,27 +160,46 @@ type User struct {
 
 ### v1.1.0 新功能演示
 ```go
-// 1. 关联预加载 - 解决N+1查询问题
-users := make([]*User, 0)
-query := db.NewQueryBuilder("default")
-err := query.Table("users").Get(&users)
+// 1. 支持两种Where查询方式
+// 传统三参数方式
+users, err := query.Table("users").
+    Where("age", ">", 18).
+    Where("status", "=", "active").
+    Get()
 
-collection := model.NewModelCollection(users)
-err = collection.With("posts", "profile").Load(ctx) // 仅3个查询！
+// 参数化查询方式
+users, err = query.Table("users").
+    Where("name = ?", "张三").
+    Where("age >= ? AND city = ?", 18, "北京").
+    Get()
 
-// 2. 分页查询
+// 混合使用两种方式
+users, err = query.Table("users").
+    Where("age", ">=", 18).           // 传统方式
+    Where("name LIKE ?", "%王%").      // 参数化方式
+    Where("status", "=", "active").   // 传统方式
+    Get()
+
+// 2. 增强的First/Find方法
+var user User
+_, err = query.Where("email = ?", "user@example.com").First(&user)
+
+var userList []User
+_, err = query.Where("status", "=", "active").Find(&userList)
+
+// 3. 分页查询
 result, err := query.Table("users").
     Where("age", ">", 18).
     Paginate(1, 10) // 第1页，每页10条
 
-// 3. JSON字段查询 (v1.1.0新功能)
+// 4. JSON字段查询 (v1.1.0新功能)
 advQuery := query.NewAdvancedQueryBuilder(query)
 users, err := advQuery.
     WhereJSON("profile", "$.age", ">", 25).
     WhereJSONContains("skills", "$.languages", "Go").
     Get()
 
-// 4. 高级查询 - 窗口函数
+// 5. 高级查询 - 窗口函数
 result, err := advQuery.
     WithRowNumber("rank", "department", "salary DESC").
     WithAvgWindow("salary", "dept_avg", "department").
@@ -202,9 +221,9 @@ result, err := advQuery.
 
 ## 🔥 为什么选择 TORM？
 
-### vs GORM
-- **更好的性能**: 平均快30%的查询速度
-- **更强的类型安全**: 编译时类型检查
+### vs 其他ORM
+- **更好的性能**: 优化的查询构建器和连接池管理
+- **更强的类型安全**: 编译时类型检查和参数验证
 - **更完整的迁移工具**: 企业级数据库版本管理
 - **更好的MongoDB支持**: 原生NoSQL支持
 

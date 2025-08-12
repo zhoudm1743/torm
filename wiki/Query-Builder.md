@@ -58,14 +58,14 @@ exists, err := query.Where("email", "=", "user@example.com").Exists()
 // 插入单条记录
 id, err := query.Insert(map[string]interface{}{
     "name":  "张三",
-    "email": "zhangsan@example.com",
+    "email": "user1@example.com",
     "age":   25,
 })
 
 // 批量插入
 users := []map[string]interface{}{
-    {"name": "李四", "email": "lisi@example.com", "age": 30},
-    {"name": "王五", "email": "wangwu@example.com", "age": 28},
+    {"name": "李四", "email": "user2@example.com", "age": 30},
+    {"name": "王五", "email": "user3@example.com", "age": 28},
 }
 affected, err := query.InsertBatch(users)
 
@@ -381,7 +381,7 @@ users, err := activeUsers.UnionAll(vipUsers).Get()
 users, err := db.Raw("SELECT * FROM users WHERE age > ? AND city = ?", 18, "北京")
 
 // 原生 INSERT
-result, err := db.Exec("INSERT INTO users (name, email) VALUES (?, ?)", "张三", "zhangsan@example.com")
+result, err := db.Exec("INSERT INTO users (name, email) VALUES (?, ?)", "张三", "user@example.com")
 
 // 原生查询与构建器结合
 users, err := query.

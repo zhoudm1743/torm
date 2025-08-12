@@ -43,15 +43,15 @@ type QueryInterface interface {
 	// 表设置
 	From(table string) QueryInterface
 
-	// 查询条件
-	Where(field string, operator string, value interface{}) QueryInterface
+	// 查询条件 - 支持多种调用方式
+	Where(args ...interface{}) QueryInterface // 支持: Where(field, op, val) 或 Where(condition, args...)
 	WhereIn(field string, values []interface{}) QueryInterface
 	WhereNotIn(field string, values []interface{}) QueryInterface
 	WhereBetween(field string, start, end interface{}) QueryInterface
 	WhereNull(field string) QueryInterface
 	WhereNotNull(field string) QueryInterface
 	WhereRaw(raw string, bindings ...interface{}) QueryInterface
-	OrWhere(field string, operator string, value interface{}) QueryInterface
+	OrWhere(args ...interface{}) QueryInterface // 支持: OrWhere(field, op, val) 或 OrWhere(condition, args...)
 
 	// 连接查询
 	Join(table string, first string, operator string, second string) QueryInterface
@@ -82,7 +82,7 @@ type QueryInterface interface {
 	// 执行查询
 	Get() ([]map[string]interface{}, error)
 	First(dest ...interface{}) (map[string]interface{}, error)
-	Find(id interface{}, dest ...interface{}) (map[string]interface{}, error)
+	Find(args ...interface{}) (map[string]interface{}, error) // 支持: Find(id, dest...) 或 Find(dest)
 	Count() (int64, error)
 	Exists() (bool, error)
 
@@ -98,6 +98,12 @@ type QueryInterface interface {
 	// SQL构建
 	ToSQL() (string, []interface{}, error)
 	Clone() QueryInterface
+
+	// 模型支持 - 新增功能
+	WithModel(model interface{}) QueryInterface        // 绑定模型，启用模型特性
+	InsertModel(model interface{}) (int64, error)      // 插入模型实例
+	UpdateModel(model interface{}) (int64, error)      // 更新模型实例
+	FindModel(id interface{}, model interface{}) error // 查找并填充模型
 }
 
 // BuilderInterface SQL构建器接口

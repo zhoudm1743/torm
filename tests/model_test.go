@@ -230,7 +230,7 @@ func TestUser_Delete(t *testing.T) {
 	userID := user.ID
 
 	// 删除用户
-	err = user.Delete()
+	_, err = user.Delete()
 	require.NoError(t, err)
 
 	// 验证用户已被删除

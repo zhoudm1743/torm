@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"reflect"
+	"strings"
 	"sync"
 )
 
@@ -375,4 +377,167 @@ func Exec(sql string, bindings []interface{}, connectionName ...string) (sql.Res
 // Transaction 执行事务
 func Transaction(fn func(tx TransactionInterface) error, connectionName ...string) error {
 	return defaultManager.Transaction(fn, connectionName...)
+}
+
+// 便利的全局查询方法，提供TORM风格的API
+
+// WhereGlobal 创建带有WHERE条件的新查询 - 便利函数
+// 用法: db.WhereGlobal("name = ?", "张三").First(&user)
+func WhereGlobal(args ...interface{}) (QueryInterface, error) {
+	conn, err := DB()
+	if err != nil {
+		return nil, err
+	}
+	return NewQuery(conn).Where(args...), nil
+}
+
+// Model 基于模型创建查询 - 自动获取表名和模型特性
+// 用法: db.Model(&User{}).Where("age > ?", 18).Find(&users)
+func Model(model interface{}) (QueryInterface, error) {
+	if model == nil {
+		return nil, fmt.Errorf("model cannot be nil")
+	}
+
+	// 获取表名
+	tableName := getTableNameFromModel(model)
+	if tableName == "" {
+		return nil, fmt.Errorf("cannot determine table name from model")
+	}
+
+	// 尝试从模型获取连接名
+	connectionName := getConnectionFromModel(model)
+	if connectionName == "" {
+		connectionName = "default" // 默认连接
+	}
+
+	// 创建查询构建器并绑定模型
+	query, err := Table(tableName, connectionName)
+	if err != nil {
+		return nil, err
+	}
+
+	return query.WithModel(model), nil
+}
+
+// FirstGlobal 直接查询第一条记录 - 便利函数
+// 用法: db.FirstGlobal(&user) 或 db.FirstGlobal(&user, 10)
+func FirstGlobal(dest interface{}, conds ...interface{}) error {
+	conn, err := DB()
+	if err != nil {
+		return err
+	}
+
+	query := NewQuery(conn)
+
+	// 如果有条件参数，添加Where条件
+	if len(conds) > 0 {
+		// 如果第一个参数是数字，视为按ID查询
+		if len(conds) == 1 {
+			query = query.Where("id", "=", conds[0])
+		} else {
+			// 否则作为条件查询
+			query = query.Where(conds...)
+		}
+	}
+
+	_, err = query.First(dest)
+	return err
+}
+
+// FindGlobal 直接查询记录 - 便利函数
+// 用法: db.FindGlobal(&users) 或 db.FindGlobal(&user, 10)
+func FindGlobal(dest interface{}, conds ...interface{}) error {
+	conn, err := DB()
+	if err != nil {
+		return err
+	}
+
+	query := NewQuery(conn)
+
+	// 如果有条件参数，添加Where条件
+	if len(conds) > 0 {
+		// 如果第一个参数是数字，视为按ID查询
+		if len(conds) == 1 {
+			query = query.Where("id", "=", conds[0])
+		} else {
+			// 否则作为条件查询
+			query = query.Where(conds...)
+		}
+	}
+
+	_, err = query.Find(dest)
+	return err
+}
+
+// getTableNameFromModel 从模型中获取表名
+func getTableNameFromModel(model interface{}) string {
+	if model == nil {
+		return ""
+	}
+
+	modelType := reflect.TypeOf(model)
+	if modelType.Kind() == reflect.Ptr {
+		modelType = modelType.Elem()
+	}
+
+	// 1. 尝试调用TableName方法
+	modelValue := reflect.ValueOf(model)
+	if modelValue.Kind() == reflect.Ptr {
+		modelValue = modelValue.Elem()
+	}
+
+	// 检查是否有BaseModel字段
+	if baseModelField := modelValue.FieldByName("BaseModel"); baseModelField.IsValid() {
+		// 尝试调用TableName方法
+		tableNameMethod := baseModelField.Addr().MethodByName("TableName")
+		if tableNameMethod.IsValid() {
+			result := tableNameMethod.Call(nil)
+			if len(result) > 0 {
+				if tableName, ok := result[0].Interface().(string); ok && tableName != "" {
+					return tableName
+				}
+			}
+		}
+	}
+
+	// 2. 根据结构体名称推断表名
+	modelName := modelType.Name()
+	if modelName != "" {
+		// 简单的复数形式转换
+		tableName := strings.ToLower(modelName)
+		if !strings.HasSuffix(tableName, "s") {
+			tableName += "s"
+		}
+		return tableName
+	}
+
+	return ""
+}
+
+// getConnectionFromModel 从模型中获取连接名
+func getConnectionFromModel(model interface{}) string {
+	if model == nil {
+		return ""
+	}
+
+	modelValue := reflect.ValueOf(model)
+	if modelValue.Kind() == reflect.Ptr {
+		modelValue = modelValue.Elem()
+	}
+
+	// 检查是否有BaseModel字段
+	if baseModelField := modelValue.FieldByName("BaseModel"); baseModelField.IsValid() {
+		// 尝试调用GetConnection方法
+		getConnMethod := baseModelField.Addr().MethodByName("GetConnection")
+		if getConnMethod.IsValid() {
+			result := getConnMethod.Call(nil)
+			if len(result) > 0 {
+				if connName, ok := result[0].Interface().(string); ok && connName != "" {
+					return connName
+				}
+			}
+		}
+	}
+
+	return "" // 返回空字符串，使用默认连接
 }

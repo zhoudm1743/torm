@@ -9,6 +9,129 @@ import (
 	"github.com/zhoudm1743/torm/db"
 )
 
+// DeletedTime 软删除时间类型
+type DeletedTime struct {
+	*time.Time
+}
+
+// FieldTags 字段标签配置
+type FieldTags struct {
+	PrimaryKey     bool   // pk标签
+	AutoCreateTime bool   // autoCreateTime标签
+	AutoUpdateTime bool   // autoUpdateTime标签
+	SoftDelete     bool   // 软删除字段
+	FieldName      string // db字段名
+}
+
+// ModelMetadata 模型元数据
+type ModelMetadata struct {
+	TableName      string
+	PrimaryKeys    []string
+	CreatedAtField string
+	UpdatedAtField string
+	DeletedAtField string
+	HasTimestamps  bool
+	HasSoftDeletes bool
+	FieldTags      map[string]*FieldTags
+}
+
+// ParseModelTags 解析模型标签
+func ParseModelTags(model interface{}) *ModelMetadata {
+	metadata := &ModelMetadata{
+		FieldTags: make(map[string]*FieldTags),
+	}
+
+	// 处理nil输入
+	if model == nil {
+		// 返回默认配置
+		metadata.PrimaryKeys = []string{"id"}
+		return metadata
+	}
+
+	modelType := reflect.TypeOf(model)
+	if modelType == nil {
+		// 返回默认配置
+		metadata.PrimaryKeys = []string{"id"}
+		return metadata
+	}
+
+	if modelType.Kind() == reflect.Ptr {
+		modelType = modelType.Elem()
+	}
+
+	// 如果解引用后仍然为nil，返回默认配置
+	if modelType == nil {
+		metadata.PrimaryKeys = []string{"id"}
+		return metadata
+	}
+
+	for i := 0; i < modelType.NumField(); i++ {
+		field := modelType.Field(i)
+
+		// 跳过BaseModel字段
+		if field.Name == "BaseModel" {
+			continue
+		}
+
+		tags := &FieldTags{}
+
+		// 解析db标签
+		dbTag := field.Tag.Get("db")
+		if dbTag != "" && dbTag != "-" {
+			// 解析db标签中的选项，如 "created_at;autoCreateTime"
+			parts := strings.Split(dbTag, ";")
+			tags.FieldName = parts[0]
+
+			for _, part := range parts[1:] {
+				switch part {
+				case "autoCreateTime":
+					tags.AutoCreateTime = true
+					metadata.HasTimestamps = true
+					metadata.CreatedAtField = tags.FieldName
+				case "autoUpdateTime":
+					tags.AutoUpdateTime = true
+					metadata.HasTimestamps = true
+					metadata.UpdatedAtField = tags.FieldName
+				}
+			}
+		} else {
+			// 如果没有db标签，使用字段名的小写形式
+			tags.FieldName = strings.ToLower(field.Name)
+		}
+
+		// 解析pk标签
+		// 使用Lookup检查是否存在pk标签，支持 pk="true", pk="", pk
+		_, hasPKTag := field.Tag.Lookup("pk")
+		if hasPKTag {
+			// 如果有pk标签（不管值是什么），则认为是主键
+			tags.PrimaryKey = true
+			metadata.PrimaryKeys = append(metadata.PrimaryKeys, tags.FieldName)
+		}
+
+		// 检查软删除字段
+		if field.Type == reflect.TypeOf(DeletedTime{}) {
+			tags.SoftDelete = true
+			metadata.HasSoftDeletes = true
+			metadata.DeletedAtField = tags.FieldName
+		}
+
+		metadata.FieldTags[field.Name] = tags
+	}
+
+	// 推断表名
+	if metadata.TableName == "" {
+		modelName := modelType.Name()
+		metadata.TableName = strings.ToLower(modelName) + "s" // 简单复数形式
+	}
+
+	// 如果没有主键，默认使用id
+	if len(metadata.PrimaryKeys) == 0 {
+		metadata.PrimaryKeys = []string{"id"}
+	}
+
+	return metadata
+}
+
 // BaseModel 基础模型
 type BaseModel struct {
 	// 数据库连接名
@@ -62,8 +185,9 @@ func (m *BaseModel) TableName() string {
 	if m.tableName != "" {
 		return m.tableName
 	}
-	// 如果没有设置表名，使用结构体名的复数形式
-	return m.tableName
+	// 如果没有设置表名，返回空字符串，让外部推断
+	// 注意：这里不做推断是因为BaseModel没有上下文知道自己被嵌入到哪个结构体中
+	return ""
 }
 
 // SetTable 设置表名
@@ -170,6 +294,43 @@ func (m *BaseModel) DetectPrimaryKeysFromStruct(structValue interface{}) *BaseMo
 		m.primaryKeys = primaryKeys
 	}
 	// 否则保持默认的["id"]
+
+	return m
+}
+
+// DetectConfigFromStruct 从结构体标签中检测完整配置（时间戳、软删除等）
+// 结构体标签优先级高于BaseModel基础配置
+func (m *BaseModel) DetectConfigFromStruct(structValue interface{}) *BaseModel {
+	metadata := ParseModelTags(structValue)
+
+	// 更新主键配置
+	if len(metadata.PrimaryKeys) > 0 {
+		m.primaryKeys = metadata.PrimaryKeys
+	}
+
+	// 更新时间戳配置 - 结构体标签优先级更高
+	if metadata.HasTimestamps {
+		m.timestamps = true
+		if metadata.CreatedAtField != "" {
+			m.createdAt = metadata.CreatedAtField
+		}
+		if metadata.UpdatedAtField != "" {
+			m.updatedAt = metadata.UpdatedAtField
+		}
+	}
+
+	// 更新软删除配置 - 结构体标签优先级更高
+	if metadata.HasSoftDeletes {
+		m.softDeletes = true
+		if metadata.DeletedAtField != "" {
+			m.deletedAt = metadata.DeletedAtField
+		}
+	}
+
+	// 设置表名（如果模型没有设置的话）
+	if m.tableName == "" {
+		m.tableName = metadata.TableName
+	}
 
 	return m
 }
@@ -363,8 +524,21 @@ func (m *BaseModel) update() error {
 	return m.AfterSave()
 }
 
-// Delete 删除记录
-func (m *BaseModel) Delete() error {
+// Delete 删除记录 - 支持两种调用方式
+// 1. Delete() - 删除当前模型实例
+// 2. 链式调用如 Where(...).Delete() - 批量删除
+func (m *BaseModel) Delete() (interface{}, error) {
+	// 如果有查询条件，执行批量删除
+	if m.queryBuilder != nil {
+		return m.deleteBatch()
+	}
+
+	// 否则删除当前模型实例
+	return nil, m.deleteCurrentModel()
+}
+
+// deleteCurrentModel 删除当前模型实例
+func (m *BaseModel) deleteCurrentModel() error {
 	if m.isNew {
 		return fmt.Errorf("cannot delete unsaved model")
 	}
@@ -409,6 +583,31 @@ func (m *BaseModel) Delete() error {
 	return m.AfterDelete()
 }
 
+// deleteBatch 批量删除记录 - 适配db.Delete
+func (m *BaseModel) deleteBatch() (int64, error) {
+	query := m.getQueryBuilder()
+	if query == nil {
+		return 0, fmt.Errorf("failed to create query builder")
+	}
+
+	var result int64
+	var err error
+
+	if m.softDeletes {
+		// 软删除：更新deleted_at字段
+		deleteData := map[string]interface{}{
+			m.deletedAt: time.Now(),
+		}
+		result, err = query.Update(deleteData)
+	} else {
+		// 硬删除
+		result, err = query.Delete()
+	}
+
+	m.resetQueryBuilder() // 执行后重置查询构建器
+	return result, err
+}
+
 // Reload 重新加载模型数据
 func (m *BaseModel) Reload() error {
 	if m.isNew {
@@ -447,18 +646,63 @@ func (m *BaseModel) syncOriginal() {
 	}
 }
 
-// Find 根据主键查找记录
-// 如果传入指针，也会填充到指针指向的对象
+// Find 查找记录 - 支持多种调用方式
+// 1. Find(id, dest...) - 根据主键查找
+// 2. Find(dest) - 根据之前的Where条件查找
 // 返回原始的map数据
-func (m *BaseModel) Find(id interface{}, dest ...interface{}) (map[string]interface{}, error) {
-	query, err := db.Table(m.TableName(), m.connection)
-	if err != nil {
-		return nil, err
+func (m *BaseModel) Find(args ...interface{}) (map[string]interface{}, error) {
+	var data map[string]interface{}
+	var err error
+
+	if len(args) == 0 {
+		return nil, fmt.Errorf("Find() requires at least one argument")
 	}
 
-	data, err := query.Where(m.PrimaryKey(), "=", id).First()
-	if err != nil {
-		return nil, err
+	// 判断调用方式
+	firstArg := args[0]
+
+	// 如果第一个参数是指针类型，说明是Find(dest)方式
+	if reflect.TypeOf(firstArg).Kind() == reflect.Ptr {
+		// 使用现有的查询条件查找
+		query := m.getQueryBuilder()
+		if query == nil {
+			return nil, fmt.Errorf("failed to create query builder")
+		}
+
+		data, err = query.First()
+		m.resetQueryBuilder() // 执行后重置查询构建器
+
+		if err != nil {
+			return nil, err
+		}
+
+		// 填充到指针指向的对象
+		err = m.LoadModel(firstArg, data)
+		if err != nil {
+			return data, fmt.Errorf("failed to load model: %w", err)
+		}
+	} else {
+		// 否则是Find(id, dest...)方式
+		id := firstArg
+		query, err := db.Table(m.TableName(), m.connection)
+		if err != nil {
+			return nil, err
+		}
+
+		data, err = query.Where(m.PrimaryKey(), "=", id).First()
+		if err != nil {
+			return nil, err
+		}
+
+		// 如果有第二个参数且是指针，填充到指针指向的对象
+		if len(args) > 1 && args[1] != nil {
+			if reflect.TypeOf(args[1]).Kind() == reflect.Ptr {
+				err = m.LoadModel(args[1], data)
+				if err != nil {
+					return data, fmt.Errorf("failed to load model: %w", err)
+				}
+			}
+		}
 	}
 
 	// 填充当前模型属性
@@ -466,14 +710,6 @@ func (m *BaseModel) Find(id interface{}, dest ...interface{}) (map[string]interf
 	m.syncOriginal()
 	m.isNew = false
 	m.exists = true
-
-	// 如果传入了指针，也填充到指针指向的对象
-	if len(dest) > 0 && dest[0] != nil {
-		err = m.LoadModel(dest[0], data)
-		if err != nil {
-			return data, fmt.Errorf("failed to load model: %w", err)
-		}
-	}
 
 	// 执行 after_read 钩子
 	err = m.AfterRead()
@@ -632,10 +868,25 @@ func (m *BaseModel) resetQueryBuilder() {
 }
 
 // Where 添加WHERE条件 - 返回自身便于链式调用
-func (m *BaseModel) Where(field string, operator string, value interface{}) *BaseModel {
+// 支持两种调用方式:
+// 1. Where(field, operator, value) - 传统三参数方式
+// 2. Where(condition, args...) - 参数化查询方式
+func (m *BaseModel) Where(args ...interface{}) *BaseModel {
 	query := m.getQueryBuilder()
 	if query != nil {
-		m.queryBuilder = query.Where(field, operator, value)
+		m.queryBuilder = query.Where(args...)
+	}
+	return m
+}
+
+// OrWhere 添加OR WHERE条件 - 返回自身便于链式调用
+// 支持两种调用方式:
+// 1. OrWhere(field, operator, value) - 传统三参数方式
+// 2. OrWhere(condition, args...) - 参数化查询方式
+func (m *BaseModel) OrWhere(args ...interface{}) *BaseModel {
+	query := m.getQueryBuilder()
+	if query != nil {
+		m.queryBuilder = query.OrWhere(args...)
 	}
 	return m
 }
@@ -685,11 +936,29 @@ func (m *BaseModel) WhereNotNull(field string) *BaseModel {
 	return m
 }
 
+// WhereRaw 添加原生WHERE条件
+func (m *BaseModel) WhereRaw(raw string, bindings ...interface{}) *BaseModel {
+	query := m.getQueryBuilder()
+	if query != nil {
+		m.queryBuilder = query.WhereRaw(raw, bindings...)
+	}
+	return m
+}
+
 // OrderBy 添加排序
 func (m *BaseModel) OrderBy(field string, direction string) *BaseModel {
 	query := m.getQueryBuilder()
 	if query != nil {
 		m.queryBuilder = query.OrderBy(field, direction)
+	}
+	return m
+}
+
+// OrderByRaw 原生ORDER BY - 适配db.OrderByRaw
+func (m *BaseModel) OrderByRaw(raw string, bindings ...interface{}) *BaseModel {
+	query := m.getQueryBuilder()
+	if query != nil {
+		m.queryBuilder = query.OrderByRaw(raw, bindings...)
 	}
 	return m
 }
@@ -721,6 +990,24 @@ func (m *BaseModel) Select(fields ...string) *BaseModel {
 	return m
 }
 
+// SelectRaw 原生SELECT字段 - 适配db.SelectRaw
+func (m *BaseModel) SelectRaw(raw string, bindings ...interface{}) *BaseModel {
+	query := m.getQueryBuilder()
+	if query != nil {
+		m.queryBuilder = query.SelectRaw(raw, bindings...)
+	}
+	return m
+}
+
+// Distinct 去重查询 - 适配db.Distinct
+func (m *BaseModel) Distinct() *BaseModel {
+	query := m.getQueryBuilder()
+	if query != nil {
+		m.queryBuilder = query.Distinct()
+	}
+	return m
+}
+
 // GroupBy 添加分组
 func (m *BaseModel) GroupBy(fields ...string) *BaseModel {
 	query := m.getQueryBuilder()
@@ -737,6 +1024,65 @@ func (m *BaseModel) Having(field string, operator string, value interface{}) *Ba
 		m.queryBuilder = query.Having(field, operator, value)
 	}
 	return m
+}
+
+// ===== JOIN查询方法 - 适配db包的Join功能 =====
+// 注意：JOIN操作自动基于当前模型表，无需手动指定主表
+
+// Join 内连接 - 适配db.Join
+// first/second参数中如果不包含表名，会自动使用当前模型表名
+func (m *BaseModel) Join(table string, first string, operator string, second string) *BaseModel {
+	query := m.getQueryBuilder()
+	if query != nil {
+		// 智能处理字段名：如果字段名不包含表名，自动添加当前模型表名
+		first = m.qualifyColumn(first)
+		second = m.qualifyColumn(second)
+		m.queryBuilder = query.Join(table, first, operator, second)
+	}
+	return m
+}
+
+// LeftJoin 左连接 - 适配db.LeftJoin
+func (m *BaseModel) LeftJoin(table string, first string, operator string, second string) *BaseModel {
+	query := m.getQueryBuilder()
+	if query != nil {
+		first = m.qualifyColumn(first)
+		second = m.qualifyColumn(second)
+		m.queryBuilder = query.LeftJoin(table, first, operator, second)
+	}
+	return m
+}
+
+// RightJoin 右连接 - 适配db.RightJoin
+func (m *BaseModel) RightJoin(table string, first string, operator string, second string) *BaseModel {
+	query := m.getQueryBuilder()
+	if query != nil {
+		first = m.qualifyColumn(first)
+		second = m.qualifyColumn(second)
+		m.queryBuilder = query.RightJoin(table, first, operator, second)
+	}
+	return m
+}
+
+// InnerJoin 内连接 - 适配db.InnerJoin
+func (m *BaseModel) InnerJoin(table string, first string, operator string, second string) *BaseModel {
+	query := m.getQueryBuilder()
+	if query != nil {
+		first = m.qualifyColumn(first)
+		second = m.qualifyColumn(second)
+		m.queryBuilder = query.InnerJoin(table, first, operator, second)
+	}
+	return m
+}
+
+// qualifyColumn 智能处理列名：如果不包含表名则添加当前模型表名
+func (m *BaseModel) qualifyColumn(column string) string {
+	// 如果列名已经包含表名（包含.），则直接返回
+	if strings.Contains(column, ".") {
+		return column
+	}
+	// 否则添加当前模型表名
+	return m.TableName() + "." + column
 }
 
 // All 获取所有记录
@@ -878,6 +1224,19 @@ func (m *BaseModel) HasRecords() (bool, error) {
 	return exists, err
 }
 
+// CheckExists 检查查询条件是否有匹配记录 - 适配db.Exists
+// 这个方法与Exists()不同，Exists()检查模型实例是否存在于数据库中
+func (m *BaseModel) CheckExists() (bool, error) {
+	query := m.getQueryBuilder()
+	if query == nil {
+		return false, fmt.Errorf("failed to create query builder")
+	}
+
+	exists, err := query.Exists()
+	m.resetQueryBuilder() // 执行完成后重置查询构建器
+	return exists, err
+}
+
 // Paginate 分页查询
 func (m *BaseModel) Paginate(page, perPage int) (interface{}, error) {
 	query := m.getQueryBuilder()
@@ -902,6 +1261,45 @@ func (m *BaseModel) ToSQL() (string, []interface{}, error) {
 	return sql, bindings, err
 }
 
+// Clone 克隆查询构建器 - 适配db.Clone
+func (m *BaseModel) Clone() *BaseModel {
+	query := m.getQueryBuilder()
+	if query == nil {
+		return m
+	}
+
+	// 创建一个新的模型实例
+	newModel := &BaseModel{
+		connection:   m.connection,
+		tableName:    m.tableName,
+		primaryKeys:  m.primaryKeys,
+		attributes:   make(map[string]interface{}),
+		original:     make(map[string]interface{}),
+		relations:    make(map[string]interface{}),
+		isNew:        m.isNew,
+		exists:       m.exists,
+		timestamps:   m.timestamps,
+		createdAt:    m.createdAt,
+		updatedAt:    m.updatedAt,
+		softDeletes:  m.softDeletes,
+		deletedAt:    m.deletedAt,
+		queryBuilder: query.Clone(), // 克隆查询构建器
+	}
+
+	// 复制属性
+	for k, v := range m.attributes {
+		newModel.attributes[k] = v
+	}
+	for k, v := range m.original {
+		newModel.original[k] = v
+	}
+	for k, v := range m.relations {
+		newModel.relations[k] = v
+	}
+
+	return newModel
+}
+
 // Create 创建记录
 func (m *BaseModel) Create(data map[string]interface{}) (int64, error) {
 	query, err := db.Table(m.TableName(), m.connection)
@@ -917,6 +1315,42 @@ func (m *BaseModel) Create(data map[string]interface{}) (int64, error) {
 	}
 
 	return query.Insert(data)
+}
+
+// Insert 插入单条记录 - 对db.Insert的直接封装
+func (m *BaseModel) Insert(data map[string]interface{}) (int64, error) {
+	query, err := db.Table(m.TableName(), m.connection)
+	if err != nil {
+		return 0, err
+	}
+
+	// 添加时间戳
+	if m.timestamps {
+		now := time.Now()
+		data[m.createdAt] = now
+		data[m.updatedAt] = now
+	}
+
+	return query.Insert(data)
+}
+
+// InsertBatch 批量插入记录 - 适配db.InsertBatch
+func (m *BaseModel) InsertBatch(data []map[string]interface{}) (int64, error) {
+	query, err := db.Table(m.TableName(), m.connection)
+	if err != nil {
+		return 0, err
+	}
+
+	// 为每条记录添加时间戳
+	if m.timestamps {
+		now := time.Now()
+		for i := range data {
+			data[i][m.createdAt] = now
+			data[i][m.updatedAt] = now
+		}
+	}
+
+	return query.InsertBatch(data)
 }
 
 // GetKey 获取主键值（单主键返回值，复合主键返回map）
@@ -1134,7 +1568,38 @@ func (m *BaseModel) LoadModel(dest interface{}, result map[string]interface{}) e
 	return nil
 }
 
-func (m *BaseModel) Update() error {
+// Update 更新记录 - 支持两种调用方式
+// 1. Update() - 更新当前模型的变更字段
+// 2. Update(data) - 根据之前的Where条件批量更新
+func (m *BaseModel) Update(data ...map[string]interface{}) (interface{}, error) {
+	// 如果没有传入data参数，更新当前模型
+	if len(data) == 0 {
+		return nil, m.updateCurrentModel()
+	}
+
+	// 否则执行批量更新
+	return m.updateBatch(data[0])
+}
+
+// updateBatch 批量更新记录 - 适配db.Update
+func (m *BaseModel) updateBatch(data map[string]interface{}) (int64, error) {
+	query := m.getQueryBuilder()
+	if query == nil {
+		return 0, fmt.Errorf("failed to create query builder")
+	}
+
+	// 添加更新时间戳
+	if m.timestamps && m.updatedAt != "" {
+		data[m.updatedAt] = time.Now()
+	}
+
+	result, err := query.Update(data)
+	m.resetQueryBuilder() // 执行后重置查询构建器
+	return result, err
+}
+
+// updateCurrentModel 更新当前模型实例
+func (m *BaseModel) updateCurrentModel() error {
 	// 检查是否有变更
 	dirty := m.GetDirty()
 	if len(dirty) == 0 {

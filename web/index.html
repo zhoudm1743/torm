@@ -127,6 +127,7 @@
                 <h2 class="section-title">快速上手</h2>
                 <div class="demo-tabs">
                     <button class="tab-btn active" data-tab="basic">基础操作</button>
+                    <button class="tab-btn" data-tab="model">模型操作</button>
                     <button class="tab-btn" data-tab="migration">数据迁移</button>
                     <button class="tab-btn" data-tab="transaction">事务处理</button>
                 </div>
@@ -135,29 +136,38 @@
                         <pre><code class="language-go">package main
 
 import (
-    "examples/models"
     "log"
     
     "github.com/zhoudm1743/torm/db"
 )
 
+type User struct {
+    ID        int    `db:"id" json:"id"`
+    Name      string `db:"name" json:"name"`
+    Email     string `db:"email" json:"email"`
+    Age       int    `db:"age" json:"age"`
+    Status    string `db:"status" json:"status"`
+    CreatedAt string `db:"created_at" json:"created_at"`
+    UpdatedAt string `db:"updated_at" json:"updated_at"`
+}
+
 func main() {
     // 配置数据库连接
-    conf := &db.Config{
+    config := &db.Config{
         Driver:   "mysql",
         Host:     "localhost",
         Port:     3306,
         Username: "root",
-        Password: "123456",
-        Database: "orm",
+        Password: "password",
+        Database: "torm_example",
     }
-    err := db.AddConnection("default", conf)
+    err := db.AddConnection("default", config)
     if err != nil {
         log.Fatal(err)
     }
     
-    // ===== 查询构建器演示 =====
-    log.Println("===== 查询构建器演示 =====")
+    // ===== TORM查询构建器演示 =====
+    log.Println("===== TORM查询构建器演示 =====")
 
     // 基础查询
     query, err := db.Table("users", "default")
@@ -181,78 +191,56 @@ func main() {
         }
     }
 
-    // ===== First和Find新功能演示 =====
-    log.Println("===== First和Find新功能演示 =====")
+    // ===== TORM支持两种查询方式 =====
+    log.Println("===== TORM支持两种查询方式 =====")
     
-    // First方法 - 只填充当前模型
-    user1 := models.NewUser()
-    _, err = user1.Where("id", "=", 1).First()
-    if err != nil {
-        log.Printf("查询失败: %v", err)
-    } else {
-        log.Printf("First结果: Name=%s, Age=%d", user1.Name, user1.Age)
-    }
-    
-    // First方法 - 同时填充传入的指针
-    user2 := models.NewUser()
-    var anotherUser models.User
-    _, err = user2.Where("id", "=", 2).First(&anotherUser)
-    if err != nil {
-        log.Printf("查询失败: %v", err)
-    } else {
-        log.Printf("First + 指针填充: 当前=%s, 指针=%s", user2.Name, anotherUser.Name)
-    }
-    
-    // Find方法 - 同时填充传入的指针
-    user3 := models.NewUser()
-    var targetUser models.User
-    _, err = user3.Find(1, &targetUser)
-    if err != nil {
-        log.Printf("Find失败: %v", err)
-    } else {
-        log.Printf("Find + 指针填充: 当前=%s, 指针=%s", user3.Name, targetUser.Name)
-    }
-
-    // ===== db包First和Find方法演示 =====
-    log.Println("===== db包First和Find方法演示 =====")
-    
-    // db.Table().First() 
-    query1, err := db.Table("users", "default")
+    // 方式1: 传统三参数方式
+    users, err := query.Where("age", ">", 18).
+        Where("status", "=", "active").Get()
     if err == nil {
-        dbResult1, err := query1.Where("id", "=", 1).First()
-        if err == nil {
-            log.Printf("db.First() 结果: %s", dbResult1["name"])
-        }
+        log.Printf("传统方式查询用户: %d 个", len(users))
     }
-
-    // db.Table().First(&model)
-    query2, err := db.Table("users", "default")
+    
+    // 方式2: 参数化查询方式
+    users, err = query.Where("name = ?", "张三").Get()
     if err == nil {
-        var userStruct models.User
-        _, err := query2.Where("id", "=", 1).First(&userStruct)
-        if err == nil {
-            log.Printf("db.First(&model) 结果: Name=%s", userStruct.Name)
+        log.Printf("参数化查询用户: %d 个", len(users))
     }
+    
+    // 方式3: 混合使用两种方式
+    users, err = query.Where("age", ">=", 18).        // 传统方式
+        Where("name LIKE ?", "%王%").                  // 参数化方式
+        Where("status", "=", "active").               // 传统方式
+        Where("email IS NOT NULL").Get()              // 原生SQL
+    if err == nil {
+        log.Printf("混合查询用户: %d 个", len(users))
     }
 
-    // ===== 自定义主键功能演示 =====
-    log.Println("===== 自定义主键功能演示 =====")
+    // ===== First和Find增强功能演示 =====
+    log.Println("===== First和Find增强功能演示 =====")
     
-    // 默认主键
-    user4 := models.NewUser()
-    log.Printf("默认主键: %v", user4.PrimaryKeys())
+    // 查询单个用户 - 参数化方式
+    var user User
+    _, err = query.Where("id = ?", 1).First(&user)
+    if err == nil {
+        log.Printf("用户信息: %s (%s)", user.Name, user.Email)
+    }
     
-    // UUID主键
-    userUUID := models.NewUserWithUUID()
-    userUUID.UUID = "550e8400-e29b-41d4-a716-446655440000"
-    userUUID.SetAttribute("uuid", userUUID.UUID)
-    log.Printf("UUID主键: %v, 值: %v", userUUID.PrimaryKeys(), userUUID.GetKey())
-
-    // 复合主键
-    userComposite := models.NewUserWithCompositePK()
-    userComposite.SetAttribute("tenant_id", "tenant-001")
-    userComposite.SetAttribute("user_id", "user-001")
-    log.Printf("复合主键: %v, 值: %v", userComposite.PrimaryKeys(), userComposite.GetKey())
+    // 查询单个用户 - 传统方式
+    var user2 User
+    _, err = query.Where("id", "=", 1).First(&user2)
+    if err == nil {
+        log.Printf("用户信息(传统方式): %s (%s)", user2.Name, user2.Email)
+    }
+    
+    // 查询多个用户 - 混合方式
+    var userList []User
+    _, err = query.Where("status", "=", "active").         // 传统方式
+        Where("age >= ?", 18).                             // 参数化方式
+        Find(&userList)
+    if err == nil {
+        log.Printf("成年活跃用户数量: %d", len(userList))
+    }
 
     // ===== 高级查询功能演示 =====
     log.Println("===== 高级查询功能演示 =====")
@@ -262,8 +250,8 @@ func main() {
     if err == nil {
         result, err := complexQuery.
             Select("id", "name", "email").
-            Where("age", "BETWEEN", []interface{}{20, 40}).
-            WhereIn("status", []interface{}{"active", "pending"}).
+            Where("age BETWEEN ? AND ?", 20, 40).
+            Where("status IN (?, ?)", "active", "pending").
             OrderBy("age", "ASC").
             OrderBy("name", "DESC").
             Limit(10).
@@ -273,7 +261,323 @@ func main() {
         }
     }
 
-    log.Printf("演示完成")
+    log.Println("===== TORM演示完成 =====")
+}</code></pre>
+                    </div>
+                    <div class="tab-content" id="model">
+                        <pre><code class="language-go">package main
+
+import (
+    "errors"
+    "log"
+    "time"
+    
+    "github.com/zhoudm1743/torm/db"
+    "github.com/zhoudm1743/torm/model"
+)
+
+// User 用户模型 - 支持标签配置
+type User struct {
+    model.BaseModel                                           // 嵌入基础模型
+    ID        uint       `json:"id" db:"id" pk:""`           // 主键，pk标签
+    Name      string     `json:"name" db:"name"`             // 用户名
+    Email     string     `json:"email" db:"email"`           // 邮箱
+    Age       int        `json:"age" db:"age"`               // 年龄
+    Status    string     `json:"status" db:"status"`         // 状态
+    CreatedAt time.Time  `json:"created_at" db:"created_at;autoCreateTime"` // 自动创建时间
+    UpdatedAt time.Time  `json:"updated_at" db:"updated_at;autoUpdateTime"` // 自动更新时间
+    DeletedAt model.DeletedTime `json:"deleted_at" db:"deleted_at"`          // 软删除时间
+}
+
+// NewUser 创建用户模型实例
+func NewUser() *User {
+    user := &User{
+        BaseModel: *model.NewBaseModel(), // BaseModel内置db.QueryInterface
+    }
+    user.SetTable("users")        // 设置表名
+    user.SetConnection("default") // 设置数据库连接
+    user.DetectConfigFromStruct(user) // 从结构体标签检测配置（优先级高于基础配置）
+    return user
+}
+
+// 自定义查询方法 - 活跃用户（参数化查询）
+func (u *User) GetActiveUsers() ([]map[string]interface{}, error) {
+    return u.Where("status = ?", "active").Get()
+}
+
+// 自定义查询方法 - 复合条件（参数化查询）
+func (u *User) GetActiveAdults() ([]map[string]interface{}, error) {
+    return u.Where("status = ? AND age >= ?", "active", 18).Get()
+}
+
+// 生命周期钩子 - 保存前验证
+func (u *User) BeforeSave() error {
+    if u.GetAttribute("email") == "" {
+        return errors.New("邮箱不能为空")
+    }
+    return nil
+}
+
+// 生命周期钩子 - 创建后处理
+func (u *User) AfterCreate() error {
+    log.Printf("新用户创建: %s", u.GetAttribute("name"))
+    return nil
+}
+
+func main() {
+    // 配置数据库连接
+    config := &db.Config{
+        Driver:   "mysql",
+        Host:     "localhost",
+        Port:     3306,
+        Username: "root",
+        Password: "password",
+        Database: "torm_example",
+    }
+    err := db.AddConnection("default", config)
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    // TORM模型系统说明：
+    // 1. 模型内置使用db包的QueryInterface进行数据库操作
+    // 2. 通过getQueryBuilder()方法获取db.Table()查询构建器
+    // 3. 所有Where、Get、First等方法都是对db包查询构建器的封装
+    // 4. 支持参数化查询: Where("name = ?", value) 和传统查询: Where("name", "=", value)
+    // 5. 默认操作当前模型表，JOIN查询智能处理表名前缀
+    
+    // ===== 创建用户 =====
+    log.Println("===== 创建用户 =====")
+    
+    // 方式1：直接创建
+    user1 := NewUser()
+    user1.Name = "张三"
+    user1.Email = "zhangsan@example.com"
+    user1.Age = 25
+    user1.Status = "active"
+    err = user1.Save()
+    if err != nil {
+        log.Printf("创建用户失败: %v", err)
+    } else {
+        log.Printf("用户 %s 创建成功，ID: %v", user1.Name, user1.GetKey())
+    }
+    
+    // 方式2：批量设置属性
+    user2 := NewUser()
+    err = user2.Fill(map[string]interface{}{
+        "name":   "李四",
+        "email":  "lisi@example.com",
+        "age":    30,
+        "status": "active",
+    }).Save()
+    if err != nil {
+        log.Printf("创建用户失败: %v", err)
+    } else {
+        log.Printf("用户批量创建成功")
+    }
+    
+    // ===== 查询用户 =====
+    log.Println("===== 查询用户 =====")
+    
+    // 根据主键查找
+    user := NewUser()
+    err = user.Find(1)
+    if err == nil {
+        log.Printf("找到用户: %s (%s)", user.Name, user.Email)
+    }
+    
+    // 使用自定义查询方法
+    activeUsers := NewUser()
+    users, err := activeUsers.GetActiveUsers()
+    if err == nil {
+        log.Printf("活跃用户数量: %d", len(users))
+    }
+    
+    // 复合条件查询（活跃且成年）- 参数化方式
+    adultActiveUsers := NewUser()
+    users, err = adultActiveUsers.GetActiveAdults()
+    if err == nil {
+        log.Printf("活跃成年用户数量: %d", len(users))
+    }
+    
+    // 原生SQL查询
+    rawQueryUsers := NewUser()
+    users, err = rawQueryUsers.WhereRaw("YEAR(created_at) = ? AND status = ?", 2024, "active").Get()
+    if err == nil {
+        log.Printf("2024年创建的活跃用户: %d", len(users))
+    }
+    
+    // JOIN查询 - 自动处理模型表名
+    joinUsers := NewUser()
+    joinResults, err := joinUsers.
+        LeftJoin("user_profiles", "user_id", "=", "id").  // 自动处理：user_profiles.user_id = users.id
+        Select("users.*", "user_profiles.avatar").
+        Where("status = ?", "active").                    // 自动使用users.status
+        Get()
+    if err == nil {
+        log.Printf("智能JOIN查询结果: %d 条记录", len(joinResults))
+    }
+    
+    // 分组查询 - 适配db.GroupBy功能
+    groupUsers := NewUser()
+    groupResults, err := groupUsers.
+        SelectRaw("status, COUNT(*) as count").
+        GroupBy("status").
+        Having("count", ">", 0).
+        Get()
+    if err == nil {
+        log.Printf("按状态分组结果: %d 个组", len(groupResults))
+    }
+    
+    // 使用模型的Where方法（传统三参数方式）
+    user3 := NewUser()
+    err = user3.Where("email", "=", "zhangsan@example.com").First()
+    if err == nil {
+        log.Printf("通过邮箱找到用户: %s", user3.Name)
+    }
+    
+    // 参数化查询方式
+    user4 := NewUser()
+    err = user4.Where("name = ? AND age >= ?", "李四", 25).First()
+    if err == nil {
+        log.Printf("通过参数化查询找到用户: %s", user4.Name)
+    }
+    
+    // 混合查询方式
+    user5 := NewUser()
+    err = user5.Where("status", "=", "active").           // 传统方式
+        Where("name LIKE ?", "%李%").                      // 参数化方式
+        OrWhere("email = ?", "admin@example.com").        // OR参数化方式
+        First()
+    if err == nil {
+        log.Printf("通过混合查询找到用户: %s", user5.Name)
+    }
+    
+    // ===== 更新用户 =====
+    log.Println("===== 更新用户 =====")
+    
+    updateUser := NewUser()
+    err = updateUser.Find(1)
+    if err == nil {
+        updateUser.Age = 26
+        updateUser.Status = "premium"
+        err = updateUser.Save()
+        if err == nil {
+            log.Printf("用户更新成功: %s, 新年龄: %d", updateUser.Name, updateUser.Age)
+        }
+    }
+    
+    // 批量更新 - 适配db.Update
+    updateUser := NewUser()
+    affectedRows, err := updateUser.Where("status = ?", "active").
+        Update(map[string]interface{}{
+            "status": "verified",
+        })
+    if err == nil {
+        log.Printf("批量更新了 %d 个用户状态", affectedRows.(int64))
+    }
+    
+    // 批量插入 - 适配db.InsertBatch
+    batchUser := NewUser()
+    insertedCount, err := batchUser.InsertBatch([]map[string]interface{}{
+        {"name": "批量用户1", "email": "batch1@example.com", "age": 25, "status": "active"},
+        {"name": "批量用户2", "email": "batch2@example.com", "age": 30, "status": "active"},
+        {"name": "批量用户3", "email": "batch3@example.com", "age": 28, "status": "active"},
+    })
+    if err == nil {
+        log.Printf("批量插入了 %d 个用户", insertedCount)
+    }
+    
+    // ===== 高级查询 =====
+    log.Println("===== 高级查询 =====")
+    
+    // 聚合查询
+    countUser := NewUser()
+    count, err := countUser.Where("status", "=", "active").Count()
+    if err == nil {
+        log.Printf("活跃用户数量: %d", count)
+    }
+    
+    // 检查记录是否存在
+    existsUser := NewUser()
+    exists, err := existsUser.Where("email", "=", "zhangsan@example.com").HasRecords()
+    if err == nil {
+        log.Printf("邮箱 zhangsan@example.com 是否存在: %t", exists)
+    }
+    
+    // 分页查询
+    result, err := NewUser().
+        Where("status", "=", "active").
+        OrderBy("created_at", "desc").
+        Paginate(1, 5) // 第1页，每页5条
+    if err == nil {
+        log.Printf("分页查询结果: 共%d条，当前页%d条", 
+            result.Total, len(result.Data))
+    }
+    
+    // ===== 模型序列化 =====
+    log.Println("===== 模型序列化 =====")
+    
+    serializeUser := NewUser()
+    err = serializeUser.Find(1)
+    if err == nil {
+        // 转换为Map
+        userData := serializeUser.ToMap()
+        log.Printf("用户Map: %+v", userData)
+        
+        // 获取所有属性
+        attributes := serializeUser.GetAttributes()
+        log.Printf("用户属性: %+v", attributes)
+        
+        // 获取主键值
+        keyValue := serializeUser.GetKey()
+        log.Printf("用户主键: %v", keyValue)
+    }
+    
+    // ===== 查询构建器模型支持演示 =====
+    log.Println("===== 查询构建器模型支持演示 =====")
+    
+    // 直接从模型创建查询构建器 - 自动获取表名和启用模型特性
+    userModel := &User{}
+    userModel.SetTable("custom_users") // 可选：手动设置表名（优先级最高）
+    modelQuery, err := db.Model(userModel)
+    if err == nil {
+        
+                // 插入模型实例 - 自动处理时间戳
+        newUser := &User{
+            Name:   "数据库用户",
+            Email:  "db@example.com",
+            Age:    28,
+            Status: "active",
+        }
+        insertedID, err := modelQuery.InsertModel(newUser)
+        if err == nil {
+            log.Printf("查询构建器插入用户成功，ID: %d", insertedID)
+        }
+        
+        // 查找模型 - 自动填充结构体，自动过滤软删除记录
+        var foundUser User
+        err = modelQuery.FindModel(insertedID, &foundUser)
+        if err == nil {
+            log.Printf("查询构建器找到用户: %s (%s)", foundUser.Name, foundUser.Email)
+        }
+        
+        // 更新模型 - 自动处理更新时间戳
+        foundUser.Age = 29
+        foundUser.Status = "premium"
+        affected, err := modelQuery.Where("id = ?", insertedID).UpdateModel(&foundUser)
+        if err == nil {
+            log.Printf("查询构建器更新用户成功，影响行数: %d", affected)
+        }
+        
+        // 自动软删除过滤 - 只查询未删除的记录
+        activeUsers, err := modelQuery.Where("status = ?", "active").Get()
+        if err == nil {
+            log.Printf("查询到 %d 个活跃用户（自动排除软删除）", len(activeUsers))
+        }
+    }
+    
+    log.Println("===== 模型操作演示完成 =====")
 }</code></pre>
                     </div>
                     <div class="tab-content" id="migration">
