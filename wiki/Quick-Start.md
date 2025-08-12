@@ -28,7 +28,7 @@ package models
 
 import (
     "time"
-    "github.com/zhoudm1743/torm/pkg/model"
+    "github.com/zhoudm1743/torm/model"
 )
 
 // User 默认主键模型
@@ -108,7 +108,7 @@ import (
     "examples/models"
     "log"
     
-    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/db"
 )
 
 func main() {
@@ -125,7 +125,7 @@ func main() {
     if err != nil {
         log.Fatal(err)
     }
-
+    
     // ===== 查询构建器演示 =====
     log.Println("===== 查询构建器演示 =====")
 
@@ -203,11 +203,11 @@ func main() {
         if err == nil {
             log.Printf("db.First(&model) 结果: Name=%s", userStruct.Name)
         }
-    }
+}
 
     // ===== 自定义主键功能演示 =====
     log.Println("===== 自定义主键功能演示 =====")
-    
+
     // 默认主键
     user4 := models.NewUser()
     log.Printf("默认主键: %v", user4.PrimaryKeys())
@@ -254,7 +254,7 @@ func main() {
         count, err := aggregateQuery.Where("status", "=", "active").Count()
         if err == nil {
             log.Printf("活跃用户总数: %d", count)
-        }
+    }
     }
 
     log.Println("===== 演示完成 =====")

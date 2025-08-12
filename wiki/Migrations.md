@@ -27,8 +27,8 @@ import (
     "context"
     "log"
     
-    "github.com/zhoudm1743/torm/pkg/db"
-    "github.com/zhoudm1743/torm/pkg/migration"
+    "github.com/zhoudm1743/torm/db"
+    "github.com/zhoudm1743/torm/migration"
 )
 
 func main() {
@@ -511,7 +511,7 @@ func sqliteLimitations(ctx context.Context, conn db.ConnectionInterface) error {
 package migrations
 
 import (
-    "github.com/zhoudm1743/torm/pkg/migration"
+    "github.com/zhoudm1743/torm/migration"
 )
 
 func RegisterAll(migrator *migration.Migrator) {

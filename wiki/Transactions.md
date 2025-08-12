@@ -18,7 +18,7 @@ TORM 提供了完整的事务支持，包括自动事务管理、嵌套事务、
 ### 基础事务使用
 
 ```go
-import "github.com/zhoudm1743/torm/pkg/db"
+import "github.com/zhoudm1743/torm/db"
 
 // 基础事务
 err := db.Transaction(func(tx db.TransactionInterface) error {

@@ -59,8 +59,8 @@ package main
 
 import (
     "log"
-    "github.com/zhoudm1743/torm/pkg/db"
-    "github.com/zhoudm1743/torm/pkg/model"
+    "github.com/zhoudm1743/torm/db"
+    "github.com/zhoudm1743/torm/model"
 )
 
 // 定义用户模型

@@ -287,7 +287,7 @@ import (
     "log"
     "time"
     
-    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/db"
 )
 
 func main() {
@@ -344,8 +344,8 @@ import (
     "log"
     "time"
     
-    "github.com/zhoudm1743/torm/pkg/db"
-    "github.com/zhoudm1743/torm/pkg/migration"
+    "github.com/zhoudm1743/torm/db"
+    "github.com/zhoudm1743/torm/migration"
 )
 
 func main() {

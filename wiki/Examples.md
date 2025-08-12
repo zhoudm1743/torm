@@ -13,7 +13,7 @@ package main
 
 import (
     "log"
-    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/db"
 )
 
 func main() {
@@ -126,7 +126,7 @@ package main
 
 import (
     "log"
-    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/db"
     "github.com/zhoudm1743/torm/examples/models"
 )
 
@@ -187,7 +187,7 @@ package main
 
 import (
     "time"
-    "github.com/zhoudm1743/torm/pkg/model"
+    "github.com/zhoudm1743/torm/model"
 )
 
 // 默认主键模型
@@ -272,7 +272,7 @@ package main
 
 import (
     "log"
-    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/db"
     "github.com/zhoudm1743/torm/examples/models"
 )
 
@@ -322,8 +322,8 @@ package main
 import (
     "context"
     "log"
-    "github.com/zhoudm1743/torm/pkg/db"
-    "github.com/zhoudm1743/torm/pkg/model"
+    "github.com/zhoudm1743/torm/db"
+    "github.com/zhoudm1743/torm/model"
 )
 
 // 用户模型
@@ -423,8 +423,8 @@ package main
 import (
     "context"
     "log"
-    "github.com/zhoudm1743/torm/pkg/db"
-    "github.com/zhoudm1743/torm/pkg/paginator"
+    "github.com/zhoudm1743/torm/db"
+    "github.com/zhoudm1743/torm/paginator"
 )
 
 func main() {
@@ -510,8 +510,8 @@ package main
 
 import (
     "log"
-    "github.com/zhoudm1743/torm/pkg/db"
-    "github.com/zhoudm1743/torm/pkg/query"
+    "github.com/zhoudm1743/torm/db"
+    "github.com/zhoudm1743/torm/query"
 )
 
 func main() {
@@ -584,8 +584,8 @@ package main
 
 import (
     "log"
-    "github.com/zhoudm1743/torm/pkg/db"
-    "github.com/zhoudm1743/torm/pkg/query"
+    "github.com/zhoudm1743/torm/db"
+    "github.com/zhoudm1743/torm/query"
 )
 
 func main() {
@@ -687,7 +687,7 @@ import (
     "log"
     "time"
     
-    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/db"
 )
 
 func main() {
@@ -738,7 +738,7 @@ import (
     "log"
     "time"
     
-    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/db"
 )
 
 func main() {
@@ -808,7 +808,7 @@ import (
     "log"
     "time"
     
-    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/db"
 )
 
 func advancedQueryExamples() {
@@ -885,7 +885,7 @@ import (
     "log"
     "time"
     
-    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/db"
 )
 
 func batchOperationsExample() {
@@ -958,7 +958,7 @@ import (
     "log"
     "time"
     
-    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/db"
 )
 
 func transactionExample() {
@@ -1083,7 +1083,7 @@ import (
     "log"
     "time"
     
-    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/db"
 )
 
 func timeoutControlExample() {
@@ -1164,8 +1164,8 @@ import (
     "context"
     "log"
     
-    "github.com/zhoudm1743/torm/pkg/db"
-    "github.com/zhoudm1743/torm/pkg/migration"
+    "github.com/zhoudm1743/torm/db"
+    "github.com/zhoudm1743/torm/migration"
 )
 
 func main() {
@@ -1314,7 +1314,7 @@ import (
     "context"
     "log"
     
-    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/db"
 )
 
 func main() {
@@ -1399,7 +1399,7 @@ import (
     "time"
     
     "go.mongodb.org/mongo-driver/bson"
-    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/db"
 )
 
 func main() {
@@ -1561,7 +1561,7 @@ import (
     "log"
     "time"
     
-    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/db"
 )
 
 type User struct {

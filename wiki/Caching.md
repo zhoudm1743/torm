@@ -16,7 +16,7 @@ TORM 提供了完整的缓存系统，包括内存缓存、查询缓存和关联
 ### 基础缓存使用
 
 ```go
-import "github.com/zhoudm1743/torm/pkg/cache"
+import "github.com/zhoudm1743/torm/cache"
 
 // 创建内存缓存实例
 memCache := cache.NewMemoryCache()

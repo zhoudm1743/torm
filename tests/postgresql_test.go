@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/zhoudm1743/torm/pkg/db"
+	"github.com/zhoudm1743/torm/db"
 )
 
 // All PostgreSQL tests are commented out

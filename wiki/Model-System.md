@@ -24,7 +24,7 @@ package models
 
 import (
     "time"
-    "github.com/zhoudm1743/torm/pkg/model"
+    "github.com/zhoudm1743/torm/model"
 )
 
 // User 用户模型

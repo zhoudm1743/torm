@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/zhoudm1743/torm/pkg/model"
+	"github.com/zhoudm1743/torm/model"
 )
 
 type User struct {

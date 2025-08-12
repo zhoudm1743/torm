@@ -138,7 +138,7 @@ import (
     "examples/models"
     "log"
     
-    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/db"
 )
 
 func main() {
@@ -155,7 +155,7 @@ func main() {
     if err != nil {
         log.Fatal(err)
     }
-
+    
     // ===== 查询构建器演示 =====
     log.Println("===== 查询构建器演示 =====")
 
@@ -192,7 +192,7 @@ func main() {
     } else {
         log.Printf("First结果: Name=%s, Age=%d", user1.Name, user1.Age)
     }
-
+    
     // First方法 - 同时填充传入的指针
     user2 := models.NewUser()
     var anotherUser models.User
@@ -202,7 +202,7 @@ func main() {
     } else {
         log.Printf("First + 指针填充: 当前=%s, 指针=%s", user2.Name, anotherUser.Name)
     }
-
+    
     // Find方法 - 同时填充传入的指针
     user3 := models.NewUser()
     var targetUser models.User
@@ -232,7 +232,7 @@ func main() {
         _, err := query2.Where("id", "=", 1).First(&userStruct)
         if err == nil {
             log.Printf("db.First(&model) 结果: Name=%s", userStruct.Name)
-        }
+    }
     }
 
     // ===== 自定义主键功能演示 =====
@@ -241,7 +241,7 @@ func main() {
     // 默认主键
     user4 := models.NewUser()
     log.Printf("默认主键: %v", user4.PrimaryKeys())
-
+    
     // UUID主键
     userUUID := models.NewUserWithUUID()
     userUUID.UUID = "550e8400-e29b-41d4-a716-446655440000"
@@ -256,7 +256,7 @@ func main() {
 
     // ===== 高级查询功能演示 =====
     log.Println("===== 高级查询功能演示 =====")
-
+    
     // 复杂条件查询
     complexQuery, err := db.Table("users", "default")
     if err == nil {
@@ -283,8 +283,8 @@ import (
     "fmt"
     "log"
     
-    "github.com/zhoudm1743/torm/pkg/db"
-    "github.com/zhoudm1743/torm/pkg/migration"
+    "github.com/zhoudm1743/torm/db"
+    "github.com/zhoudm1743/torm/migration"
 )
 
 func main() {
@@ -407,7 +407,7 @@ import (
     "fmt"
     "log"
     
-    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/db"
 )
 
 // 账户操作业务逻辑 - 完全基于查询构建器

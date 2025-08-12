@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zhoudm1743/torm/pkg/db"
+	"github.com/zhoudm1743/torm/db"
 )
 
 // AdvancedQueryBuilder 高级查询构建器

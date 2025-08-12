@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/zhoudm1743/torm/pkg/db"
-	"github.com/zhoudm1743/torm/pkg/migration"
+	"github.com/zhoudm1743/torm/db"
+	"github.com/zhoudm1743/torm/migration"
 )
 
 // setupTestDatabase 设置测试数据库连接

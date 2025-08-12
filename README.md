@@ -131,7 +131,7 @@ package main
 
 import (
     "log"
-    "github.com/zhoudm1743/torm/pkg/db"
+    "github.com/zhoudm1743/torm/db"
 )
 
 func main() {
@@ -161,7 +161,7 @@ func main() {
 ```go
 import (
     "time"
-    "github.com/zhoudm1743/torm/pkg/model"
+    "github.com/zhoudm1743/torm/model"
 )
 
 // 默认主键模型
@@ -220,7 +220,7 @@ func demonstrateFirstFind() {
         log.Printf("当前模型: Name=%s, Age=%d", user1.Name, user1.Age)
         log.Printf("返回数据: %+v", result1)
     }
-
+    
     // First方法 - 同时填充传入的指针
     user2 := NewUser()
     var anotherUser User
@@ -516,7 +516,7 @@ MIT License
 ### 📖 文档与学习
 - [TORM官方网站](http://www.inzj.cn) - 完整的文档和教程
 - [Go官方文档](https://golang.org/doc/)
-- [database/sql包文档](https://pkg.go.dev/database/sql)
+- [database/sql包文档](https:/.go.dev/database/sql)
 
 ### 🛠️ 依赖项目
 - [MySQL驱动](https://github.com/go-sql-driver/mysql)

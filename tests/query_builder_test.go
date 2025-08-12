@@ -3,7 +3,7 @@ package tests
 import (
 	"testing"
 
-	"github.com/zhoudm1743/torm/pkg/db"
+	"github.com/zhoudm1743/torm/db"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

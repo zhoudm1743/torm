@@ -13,7 +13,7 @@ TORM 提供了完整的日志系统，支持多级别日志、SQL日志记录、
 ## 🚀 快速开始
 
 ```go
-import "github.com/zhoudm1743/torm/pkg/logger"
+import "github.com/zhoudm1743/torm/logger"
 
 // 创建日志记录器
 appLogger := logger.NewLogger(logger.INFO)
