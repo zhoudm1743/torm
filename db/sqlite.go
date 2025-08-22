@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	_ "github.com/glebarez/sqlite" // SQLite 驱动
+	_ "modernc.org/sqlite" // SQLite 驱动
 )
 
 // SQLiteConnection SQLite数据库连接

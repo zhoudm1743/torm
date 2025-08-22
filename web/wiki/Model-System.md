@@ -1084,9 +1084,48 @@ func (u *User) GetActiveAdults() ([]map[string]interface{}, error) {
 }
 ```
 
+## 🆕 v1.1.6 增强功能
+
+### 新增WHERE查询方法
+
+所有新增的查询方法都支持模型链式调用：
+
+```go
+// NULL值查询
+activeUsers := user.WhereNotNull("email").WhereNull("deleted_at")
+
+// 范围查询
+adultUsers := user.WhereBetween("age", []interface{}{18, 65}).
+    WhereNotBetween("score", []interface{}{0, 60})
+
+// 子查询存在性检查
+usersWithOrders := user.WhereExists("SELECT 1 FROM orders WHERE orders.user_id = users.id")
+
+// 高级排序
+randomUsers := user.OrderRand().Limit(10)
+priorityUsers := user.OrderField("status", []interface{}{"premium", "active"}, "asc")
+
+// 原生字段表达式
+userStats := user.FieldRaw("COUNT(*) as total").GroupBy("city")
+```
+
+### 完整链式调用示例
+
+```go
+// 复杂查询组合
+result := user.WhereNotNull("email").
+    WhereBetween("age", []interface{}{25, 45}).
+    WhereExists("SELECT 1 FROM profiles WHERE profiles.user_id = users.id").
+    OrderField("status", []interface{}{"premium", "active", "trial"}, "asc").
+    OrderRand().
+    FieldRaw("TIMESTAMPDIFF(YEAR, birth_date, CURDATE()) as calculated_age").
+    Limit(50).
+    Get()
+```
+
 ## 🔗 相关文档
 
 - [查询构建器](Query-Builder) - 了解底层查询构建器
 - [关联关系](Relationships) - 模型间的关联关系  
 - [数据迁移](Migrations) - 数据库结构管理
-- [验证系统](Validation) - 数据验证功能 
+- [API参考](API-Reference) - 完整API文档 

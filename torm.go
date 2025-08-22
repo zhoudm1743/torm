@@ -61,5 +61,5 @@ var (
 
 // Version 返回 TORM 版本
 func Version() string {
-	return "1.1.3"
+	return "1.1.6"
 }

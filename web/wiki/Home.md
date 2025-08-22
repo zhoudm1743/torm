@@ -1,10 +1,10 @@
-# TORM v1.1.0 - 高性能Go语言ORM框架
+# TORM v1.1.6 - 高性能Go语言ORM框架
 
-![TORM Logo](https://img.shields.io/badge/TORM-v1.1.0-blue?style=for-the-badge&logo=go)
+![TORM Logo](https://img.shields.io/badge/TORM-v1.1.6-blue?style=for-the-badge&logo=go)
 ![Go Version](https://img.shields.io/badge/Go-1.19+-00ADD8?style=flat-square&logo=go)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
 ![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen?style=flat-square)
-![New Features](https://img.shields.io/badge/v1.1.0-New%20Features-orange?style=flat-square)
+![Enhanced Features](https://img.shields.io/badge/v1.1.6-Enhanced%20Features-orange?style=flat-square)
 
 ## 📖 欢迎使用 TORM
 
@@ -23,16 +23,14 @@ TORM (Think ORM) 是一个功能强大、高性能的Go语言ORM框架，专为�
 - **💾 智能缓存**: 高性能内存缓存系统
 - **📝 详细日志**: 可配置的查询日志和性能监控
 
-### 🆕 v1.1.0 新功能
+### 🆕 v1.1.6 新功能
 
-- **🔍 First/Find 增强**: 支持指针填充 + 返回原始数据，一次调用双重收益
-- **🔑 自定义主键**: 支持UUID、复合主键、任意类型主键，使用标签自动识别
-- **📊 db包增强**: 底层查询接口统一支持模型填充功能
-- **🔗 关联预加载**: 彻底解决N+1查询问题，性能提升10倍+
-- **📄 分页器系统**: 传统分页 + 游标分页，支持大数据量
-- **🔍 JSON查询**: 跨数据库JSON字段查询，支持JSONPath语法
-- **🏗️ 高级查询**: 子查询、窗口函数、复杂条件组合
-- **⚡ 性能优化**: 查询缓存、批量操作、智能预载入
+- **🔍 增强WHERE查询**: WhereNull、WhereNotNull、WhereBetween、WhereNotBetween、WhereExists、WhereNotExists
+- **📊 高级排序**: OrderRand随机排序、OrderField按值排序、FieldRaw原生字段表达式
+- **🚀 完全兼容ThinkORM**: 实现了ThinkORM的所有核心查询方法
+- **⚡ 性能优化**: 移除GORM依赖，使用纯Go SQLite驱动
+- **🔗 模型链式调用**: 所有新方法支持完整的模型链式调用
+- **🎯 查询构建器增强**: 支持复杂子查询和EXISTS操作
 
 ### 🎯 设计理念
 

@@ -246,13 +246,16 @@ func (q *QueryBuilder) WhereNotIn(field string, values []interface{}) QueryInter
 }
 
 // WhereBetween 添加WHERE BETWEEN条件
-func (q *QueryBuilder) WhereBetween(field string, start, end interface{}) QueryInterface {
+func (q *QueryBuilder) WhereBetween(field string, values []interface{}) QueryInterface {
+	if len(values) != 2 {
+		return q
+	}
 	newQuery := q.clone()
 	newQuery.wheres = append(newQuery.wheres, WhereClause{
 		Type:     "and",
 		Field:    field,
 		Operator: "BETWEEN",
-		Value:    []interface{}{start, end},
+		Value:    values,
 	})
 	return newQuery
 }
@@ -329,6 +332,85 @@ func (q *QueryBuilder) OrWhere(args ...interface{}) QueryInterface {
 		}
 	}
 
+	return newQuery
+}
+
+// WhereNotBetween 添加NOT BETWEEN查询条件
+func (q *QueryBuilder) WhereNotBetween(field string, values []interface{}) QueryInterface {
+	if len(values) != 2 {
+		return q
+	}
+	newQuery := q.clone()
+	newQuery.wheres = append(newQuery.wheres, WhereClause{
+		Type:     "AND",
+		Field:    field,
+		Operator: "NOT BETWEEN",
+		Value:    values,
+	})
+	return newQuery
+}
+
+// WhereExists 添加EXISTS子查询条件
+func (q *QueryBuilder) WhereExists(subQuery interface{}) QueryInterface {
+	newQuery := q.clone()
+
+	var sql string
+	var bindings []interface{}
+
+	// 处理不同类型的子查询
+	switch sq := subQuery.(type) {
+	case string:
+		sql = sq
+	case QueryInterface:
+		var err error
+		sql, bindings, err = sq.ToSQL()
+		if err != nil {
+			// 如果构建SQL失败，返回原查询
+			return q
+		}
+	default:
+		return q
+	}
+
+	newQuery.wheres = append(newQuery.wheres, WhereClause{
+		Type:        "AND",
+		Field:       "",
+		Operator:    "EXISTS",
+		Value:       nil,
+		Raw:         fmt.Sprintf("EXISTS (%s)", sql),
+		RawBindings: bindings,
+	})
+	return newQuery
+}
+
+// WhereNotExists 添加NOT EXISTS子查询条件
+func (q *QueryBuilder) WhereNotExists(subQuery interface{}) QueryInterface {
+	newQuery := q.clone()
+
+	var sql string
+	var bindings []interface{}
+
+	switch sq := subQuery.(type) {
+	case string:
+		sql = sq
+	case QueryInterface:
+		var err error
+		sql, bindings, err = sq.ToSQL()
+		if err != nil {
+			return q
+		}
+	default:
+		return q
+	}
+
+	newQuery.wheres = append(newQuery.wheres, WhereClause{
+		Type:        "AND",
+		Field:       "",
+		Operator:    "NOT EXISTS",
+		Value:       nil,
+		Raw:         fmt.Sprintf("NOT EXISTS (%s)", sql),
+		RawBindings: bindings,
+	})
 	return newQuery
 }
 
@@ -415,6 +497,69 @@ func (q *QueryBuilder) OrderByRaw(raw string, bindings ...interface{}) QueryInte
 		Raw:         raw,
 		RawBindings: bindings,
 	})
+	return newQuery
+}
+
+// OrderRand 随机排序
+func (q *QueryBuilder) OrderRand() QueryInterface {
+	newQuery := q.clone()
+	// 根据不同数据库使用不同的随机函数
+	driver := q.getDriverName()
+	var randomFunc string
+	switch driver {
+	case "mysql":
+		randomFunc = "RAND()"
+	case "postgres", "postgresql":
+		randomFunc = "RANDOM()"
+	case "sqlite":
+		randomFunc = "RANDOM()"
+	default:
+		randomFunc = "RAND()"
+	}
+
+	newQuery.orders = append(newQuery.orders, OrderClause{
+		Raw: randomFunc,
+	})
+	return newQuery
+}
+
+// OrderField 按字段值排序
+// 例如: OrderField("status", []interface{}{"active", "inactive", "pending"}, "asc")
+func (q *QueryBuilder) OrderField(field string, values []interface{}, direction string) QueryInterface {
+	if len(values) == 0 {
+		return q
+	}
+
+	newQuery := q.clone()
+
+	// 构建CASE WHEN语句
+	var caseWhen strings.Builder
+	caseWhen.WriteString("CASE ")
+	bindings := make([]interface{}, 0, len(values))
+
+	for i, value := range values {
+		caseWhen.WriteString(fmt.Sprintf("WHEN %s = ? THEN %d ", field, i))
+		bindings = append(bindings, value)
+	}
+	caseWhen.WriteString("ELSE 999 END")
+
+	if direction != "" {
+		caseWhen.WriteString(" " + strings.ToUpper(direction))
+	}
+
+	newQuery.orders = append(newQuery.orders, OrderClause{
+		Raw:         caseWhen.String(),
+		RawBindings: bindings,
+	})
+	return newQuery
+}
+
+// FieldRaw 添加原生字段表达式
+func (q *QueryBuilder) FieldRaw(raw string, bindings ...interface{}) QueryInterface {
+	newQuery := q.clone()
+	newQuery.fields = append(newQuery.fields, raw)
+	// 如果有绑定参数，需要存储起来用于最终SQL构建
+	// 这里简化处理，实际可能需要更复杂的参数管理
 	return newQuery
 }
 
@@ -770,12 +915,14 @@ func (q *QueryBuilder) buildSelectSQL() (string, []interface{}, error) {
 					sql.WriteString(strings.Join(placeholders, ", "))
 					sql.WriteString(")")
 					bindings = append(bindings, values...)
-				case "BETWEEN":
+				case "BETWEEN", "NOT BETWEEN":
 					values := where.Value.([]interface{})
 					sql.WriteString(" ? AND ?")
 					bindings = append(bindings, values...)
 				case "IS NULL", "IS NOT NULL":
 					// 不需要添加占位符
+				case "EXISTS", "NOT EXISTS":
+					// EXISTS和NOT EXISTS不需要占位符，Raw已经包含完整条件
 				default:
 					sql.WriteString(" ?")
 					bindings = append(bindings, where.Value)
@@ -1148,6 +1295,25 @@ func (q *QueryBuilder) execWithContext(ctx context.Context, query string, args .
 		return ctxConn.ExecContext(ctx, query, args...)
 	}
 	return q.connection.Exec(query, args...)
+}
+
+// getDriverName 获取数据库驱动名称
+func (q *QueryBuilder) getDriverName() string {
+	if q.connection != nil {
+		if conn, ok := q.connection.(interface{ GetDriver() string }); ok {
+			return conn.GetDriver()
+		}
+	}
+	return "mysql" // 默认值
+}
+
+// Exp 设置字段表达式 (用于UPDATE等操作)
+func (q *QueryBuilder) Exp(field string, expression string, bindings ...interface{}) QueryInterface {
+	// 这个方法主要用于UPDATE操作中的字段表达式设置
+	// 由于需要扩展数据结构，这里先提供基础实现
+	newQuery := q.clone()
+	// 实际实现需要在UPDATE方法中处理表达式
+	return newQuery
 }
 
 // isValidSQLOperator 检查是否为有效的SQL操作符

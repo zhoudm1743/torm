@@ -33,7 +33,7 @@ func TestQueryBuilder_WhereConditions(t *testing.T) {
 		Where("price", "<", 1000).
 		WhereIn("category_id", []interface{}{1, 2, 3}).
 		WhereNotIn("status", []interface{}{"deleted", "archived"}).
-		WhereBetween("created_at", "2024-01-01", "2024-12-31").
+		WhereBetween("created_at", []interface{}{"2024-01-01", "2024-12-31"}).
 		WhereNull("deleted_at").
 		WhereNotNull("updated_at").
 		ToSQL()

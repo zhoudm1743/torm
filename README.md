@@ -2,20 +2,20 @@
 
 [![Go Version](https://img.shields.io/badge/Go-%3E%3D1.18-blue.svg)](https://golang.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Documentation](https://img.shields.io/badge/docs-www.inzj.cn-brightgreen.svg)](http://www.inzj.cn)
-[![Version](https://img.shields.io/badge/version-1.1.0-orange.svg)](https://github.com/zhoudm1743/torm/releases)
+[![Documentation](https://img.shields.io/badge/docs-torm.site-brightgreen.svg)](http://torm.site)
+[![Version](https://img.shields.io/badge/version-1.1.6-orange.svg)](https://github.com/zhoudm1743/torm/releases)
 
 TORM是一个基于Go语言开发的高性能ORM（对象关系映射）框架，灵感来源于PHP ThinkORM。它提供了简洁易用的API、强大的查询构造器、完整的模型系统以及丰富的功能。
 如果您觉得TORM有帮助到您，请帮忙给个star
 
 ## 🌐 官方网站
 
-**官网地址**: [www.inzj.cn](http://www.inzj.cn)
+**官网地址**: [torm.site](http://torm.site)
 
-- 📚 [完整文档](http://www.inzj.cn/docs.html)
-- 🚀 [快速开始](http://www.inzj.cn/docs.html?doc=quick-start)
-- 💡 [示例代码](http://www.inzj.cn/docs.html?doc=examples)
-- ⚙️ [配置指南](http://www.inzj.cn/docs.html?doc=configuration)
+- 📚 [完整文档](http://torm.site/docs.html)
+- 🚀 [快速开始](http://torm.site/docs.html?doc=quick-start)
+- 💡 [示例代码](http://torm.site/docs.html?doc=examples)
+- ⚙️ [配置指南](http://torm.site/docs.html?doc=configuration)
 
 ## ✨ 主要特性
 
@@ -112,7 +112,7 @@ TORM是一个基于Go语言开发的高性能ORM（对象关系映射）框架�
 
 ### 📦 安装
 
-更详细的安装指南请访问：[www.inzj.cn/docs.html?doc=installation](http://www.inzj.cn/docs.html?doc=installation)
+更详细的安装指南请访问：[torm.site/docs.html?doc=installation](http://torm.site/docs.html?doc=installation)
 
 ```bash
 go mod init your-project
@@ -121,7 +121,7 @@ go get github.com/go-sql-driver/mysql    # MySQL 支持
 go get github.com/lib/pq                 # PostgreSQL 支持
 ```
 
-> 💡 **提示**: 完整的安装和配置教程，请访问官网的 [安装指南](http://www.inzj.cn/docs.html?doc=installation)。
+> 💡 **提示**: 完整的安装和配置教程，请访问官网的 [安装指南](http://torm.site/docs.html?doc=installation)。
 
 ### 🎯 核心功能演示
 
@@ -473,7 +473,7 @@ go test -cover ./tests/
 ```
 
 ### 更多测试信息
-访问 [测试文档](http://www.inzj.cn/docs.html?doc=troubleshooting) 了解更多测试相关信息。
+访问 [测试文档](http://torm.site/docs.html?doc=troubleshooting) 了解更多测试相关信息。
 
 ## 📊 性能特点
 
@@ -493,11 +493,11 @@ go test -cover ./tests/
 - 更多示例持续更新中...
 
 ### 在线示例
-访问 [www.inzj.cn/docs.html?doc=examples](http://www.inzj.cn/docs.html?doc=examples) 查看完整的在线示例和教程。
+访问 [torm.site/docs.html?doc=examples](http://torm.site/docs.html?doc=examples) 查看完整的在线示例和教程。
 
 ## 🤝 贡献
 
-我们欢迎所有形式的贡献！在参与之前，请阅读我们的 [贡献指南](http://www.inzj.cn/docs.html?doc=contributing)。
+我们欢迎所有形式的贡献！在参与之前，请阅读我们的 [贡献指南](http://torm.site/docs.html?doc=contributing)。
 
 ### 如何贡献
 1. **报告问题**: 在 [GitHub Issues](https://github.com/zhoudm1743/torm/issues) 报告bug或提出功能请求
@@ -506,7 +506,7 @@ go test -cover ./tests/
 4. **社区讨论**: 参与 [讨论区](https://github.com/zhoudm1743/torm/discussions) 的技术讨论
 
 ### 开发指南
-详细的开发指南请访问：[www.inzj.cn/docs.html?doc=contributing](http://www.inzj.cn/docs.html?doc=contributing)
+详细的开发指南请访问：[torm.site/docs.html?doc=contributing](http://torm.site/docs.html?doc=contributing)
 
 ## 📄 许可证
 
@@ -515,7 +515,7 @@ MIT License
 ## 🔗 相关链接
 
 ### 📖 文档与学习
-- [TORM官方网站](http://www.inzj.cn) - 完整的文档和教程
+- [TORM官方网站](http://torm.site) - 完整的文档和教程
 - [Go官方文档](https://golang.org/doc/)
 - [database/sql包文档](https:/.go.dev/database/sql)
 
@@ -532,4 +532,4 @@ MIT License
 
 **TORM v1.1.0** - 让Go数据库操作更简单、更高效！ 🚀
 
-访问 [www.inzj.cn](http://www.inzj.cn) 获取最新文档和教程。 
+访问 [torm.site](http://torm.site) 获取最新文档和教程。 

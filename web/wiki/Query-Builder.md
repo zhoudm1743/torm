@@ -146,6 +146,56 @@ query.Where(func(q db.QueryInterface) db.QueryInterface {
 }).Where("city", "=", "北京")
 ```
 
+### NULL 值查询
+
+```go
+// 查询NULL值
+query.WhereNull("deleted_at")
+query.WhereNull("phone")
+
+// 查询非NULL值  
+query.WhereNotNull("email")
+query.WhereNotNull("avatar")
+
+// 组合使用
+query.WhereNotNull("email").
+      WhereNull("deleted_at").
+      Where("status", "=", "active")
+```
+
+### BETWEEN 范围查询
+
+```go
+// BETWEEN 查询
+query.WhereBetween("age", []interface{}{18, 65})
+query.WhereBetween("created_at", []interface{}{"2024-01-01", "2024-12-31"})
+
+// NOT BETWEEN 查询
+query.WhereNotBetween("score", []interface{}{0, 60})
+
+// 结合其他条件
+query.WhereBetween("age", []interface{}{25, 45}).
+      WhereNotNull("email").
+      Where("status", "=", "active")
+```
+
+### EXISTS 子查询
+
+```go
+// EXISTS 查询
+subQuery := "SELECT 1 FROM orders WHERE orders.user_id = users.id"
+query.WhereExists(subQuery)
+
+// NOT EXISTS 查询
+query.WhereNotExists("SELECT 1 FROM banned_users WHERE banned_users.user_id = users.id")
+
+// 使用查询构建器作为子查询
+subQuery, _ := db.Table("orders").
+    Select("1").
+    WhereRaw("orders.user_id = users.id")
+query.WhereExists(subQuery)
+```
+
 ### IN 和 NOT IN
 
 ```go
@@ -287,8 +337,21 @@ query.OrderBy("name", "asc")
 query.OrderBy("status", "asc").
       OrderBy("created_at", "desc")
 
-// 随机排序
+// 随机排序（跨数据库兼容）
+query.OrderRand()
+
+// 按字段值优先级排序
+statusOrder := []interface{}{"premium", "active", "trial", "inactive"}
+query.OrderField("status", statusOrder, "asc")
+
+// 原生排序表达式
 query.OrderByRaw("RAND()")
+query.OrderByRaw("FIELD(status, ?, ?, ?)", "active", "pending", "inactive")
+
+// 添加原生字段表达式
+query.FieldRaw("COUNT(*) as order_count").
+      GroupBy("user_id").
+      OrderBy("order_count", "desc")
 ```
 
 ### 分页

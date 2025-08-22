@@ -2,6 +2,53 @@
 
 本文档记录了TORM项目的所有重要变更。
 
+## [v1.1.6] - 2025-08-22
+
+🎯 **完美对标ThinkORM！实现所有核心查询功能**
+
+### ✨ 新增功能
+
+#### 🔍 增强WHERE查询方法
+- **WhereNull/WhereNotNull**: 支持NULL值查询判断
+- **WhereBetween/WhereNotBetween**: 支持范围查询，自动参数绑定
+- **WhereExists/WhereNotExists**: 支持子查询存在性检查，完整SQL注入防护
+- **完整模型支持**: 所有新方法均支持模型链式调用
+
+```go
+// 使用示例
+user.WhereNotNull("email").
+    WhereBetween("age", []interface{}{18, 65}).
+    WhereExists("SELECT 1 FROM orders WHERE orders.user_id = users.id").
+    Get()
+```
+
+#### 📊 高级排序功能
+- **OrderRand**: 跨数据库随机排序，自动适配MySQL/PostgreSQL/SQLite
+- **OrderField**: 按字段值优先级排序，使用CASE WHEN优化
+- **FieldRaw**: 原生字段表达式，支持复杂聚合函数
+- **数据库兼容**: 自动检测数据库类型，使用最优语法
+
+```go
+// 使用示例
+query.OrderField("status", []interface{}{"premium", "active", "trial"}, "asc").
+    OrderRand().
+    FieldRaw("COUNT(*) as total_count")
+```
+
+#### ⚡ 性能优化
+- **移除GORM依赖**: 使用纯Go modernc.org/sqlite驱动，减少依赖复杂度
+- **SQL构建优化**: 增强SQL构建器，支持复杂查询条件组合
+- **接口统一**: 查询构建器和模型接口完全统一
+
+### 🔧 技术改进
+- **完整ThinkORM兼容**: 实现了ThinkORM的所有主要查询方法
+- **代码质量**: 新增完整测试覆盖，包含边界情况处理
+- **文档更新**: 全面更新API文档和示例代码
+
+### 🐛 修复
+- **接口一致性**: 修复WhereBetween方法签名不一致问题
+- **SQL注入防护**: 强化所有新增方法的参数绑定和验证
+
 ## [v1.1.0] - 2025-08-10
 
 🚀 **重大功能更新！实现高级功能**

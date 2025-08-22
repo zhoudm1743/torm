@@ -2,7 +2,71 @@
 
 本文档提供了TORM现代化ORM的完整使用示例，涵盖了从基础操作到高级功能的各种场景。
 
-## 🚀 v1.1.0 最新特性
+## 🚀 v1.1.6 最新特性
+
+### 🔍 增强WHERE查询方法
+
+TORM v1.1.6 新增了完整的WHERE查询方法，完美对标ThinkORM：
+
+```go
+package main
+
+import (
+    "log"
+    "github.com/zhoudm1743/torm/db"
+)
+
+func main() {
+    // 配置数据库
+    conf := &db.Config{
+        Driver:   "sqlite",
+        Database: ":memory:",
+    }
+    db.AddConnection("default", conf)
+
+    // ===== 增强WHERE查询演示 =====
+    
+    query, _ := db.Table("users", "default")
+    
+    // NULL值查询
+    activeUsersWithEmail, _ := query.
+        WhereNotNull("email").
+        WhereNull("deleted_at").
+        Where("status", "=", "active").
+        Get()
+    
+    // 范围查询
+    adultUsers, _ := query.
+        WhereBetween("age", []interface{}{18, 65}).
+        WhereNotBetween("score", []interface{}{0, 60}).
+        Get()
+    
+    // 子查询存在性检查
+    usersWithOrders, _ := query.
+        WhereExists("SELECT 1 FROM orders WHERE orders.user_id = users.id").
+        WhereNotExists("SELECT 1 FROM banned_users WHERE banned_users.user_id = users.id").
+        Get()
+    
+    // 高级排序功能
+    randomUsers, _ := query.OrderRand().Limit(10).Get()
+    
+    // 按状态优先级排序
+    priorityUsers, _ := query.
+        OrderField("status", []interface{}{"premium", "active", "trial"}, "asc").
+        Get()
+    
+    // 添加聚合字段
+    userStats, _ := query.
+        FieldRaw("COUNT(*) as total_count").
+        FieldRaw("AVG(age) as avg_age").
+        GroupBy("city").
+        Get()
+    
+    log.Printf("增强查询功能演示完成")
+}
+```
+
+## 🎯 v1.1.0 核心特性
 
 ### 🔍 查询构建器增强功能
 

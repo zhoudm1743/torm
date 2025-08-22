@@ -3,14 +3,14 @@
 ## 安装
 
 ```bash
-go get -u github.com/zhoudm1743/torm@v1.1.4
+go get -u github.com/zhoudm1743/torm@v1.1.6
 ```
 
 ## 使用方式
 
 ### 方式一：使用统一入口（推荐）
 
-从 v1.1.4 开始，您可以通过统一入口使用所有功能：
+从 v1.1.6 开始，您可以使用增强的查询功能：
 
 ```go
 package main
@@ -137,7 +137,7 @@ fmt.Println(torm.Version()) // 输出：1.1.4
 
 如果您之前使用的是 v1.1.3 或更早版本，建议升级到 v1.1.4 并使用统一入口：
 
-1. 更新版本：`go get -u github.com/zhoudm1743/torm@v1.1.4`
+1. 更新版本：`go get -u github.com/zhoudm1743/torm@v1.1.6`
 2. 将 `import "github.com/zhoudm1743/torm/db"` 改为 `import "github.com/zhoudm1743/torm"`
 3. 使用 `torm.` 前缀调用函数
 

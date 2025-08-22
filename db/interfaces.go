@@ -47,9 +47,12 @@ type QueryInterface interface {
 	Where(args ...interface{}) QueryInterface // 支持: Where(field, op, val) 或 Where(condition, args...)
 	WhereIn(field string, values []interface{}) QueryInterface
 	WhereNotIn(field string, values []interface{}) QueryInterface
-	WhereBetween(field string, start, end interface{}) QueryInterface
+	WhereBetween(field string, values []interface{}) QueryInterface
+	WhereNotBetween(field string, values []interface{}) QueryInterface
 	WhereNull(field string) QueryInterface
 	WhereNotNull(field string) QueryInterface
+	WhereExists(subQuery interface{}) QueryInterface
+	WhereNotExists(subQuery interface{}) QueryInterface
 	WhereRaw(raw string, bindings ...interface{}) QueryInterface
 	OrWhere(args ...interface{}) QueryInterface // 支持: OrWhere(field, op, val) 或 OrWhere(condition, args...)
 
@@ -62,6 +65,7 @@ type QueryInterface interface {
 	// 字段选择
 	Select(fields ...string) QueryInterface
 	SelectRaw(raw string, bindings ...interface{}) QueryInterface
+	FieldRaw(raw string, bindings ...interface{}) QueryInterface
 	Distinct() QueryInterface
 
 	// 分组和排序
@@ -69,6 +73,8 @@ type QueryInterface interface {
 	Having(field string, operator string, value interface{}) QueryInterface
 	OrderBy(field string, direction string) QueryInterface
 	OrderByRaw(raw string, bindings ...interface{}) QueryInterface
+	OrderRand() QueryInterface
+	OrderField(field string, values []interface{}, direction string) QueryInterface
 
 	// 限制和偏移
 	Limit(limit int) QueryInterface
@@ -94,6 +100,9 @@ type QueryInterface interface {
 	InsertBatch(data []map[string]interface{}) (int64, error)
 	Update(data map[string]interface{}) (int64, error)
 	Delete() (int64, error)
+	
+	// 高级表达式
+	Exp(field string, expression string, bindings ...interface{}) QueryInterface
 
 	// SQL构建
 	ToSQL() (string, []interface{}, error)

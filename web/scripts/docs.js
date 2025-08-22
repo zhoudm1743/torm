@@ -8,114 +8,114 @@ class DocsSystem {
         this.docs = {
             'home': {
                 title: '欢迎使用 TORM',
-                file: '../wiki/Home.md',
+                file: './wiki/Home.md',
                 next: 'installation'
             },
             'installation': {
                 title: '安装指南',
-                file: '../wiki/Installation.md',
+                file: './wiki/Installation.md',
                 prev: 'home',
                 next: 'quick-start'
             },
             'quick-start': {
                 title: '快速开始',
-                file: '../wiki/Quick-Start.md',
+                file: './wiki/Quick-Start.md',
                 prev: 'installation',
                 next: 'configuration'
             },
             'configuration': {
                 title: '配置',
-                file: '../wiki/Configuration.md',
+                file: './wiki/Configuration.md',
                 prev: 'quick-start',
                 next: 'database-support'
             },
             'database-support': {
                 title: '数据库支持',
-                file: '../wiki/Database-Support.md',
+                file: './wiki/Database-Support.md',
                 prev: 'configuration',
                 next: 'query-builder'
             },
             'query-builder': {
                 title: '查询构建器',
-                file: '../wiki/Query-Builder.md',
+                file: './wiki/Query-Builder.md',
                 prev: 'database-support',
                 next: 'model-system'
             },
             'model-system': {
                 title: '模型系统',
-                file: '../wiki/Model-System.md',
+                file: './wiki/Model-System.md',
                 prev: 'query-builder',
                 next: 'relationships'
             },
             'relationships': {
                 title: '关联关系',
-                file: '../wiki/Relationships.md',
+                file: './wiki/Relationships.md',
                 prev: 'model-system',
                 next: 'transactions'
             },
             'transactions': {
                 title: '事务处理',
-                file: '../wiki/Transactions.md',
+                file: './wiki/Transactions.md',
                 prev: 'relationships',
                 next: 'migrations'
             },
             'migrations': {
                 title: '数据迁移',
-                file: '../wiki/Migrations.md',
+                file: './wiki/Migrations.md',
                 prev: 'transactions',
                 next: 'caching'
             },
             'caching': {
                 title: '缓存系统',
-                file: '../wiki/Caching.md',
+                file: './wiki/Caching.md',
                 prev: 'migrations',
                 next: 'logging'
             },
             'logging': {
                 title: '日志系统',
-                file: '../wiki/Logging.md',
+                file: './wiki/Logging.md',
                 prev: 'caching',
                 next: 'performance'
             },
             'performance': {
                 title: '性能优化',
-                file: '../wiki/Performance.md',
+                file: './wiki/Performance.md',
                 prev: 'logging',
                 next: 'best-practices'
             },
             'best-practices': {
                 title: '最佳实践',
-                file: '../wiki/Best-Practices.md',
+                file: './wiki/Best-Practices.md',
                 prev: 'performance',
                 next: 'examples'
             },
             'examples': {
                 title: '示例代码',
-                file: '../wiki/Examples.md',
+                file: './wiki/Examples.md',
                 prev: 'best-practices',
                 next: 'api-reference'
             },
             'api-reference': {
                 title: 'API参考',
-                file: '../wiki/API-Reference.md',
+                file: './wiki/API-Reference.md',
                 prev: 'examples',
                 next: 'contributing'
             },
             'contributing': {
                 title: '贡献指南',
-                file: '../wiki/Contributing.md',
+                file: './wiki/Contributing.md',
                 prev: 'api-reference',
                 next: 'troubleshooting'
             },
             'troubleshooting': {
                 title: '故障排除',
-                file: '../wiki/Troubleshooting.md',
+                file: './wiki/Troubleshooting.md',
                 prev: 'contributing',
                 next: 'changelog'
             },
             'changelog': {
                 title: '更新日志',
-                file: '../wiki/Changelog.md',
+                file: './wiki/Changelog.md',
                 prev: 'troubleshooting'
             }
         };

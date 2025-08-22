@@ -843,6 +843,11 @@ func (m *BaseModel) String() string {
 
 // ===== 查询构建器便捷方法 =====
 
+// GetQueryBuilder 获取查询构建器（公共方法）
+func (m *BaseModel) GetQueryBuilder() db.QueryInterface {
+	return m.getQueryBuilder()
+}
+
 // getQueryBuilder 获取或创建内置查询构建器
 func (m *BaseModel) getQueryBuilder() db.QueryInterface {
 	if m.queryBuilder == nil {
@@ -900,25 +905,9 @@ func (m *BaseModel) WhereIn(field string, values []interface{}) *BaseModel {
 	return m
 }
 
-// WhereNotIn 添加WHERE NOT IN条件
-func (m *BaseModel) WhereNotIn(field string, values []interface{}) *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		m.queryBuilder = query.WhereNotIn(field, values)
-	}
-	return m
-}
 
-// WhereBetween 添加BETWEEN条件
-func (m *BaseModel) WhereBetween(field string, start, end interface{}) *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		m.queryBuilder = query.WhereBetween(field, start, end)
-	}
-	return m
-}
 
-// WhereNull 添加IS NULL条件
+// WhereNull 添加WHERE NULL条件
 func (m *BaseModel) WhereNull(field string) *BaseModel {
 	query := m.getQueryBuilder()
 	if query != nil {
@@ -927,7 +916,7 @@ func (m *BaseModel) WhereNull(field string) *BaseModel {
 	return m
 }
 
-// WhereNotNull 添加IS NOT NULL条件
+// WhereNotNull 添加WHERE NOT NULL条件
 func (m *BaseModel) WhereNotNull(field string) *BaseModel {
 	query := m.getQueryBuilder()
 	if query != nil {
@@ -935,6 +924,72 @@ func (m *BaseModel) WhereNotNull(field string) *BaseModel {
 	}
 	return m
 }
+
+// WhereBetween 添加WHERE BETWEEN条件
+func (m *BaseModel) WhereBetween(field string, values []interface{}) *BaseModel {
+	query := m.getQueryBuilder()
+	if query != nil {
+		m.queryBuilder = query.WhereBetween(field, values)
+	}
+	return m
+}
+
+// WhereNotBetween 添加WHERE NOT BETWEEN条件
+func (m *BaseModel) WhereNotBetween(field string, values []interface{}) *BaseModel {
+	query := m.getQueryBuilder()
+	if query != nil {
+		m.queryBuilder = query.WhereNotBetween(field, values)
+	}
+	return m
+}
+
+// WhereExists 添加WHERE EXISTS条件
+func (m *BaseModel) WhereExists(subQuery interface{}) *BaseModel {
+	query := m.getQueryBuilder()
+	if query != nil {
+		m.queryBuilder = query.WhereExists(subQuery)
+	}
+	return m
+}
+
+// WhereNotExists 添加WHERE NOT EXISTS条件
+func (m *BaseModel) WhereNotExists(subQuery interface{}) *BaseModel {
+	query := m.getQueryBuilder()
+	if query != nil {
+		m.queryBuilder = query.WhereNotExists(subQuery)
+	}
+	return m
+}
+
+// OrderRand 随机排序
+func (m *BaseModel) OrderRand() *BaseModel {
+	query := m.getQueryBuilder()
+	if query != nil {
+		m.queryBuilder = query.OrderRand()
+	}
+	return m
+}
+
+// OrderField 按字段值排序
+func (m *BaseModel) OrderField(field string, values []interface{}, direction string) *BaseModel {
+	query := m.getQueryBuilder()
+	if query != nil {
+		m.queryBuilder = query.OrderField(field, values, direction)
+	}
+	return m
+}
+
+// FieldRaw 添加原生字段表达式
+func (m *BaseModel) FieldRaw(raw string, bindings ...interface{}) *BaseModel {
+	query := m.getQueryBuilder()
+	if query != nil {
+		m.queryBuilder = query.FieldRaw(raw, bindings...)
+	}
+	return m
+}
+
+
+
 
 // WhereRaw 添加原生WHERE条件
 func (m *BaseModel) WhereRaw(raw string, bindings ...interface{}) *BaseModel {
