@@ -1,4 +1,3 @@
-// Package torm 是一个现代化的 Go ORM 库，支持多种数据库
 package torm
 
 import (

@@ -333,9 +333,78 @@ func (m *Manager) scanRows(rows *sql.Rows) ([]map[string]interface{}, error) {
 // 默认管理器实例
 var defaultManager = NewManager()
 
+// 初始化默认管理器
+func init() {
+	// 设置默认logger - 需要导入logger包时才能设置
+	// 这里使用延迟初始化，在第一次使用时设置logger
+}
+
 // DefaultManager 获取默认管理器
 func DefaultManager() *Manager {
 	return defaultManager
+}
+
+// SetDefaultLogger 设置默认管理器的logger
+func SetDefaultLogger(logger LoggerInterface) {
+	defaultManager.SetLogger(logger)
+}
+
+// EnableDefaultQueryLogging 启用默认查询日志记录
+func EnableDefaultQueryLogging() {
+	// 如果还没有logger，创建一个基本的logger
+	if defaultManager.GetLogger() == nil {
+		// 创建一个基本的控制台logger
+		defaultLogger := &BasicLogger{}
+		defaultManager.SetLogger(defaultLogger)
+	}
+}
+
+// BasicLogger 基本的控制台日志记录器
+type BasicLogger struct{}
+
+// Debug 调试日志
+func (l *BasicLogger) Debug(msg string, fields ...interface{}) {
+	fmt.Printf("[DEBUG] %s", msg)
+	if len(fields) > 0 {
+		fmt.Printf(" %v", fields)
+	}
+	fmt.Println()
+}
+
+// Info 信息日志
+func (l *BasicLogger) Info(msg string, fields ...interface{}) {
+	fmt.Printf("[INFO] %s", msg)
+	if len(fields) > 0 {
+		fmt.Printf(" %v", fields)
+	}
+	fmt.Println()
+}
+
+// Warn 警告日志
+func (l *BasicLogger) Warn(msg string, fields ...interface{}) {
+	fmt.Printf("[WARN] %s", msg)
+	if len(fields) > 0 {
+		fmt.Printf(" %v", fields)
+	}
+	fmt.Println()
+}
+
+// Error 错误日志
+func (l *BasicLogger) Error(msg string, fields ...interface{}) {
+	fmt.Printf("[ERROR] %s", msg)
+	if len(fields) > 0 {
+		fmt.Printf(" %v", fields)
+	}
+	fmt.Println()
+}
+
+// Fatal 致命错误日志
+func (l *BasicLogger) Fatal(msg string, fields ...interface{}) {
+	fmt.Printf("[FATAL] %s", msg)
+	if len(fields) > 0 {
+		fmt.Printf(" %v", fields)
+	}
+	fmt.Println()
 }
 
 // 便捷函数，使用默认管理器

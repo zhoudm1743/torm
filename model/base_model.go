@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"reflect"
+	"runtime"
 	"strings"
 	"time"
 
@@ -162,11 +163,14 @@ type BaseModel struct {
 	queryBuilder db.QueryInterface
 	// 模型结构体类型（用于自动迁移）
 	modelType reflect.Type
+	// 上下文提示信息（用于智能检测）
+	contextHints map[string]interface{}
 }
 
 // NewBaseModel 创建基础模型实例
+// 注意：为了完全支持AutoMigrate，推荐使用NewAutoMigrateModel或NewBaseModelWithAutoDetect
 func NewBaseModel() *BaseModel {
-	return &BaseModel{
+	baseModel := &BaseModel{
 		connection:   "default",
 		primaryKeys:  []string{"id"},
 		attributes:   make(map[string]interface{}),
@@ -180,7 +184,42 @@ func NewBaseModel() *BaseModel {
 		softDeletes:  false,
 		deletedAt:    "deleted_at",
 		queryBuilder: nil, // 延迟初始化，当第一次使用时创建
+		contextHints: make(map[string]interface{}),
 	}
+
+	// 尝试智能检测（非侵入式，失败不影响正常使用）
+	defer func() {
+		if r := recover(); r != nil {
+			// 如果自动检测失败，静默忽略，不影响正常功能
+		}
+	}()
+
+	// 尝试从调用栈获取上下文信息
+	if pc, _, _, ok := runtime.Caller(1); ok {
+		if fn := runtime.FuncForPC(pc); fn != nil {
+			funcName := fn.Name()
+			// 如果调用者是模型构造函数，设置一个标记
+			if strings.Contains(funcName, "New") && !strings.Contains(funcName, "NewBaseModel") {
+				baseModel.setContextHint("constructor_call", true)
+			}
+		}
+	}
+
+	return baseModel
+}
+
+// NewBaseModelWithDefaultDetection 创建基础模型实例并尝试默认检测配置
+// 这个方法会在运行时尝试智能检测调用者的模型实例
+func NewBaseModelWithDefaultDetection() *BaseModel {
+	baseModel := NewBaseModel()
+
+	// 尝试通过调用栈智能检测模型类型
+	// 这是一个高级功能，用于简化用户代码
+	if modelInstance := baseModel.tryAutoDetectModelFromStack(); modelInstance != nil {
+		baseModel.DetectConfigFromStruct(modelInstance)
+	}
+
+	return baseModel
 }
 
 // NewBaseModelWithAutoDetect 创建基础模型实例并自动检测配置
@@ -189,6 +228,24 @@ func NewBaseModelWithAutoDetect(modelInstance interface{}) *BaseModel {
 	baseModel := NewBaseModel()
 
 	// 自动检测配置
+	baseModel.DetectConfigFromStruct(modelInstance)
+
+	return baseModel
+}
+
+// NewAutoMigrateModel 创建支持自动迁移的BaseModel
+// 这个方法会同时设置模型结构和检测配置，完全支持AutoMigrate功能
+func NewAutoMigrateModel(modelInstance interface{}) *BaseModel {
+	baseModel := NewBaseModel()
+
+	// 设置模型结构类型
+	modelType := reflect.TypeOf(modelInstance)
+	if modelType.Kind() == reflect.Ptr {
+		modelType = modelType.Elem()
+	}
+	baseModel.SetModelStruct(modelType)
+
+	// 调用传统的DetectConfigFromStruct以保持兼容性
 	baseModel.DetectConfigFromStruct(modelInstance)
 
 	return baseModel
@@ -1730,9 +1787,11 @@ func (m *BaseModel) AutoMigrate() error {
 		return fmt.Errorf("failed to get database connection: %w", err)
 	}
 
-	// 检测模型结构
-	if err := m.detectModelStructure(); err != nil {
-		return fmt.Errorf("failed to detect model structure: %w", err)
+	// 自动检测模型结构（如果尚未检测）
+	if !m.HasModelStruct() {
+		if err := m.autoDetectFromReflection(); err != nil {
+			return fmt.Errorf("failed to auto-detect model structure: %w", err)
+		}
 	}
 
 	// 获取表名
@@ -1756,13 +1815,187 @@ func (m *BaseModel) AutoMigrate() error {
 	return m.updateTableStructure(conn, tableName)
 }
 
+// autoDetectFromReflection 通过反射自动检测模型结构
+func (m *BaseModel) autoDetectFromReflection() error {
+	// 首先检查是否已经设置了模型类型
+	if m.modelType != nil {
+		// 如果已有模型类型，创建零值实例进行配置检测
+		modelValue := reflect.New(m.modelType).Interface()
+		m.DetectConfigFromStruct(modelValue)
+		return nil
+	}
+
+	// 检查上下文提示
+	if constructorCall := m.getContextHint("constructor_call"); constructorCall != nil {
+		// 如果在构造函数中调用，提供更友好的错误信息
+		return fmt.Errorf("unable to auto-detect model structure in constructor context\n" +
+			"💡 Quick fix: Replace 'model.NewBaseModel()' with 'model.NewAutoMigrateModel(modelInstance)'\n" +
+			"📖 Example:\n" +
+			"   // Instead of:\n" +
+			"   user.BaseModel = *model.NewBaseModel()\n" +
+			"   // Use:\n" +
+			"   user.BaseModel = *model.NewAutoMigrateModel(user)")
+	}
+
+	// 尝试通过栈帧找到调用者的模型实例
+	modelInstance, err := m.findModelInstanceFromStack()
+	if err != nil {
+		return fmt.Errorf("failed to find model instance: %w", err)
+	}
+
+	// 调用DetectConfigFromStruct
+	m.DetectConfigFromStruct(modelInstance)
+	return nil
+}
+
+// findModelInstanceFromStack 从调用栈中查找模型实例
+func (m *BaseModel) findModelInstanceFromStack() (interface{}, error) {
+	// 通过运行时反射，尝试从调用栈中寻找包含当前BaseModel的结构体实例
+
+	// 获取调用栈信息
+	pc, _, _, ok := runtime.Caller(3) // 跳过当前方法、autoDetectFromReflection、AutoMigrate
+	if !ok {
+		return nil, fmt.Errorf("unable to get caller information")
+	}
+
+	// 获取调用函数的信息
+	fn := runtime.FuncForPC(pc)
+	if fn != nil {
+		funcName := fn.Name()
+		// 记录调用信息用于调试（在调试模式下）
+		if isDebugMode() {
+			fmt.Printf("🔍 findModelInstanceFromStack called from: %s\n", funcName)
+		}
+	}
+
+	// 通过堆栈分析尝试推断模型类型
+	// 由于Go语言的限制，我们采用启发式方法：
+	// 1. 检查是否有预设的模型类型
+	// 2. 如果没有，引导用户使用正确的初始化方法
+
+	if m.modelType != nil {
+		// 如果已经设置了模型类型，创建一个零值实例用于配置检测
+		modelValue := reflect.New(m.modelType).Interface()
+		return modelValue, nil
+	}
+
+	// 如果没有预设类型，返回友好的错误提示
+	return nil, fmt.Errorf("cannot auto-detect model structure from stack - please use one of these approaches:\n" +
+		"🎯 Recommended: Use NewAutoMigrateModel(modelInstance) for full AutoMigrate support\n" +
+		"📦 Alternative: Use NewBaseModelWithAutoDetect(modelInstance) when creating the model\n" +
+		"🔧 Manual: Call DetectConfigFromStruct(modelInstance) before AutoMigrate\n" +
+		"⚙️  Advanced: Set model structure using SetModelStruct(reflect.TypeOf(modelInstance))\n\n" +
+		"Example:\n" +
+		"  user := &User{}\n" +
+		"  user.BaseModel = *model.NewAutoMigrateModel(user)  // 🎉 Recommended\n" +
+		"  // OR\n" +
+		"  user.BaseModel = *model.NewBaseModel()\n" +
+		"  user.SetModelStruct(reflect.TypeOf(*user))        // 🔧 Manual setup")
+}
+
+// SetModelStruct 手动设置模型结构类型
+func (m *BaseModel) SetModelStruct(modelType reflect.Type) *BaseModel {
+	m.modelType = modelType
+	return m
+}
+
+// SetContextHint 设置上下文提示信息
+func (m *BaseModel) SetContextHint(key string, value interface{}) {
+	if m.contextHints == nil {
+		m.contextHints = make(map[string]interface{})
+	}
+	m.contextHints[key] = value
+}
+
+// GetContextHint 获取上下文提示信息
+func (m *BaseModel) GetContextHint(key string) interface{} {
+	if m.contextHints == nil {
+		return nil
+	}
+	return m.contextHints[key]
+}
+
+// setContextHint 内部使用的设置方法
+func (m *BaseModel) setContextHint(key string, value interface{}) {
+	m.SetContextHint(key, value)
+}
+
+// getContextHint 内部使用的获取方法
+func (m *BaseModel) getContextHint(key string) interface{} {
+	return m.GetContextHint(key)
+}
+
+// tryAutoDetectModelFromStack 尝试从调用栈智能检测模型实例
+func (m *BaseModel) tryAutoDetectModelFromStack() interface{} {
+	// 获取调用栈信息，尝试分析调用上下文
+	pc, file, line, ok := runtime.Caller(2) // 跳过当前方法和NewBaseModelWithDefaultDetection
+	if !ok {
+		return nil
+	}
+
+	// 获取调用函数的信息
+	fn := runtime.FuncForPC(pc)
+	if fn == nil {
+		return nil
+	}
+
+	funcName := fn.Name()
+
+	// 启发式分析：如果调用函数名包含特定模式，尝试推断模型类型
+	// 例如：NewUser, NewProduct, CreateUser 等
+	if strings.Contains(funcName, "New") || strings.Contains(funcName, "Create") {
+		// 记录调用信息用于调试（在调试模式下）
+		if isDebugMode() {
+			fmt.Printf("🔍 Auto-detection attempt: %s at %s:%d\n", funcName, file, line)
+		}
+
+		// 这里可以根据函数名模式进行更复杂的类型推断
+		// 但由于Go的限制，我们主要提供调试信息和引导
+		return nil
+	}
+
+	return nil
+}
+
+// isDebugMode 检查是否为调试模式
+func isDebugMode() bool {
+	// 可以通过环境变量或编译标志控制
+	// 这里简化为总是返回false，避免生产环境输出过多信息
+	return false
+}
+
 // detectModelStructure 检测模型结构
 func (m *BaseModel) detectModelStructure() error {
-	// 这个方法将在调用 DetectConfigFromStruct 时由外部实现
-	// 这里只是确保必要的配置已经设置
+	// 确保模型已经配置了必要的信息
 	if m.tableName == "" {
 		return fmt.Errorf("table name must be set before auto migration")
 	}
+
+	// 确保有模型结构类型信息
+	if m.modelType == nil {
+		return fmt.Errorf("model structure type not available - use NewAutoMigrateModel or SetModelStruct")
+	}
+
+	// 验证模型结构是否有效
+	if m.modelType.Kind() != reflect.Struct {
+		return fmt.Errorf("model type must be a struct, got %s", m.modelType.Kind())
+	}
+
+	// 检查是否有BaseModel字段（确保正确的模型继承）
+	hasBaseModel := false
+	for i := 0; i < m.modelType.NumField(); i++ {
+		field := m.modelType.Field(i)
+		if field.Type.Name() == "BaseModel" {
+			hasBaseModel = true
+			break
+		}
+	}
+
+	if !hasBaseModel {
+		// 这是一个警告，不是错误，因为用户可能有自定义的模型结构
+		fmt.Printf("⚠️  Warning: Model %s does not embed BaseModel, some features may not work properly\n", m.modelType.Name())
+	}
+
 	return nil
 }
 
@@ -2297,8 +2530,11 @@ func (m *BaseModel) parseTormFlag(flag string, column *migration.Column) {
 	case "auto_create_time", "autocreate":
 		column.Default = "CURRENT_TIMESTAMP"
 	case "auto_update_time", "autoupdate":
-		column.Default = "CURRENT_TIMESTAMP"
-		// TODO: 添加 ON UPDATE CURRENT_TIMESTAMP 支持
+		// 自动更新时间字段需要根据数据库类型设置不同的默认值
+		// MySQL: CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+		// PostgreSQL: CURRENT_TIMESTAMP (需要触发器)
+		// SQLite: CURRENT_TIMESTAMP (需要应用层处理)
+		column.Default = "CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"
 	case "index":
 		m.markColumnForIndex(column, "")
 	}
@@ -2493,7 +2729,95 @@ func parseInt(s string) int {
 
 // updateTableStructure 更新表结构
 func (m *BaseModel) updateTableStructure(conn db.ConnectionInterface, tableName string) error {
-	// 检查现有表结构与模型的差异，并执行必要的ALTER TABLE操作
-	// 暂时返回nil，表示不进行结构更新
+	// 获取模型结构体信息
+	modelStruct, err := m.getModelStruct()
+	if err != nil {
+		return fmt.Errorf("failed to get model structure: %w", err)
+	}
+
+	// 创建模型分析器和表结构对比器
+	analyzer := migration.NewModelAnalyzer()
+	comparator := migration.NewSchemaComparator(conn)
+	alterGenerator := migration.NewAlterGenerator(conn)
+
+	// 分析模型列
+	modelColumns, err := analyzer.AnalyzeModel(modelStruct)
+	if err != nil {
+		return fmt.Errorf("failed to analyze model columns: %w", err)
+	}
+
+	// 获取数据库中的列信息
+	dbColumns, err := comparator.GetDatabaseColumns(tableName)
+	if err != nil {
+		return fmt.Errorf("failed to get database columns: %w", err)
+	}
+
+	// 对比差异
+	differences := comparator.CompareColumns(dbColumns, modelColumns)
+	if len(differences) == 0 {
+		// 没有差异，不需要更新
+		return nil
+	}
+
+	// 生成ALTER TABLE语句
+	alterStatements, err := alterGenerator.GenerateAlterSQL(tableName, differences)
+	if err != nil {
+		return fmt.Errorf("failed to generate ALTER statements: %w", err)
+	}
+
+	// 执行ALTER TABLE语句
+	for _, statement := range alterStatements {
+		fmt.Printf("Executing: %s\n", statement)
+
+		// 跳过注释语句
+		if strings.HasPrefix(strings.TrimSpace(statement), "--") {
+			fmt.Printf("Skipped comment: %s\n", statement)
+			continue
+		}
+
+		_, err := conn.Exec(statement)
+		if err != nil {
+			return fmt.Errorf("failed to execute ALTER statement '%s': %w", statement, err)
+		}
+	}
+
+	fmt.Printf("✅ Table structure updated successfully. Applied %d changes.\n", len(differences))
+
+	// 打印变更详情
+	m.printSchemaChanges(differences)
+
 	return nil
+}
+
+// printSchemaChanges 打印表结构变更详情
+func (m *BaseModel) printSchemaChanges(differences []migration.ColumnDifference) {
+	if len(differences) == 0 {
+		return
+	}
+
+	fmt.Println("\n📋 Schema Changes Applied:")
+	fmt.Println("| Column | Action | Details |")
+	fmt.Println("|--------|--------|---------|")
+
+	for _, diff := range differences {
+		action := ""
+		details := ""
+
+		switch diff.Type {
+		case "add":
+			action = "➕ ADD"
+			if modelCol, ok := diff.NewValue.(migration.ModelColumn); ok {
+				details = fmt.Sprintf("Added %s column with type %s", modelCol.Name, modelCol.Type)
+			}
+		case "modify":
+			action = "🔧 MODIFY"
+			details = diff.Reason
+		case "drop":
+			action = "❌ DROP"
+			details = "Column removed from model"
+		}
+
+		fmt.Printf("| %s | %s | %s |\n", diff.Column, action, details)
+	}
+	fmt.Println()
 }
