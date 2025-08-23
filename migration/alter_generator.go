@@ -104,9 +104,45 @@ func (ag *AlterGenerator) generatePostgreSQLAlterSQL(tableName string, differenc
 func (ag *AlterGenerator) generatePostgreSQLModifyStatements(tableName string, modelCol ModelColumn, dbCol DatabaseColumn) []string {
 	var statements []string
 
-	// 修改类型
+	// 检查是否需要修改类型或长度
+	needsTypeChange := false
+
+	// 标准化类型名称进行比较
+	dbTypeNormalized := ag.normalizeTypeName(strings.ToUpper(dbCol.Type))
 	newType := ag.modelTypeToPostgreSQL(modelCol.Type)
-	if !strings.EqualFold(dbCol.Type, newType) {
+	newTypeNormalized := ag.normalizeTypeName(strings.ToUpper(newType))
+
+	// 检查类型是否不同
+	if dbTypeNormalized != newTypeNormalized {
+		needsTypeChange = true
+	}
+
+	// 检查长度是否不同
+	if ag.needsLength(modelCol.Type) {
+		if modelCol.Length > 0 {
+			// 模型指定了长度
+			if dbCol.Length == nil || *dbCol.Length != modelCol.Length {
+				needsTypeChange = true
+			}
+		}
+	}
+
+	// 检查精度是否不同
+	if modelCol.Type == ColumnTypeDecimal {
+		if modelCol.Precision > 0 {
+			if dbCol.Precision == nil || *dbCol.Precision != modelCol.Precision {
+				needsTypeChange = true
+			}
+		}
+		if modelCol.Scale > 0 {
+			if dbCol.Scale == nil || *dbCol.Scale != modelCol.Scale {
+				needsTypeChange = true
+			}
+		}
+	}
+
+	// 如果需要修改类型或长度，生成ALTER语句
+	if needsTypeChange {
 		typeClause := newType
 		if modelCol.Length > 0 && ag.needsLength(modelCol.Type) {
 			typeClause = fmt.Sprintf("%s(%d)", newType, modelCol.Length)
@@ -434,4 +470,32 @@ func (ag *AlterGenerator) defaultsEqual(dbDefault *string, modelDefault *string)
 		return false
 	}
 	return *dbDefault == *modelDefault
+}
+
+// normalizeTypeName 标准化类型名称，处理不同数据库之间的类型名称差异
+func (ag *AlterGenerator) normalizeTypeName(typeName string) string {
+	// 移除空格并转为大写
+	typeName = strings.ToUpper(strings.TrimSpace(typeName))
+
+	// 处理PostgreSQL特有的类型名称
+	switch typeName {
+	case "CHARACTER VARYING":
+		return "VARCHAR"
+	case "CHARACTER":
+		return "CHAR"
+	case "DOUBLE PRECISION":
+		return "DOUBLE"
+	case "TIMESTAMP WITHOUT TIME ZONE":
+		return "TIMESTAMP"
+	case "TIMESTAMP WITH TIME ZONE":
+		return "TIMESTAMP"
+	}
+
+	// 处理MySQL特有的类型名称
+	switch typeName {
+	case "TINYINT(1)":
+		return "BOOLEAN"
+	}
+
+	return typeName
 }

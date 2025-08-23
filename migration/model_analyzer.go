@@ -175,6 +175,57 @@ func (ma *ModelAnalyzer) ParseTormKeyValue(part string, column *ModelColumn) err
 		column.Default = &defaultVal
 	case "comment":
 		column.Comment = value
+	case "column":
+		// 自定义列名支持
+		column.Name = value
+	case "length", "len":
+		// 长度的别名支持
+		if size, err := strconv.Atoi(value); err == nil {
+			column.Length = size
+		}
+	case "width":
+		// 宽度的别名支持(与长度相同)
+		if size, err := strconv.Atoi(value); err == nil {
+			column.Length = size
+		}
+	case "prec":
+		// 精度的别名支持
+		if precision, err := strconv.Atoi(value); err == nil {
+			column.Precision = precision
+		}
+	case "digits":
+		// 小数位的别名支持
+		if scale, err := strconv.Atoi(value); err == nil {
+			column.Scale = scale
+		}
+	case "charset":
+		// 字符集支持 (仅MySQL相关，可以存储在扩展属性中)
+		// 这里先忽略，因为ModelColumn结构体没有字符集字段
+	case "collation", "collate":
+		// 排序规则支持 (仅MySQL相关)
+		// 这里先忽略，因为ModelColumn结构体没有排序规则字段
+	case "engine":
+		// 存储引擎 (仅MySQL相关)
+		// 这里先忽略，因为这是表级别的属性
+	case "auto_update", "on_update":
+		// ON UPDATE 子句
+		if strings.ToLower(value) == "current_timestamp" {
+			// 这是 auto_update_time 的另一种写法
+			column.NotNull = true
+			if column.Default == nil {
+				defaultVal := "CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"
+				column.Default = &defaultVal
+			}
+		}
+	case "auto_create", "on_create":
+		// 创建时自动设置
+		if strings.ToLower(value) == "current_timestamp" {
+			column.NotNull = true
+			if column.Default == nil {
+				defaultVal := "CURRENT_TIMESTAMP"
+				column.Default = &defaultVal
+			}
+		}
 	}
 
 	return nil
@@ -185,30 +236,89 @@ func (ma *ModelAnalyzer) ParseTormFlag(flag string, column *ModelColumn) {
 	flag = strings.ToLower(flag)
 
 	switch flag {
-	case "primary_key", "pk":
+	case "primary_key", "pk", "primary", "primarykey":
 		column.PrimaryKey = true
-	case "auto_increment":
+	case "auto_increment", "autoincrement", "auto_inc", "autoinc":
 		column.AutoIncrement = true
-	case "unique":
+	case "unique", "uniq":
 		column.Unique = true
-	case "not_null":
+	case "not_null", "not null", "notnull", "not_nil", "notnil":
 		column.NotNull = true
-	case "nullable":
+	case "nullable", "null":
 		column.NotNull = false
-	case "auto_create_time":
+	case "auto_create_time", "create_time", "created_at", "auto_created_at":
 		// 自动创建时间字段
 		column.NotNull = true
 		if column.Default == nil {
 			defaultVal := "CURRENT_TIMESTAMP"
 			column.Default = &defaultVal
 		}
-	case "auto_update_time":
+	case "auto_update_time", "update_time", "updated_at", "auto_updated_at":
 		// 自动更新时间字段
 		column.NotNull = true
 		if column.Default == nil {
 			defaultVal := "CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"
 			column.Default = &defaultVal
 		}
+	case "timestamp", "current_timestamp":
+		// 时间戳字段
+		column.NotNull = true
+		if column.Default == nil {
+			defaultVal := "CURRENT_TIMESTAMP"
+			column.Default = &defaultVal
+		}
+	case "unsigned":
+		// 无符号数字类型 (主要用于MySQL)
+		// 这里可以通过修改类型名称来处理，但ModelColumn结构体没有专门的unsigned字段
+		// 可以考虑在类型名称后添加UNSIGNED
+	case "zerofill":
+		// 零填充 (主要用于MySQL)
+		// 类似unsigned，这里先忽略
+	case "binary":
+		// 二进制存储
+		// 类似上面，先忽略
+	case "index", "idx":
+		// 普通索引标记
+		// 由于ModelColumn结构体没有索引相关字段，这里先忽略
+		// 实际实现中需要在Table级别处理索引
+	case "fulltext", "fulltext_index":
+		// 全文索引标记
+		// 这里先忽略，需要在Table级别处理
+	case "spatial", "spatial_index":
+		// 空间索引标记
+		// 这里先忽略，需要在Table级别处理
+	case "btree", "hash", "rtree":
+		// 索引类型标记
+		// 这里先忽略，需要在Table级别处理
+	case "foreign_key", "fk":
+		// 外键标记
+		// 这里先忽略，需要在Table级别处理外键关系
+	case "references", "ref":
+		// 引用标记
+		// 这里先忽略，需要在Table级别处理
+	case "on_delete_cascade", "cascade_delete":
+		// 级联删除
+		// 这里先忽略，外键相关
+	case "on_update_cascade", "cascade_update":
+		// 级联更新
+		// 这里先忽略，外键相关
+	case "generated", "virtual", "stored":
+		// 生成列标记
+		// 这里先忽略，需要扩展ModelColumn结构体
+	case "json", "is_json":
+		// JSON字段标记
+		if column.Type == "" {
+			column.Type = ColumnTypeJSON
+		}
+	case "encrypted", "encrypt":
+		// 加密字段标记
+		// 这里先忽略，需要在应用层处理
+	case "hidden", "invisible":
+		// 隐藏字段标记
+		// 这里先忽略，需要扩展ModelColumn结构体
+	case "readonly", "immutable":
+		// 只读字段标记
+		// 这里先忽略，需要在应用层处理
 	}
 }
 
@@ -217,33 +327,34 @@ func (ma *ModelAnalyzer) SetColumnType(typeStr string, column *ModelColumn) {
 	typeStr = strings.ToLower(typeStr)
 
 	switch typeStr {
-	case "varchar":
+	// 字符串类型
+	case "varchar", "string":
 		column.Type = ColumnTypeVarchar
-		if column.Length == 0 {
-			column.Length = 255 // 默认长度
-		}
-	case "char":
+	case "char", "character":
 		column.Type = ColumnTypeChar
-		if column.Length == 0 {
-			column.Length = 255
-		}
-	case "text":
+	case "text", "longtext", "mediumtext":
 		column.Type = ColumnTypeText
-	case "longtext":
-		column.Type = ColumnTypeLongText
-	case "int", "integer":
+	case "tinytext":
+		column.Type = ColumnTypeText
+
+	// 整数类型
+	case "int", "integer", "int32":
 		column.Type = ColumnTypeInt
-	case "tinyint":
+	case "tinyint", "int8", "byte":
 		column.Type = ColumnTypeTinyInt
-	case "smallint":
+	case "smallint", "int16", "short":
 		column.Type = ColumnTypeSmallInt
-	case "bigint":
+	case "bigint", "int64", "long":
 		column.Type = ColumnTypeBigInt
-	case "float":
+	case "mediumint":
+		column.Type = ColumnTypeInt
+
+	// 浮点类型
+	case "float", "float32", "real":
 		column.Type = ColumnTypeFloat
-	case "double":
+	case "double", "float64", "double_precision":
 		column.Type = ColumnTypeDouble
-	case "decimal", "numeric":
+	case "decimal", "numeric", "money":
 		column.Type = ColumnTypeDecimal
 		if column.Precision == 0 {
 			column.Precision = 10 // 默认精度
@@ -251,20 +362,63 @@ func (ma *ModelAnalyzer) SetColumnType(typeStr string, column *ModelColumn) {
 		if column.Scale == 0 {
 			column.Scale = 2 // 默认小数位
 		}
-	case "boolean", "bool":
+
+	// 布尔类型
+	case "boolean", "bool", "bit":
 		column.Type = ColumnTypeBoolean
+
+	// 日期时间类型
 	case "date":
 		column.Type = ColumnTypeDate
-	case "datetime":
+	case "datetime", "datetime2":
 		column.Type = ColumnTypeDateTime
-	case "timestamp":
+	case "timestamp", "timestamptz":
 		column.Type = ColumnTypeTimestamp
-	case "time":
+	case "time", "timetz":
 		column.Type = ColumnTypeTime
-	case "blob":
+	case "year":
+		column.Type = ColumnTypeInt // 年份作为整数处理
+
+	// 二进制类型
+	case "blob", "binary", "varbinary":
 		column.Type = ColumnTypeBlob
-	case "json":
+	case "tinyblob":
+		column.Type = ColumnTypeBlob
+	case "mediumblob":
+		column.Type = ColumnTypeBlob
+	case "longblob":
+		column.Type = ColumnTypeBlob
+
+	// JSON类型
+	case "json", "jsonb":
 		column.Type = ColumnTypeJSON
+
+	// UUID类型 (作为VARCHAR处理)
+	case "uuid", "guid":
+		column.Type = ColumnTypeVarchar
+		if column.Length == 0 {
+			column.Length = 36 // UUID标准长度
+		}
+
+	// 枚举类型 (作为VARCHAR处理)
+	case "enum", "set":
+		column.Type = ColumnTypeVarchar
+		if column.Length == 0 {
+			column.Length = 255
+		}
+
+	// 几何类型 (作为TEXT处理)
+	case "geometry", "point", "linestring", "polygon":
+		column.Type = ColumnTypeText
+
+	// 其他类型
+	case "xml":
+		column.Type = ColumnTypeText
+	case "inet", "cidr", "macaddr":
+		column.Type = ColumnTypeVarchar
+	case "array":
+		column.Type = ColumnTypeJSON // 数组作为JSON处理
+
 	default:
 		// 如果没有明确指定类型，保持从Go类型推断的类型
 	}

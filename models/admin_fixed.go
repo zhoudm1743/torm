@@ -11,7 +11,7 @@ type Admin struct {
 	ID        string   `json:"id" torm:"primary_key,type:varchar,size:32,comment:管理员ID"`
 	Phone     string   `json:"phone" torm:"type:varchar,size:11,comment:手机号"`
 	Password  string   `json:"password" torm:"type:varchar,size:32,comment:密码"`
-	Nickname  string   `json:"nickname" torm:"type:varchar,size:32,comment:昵称"`
+	Nickname  string   `json:"nickname" torm:"type:varchar,size:255,comment:昵称"` // 修改为255
 	Avatar    string   `json:"avatar" torm:"type:varchar,size:255,comment:头像"`
 	Status    int      `json:"status" torm:"type:int,default:1,comment:状态"`
 	Role      []string `json:"role" torm:"type:varchar,size:255,comment:角色（JSON存储）"`

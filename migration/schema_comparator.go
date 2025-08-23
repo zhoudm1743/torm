@@ -474,7 +474,40 @@ func (sc *SchemaComparator) needsModification(dbCol DatabaseColumn, modelCol Mod
 func (sc *SchemaComparator) typesEqual(dbType string, modelType ColumnType) bool {
 	// 将模型类型转换为数据库类型
 	expectedDBType := sc.modelTypeToDBType(modelType)
-	return strings.ToUpper(dbType) == strings.ToUpper(expectedDBType)
+
+	// 标准化类型名称以便比较
+	dbTypeNormalized := sc.normalizeTypeName(strings.ToUpper(dbType))
+	expectedTypeNormalized := sc.normalizeTypeName(strings.ToUpper(expectedDBType))
+
+	return dbTypeNormalized == expectedTypeNormalized
+}
+
+// normalizeTypeName 标准化类型名称，处理不同数据库之间的类型名称差异
+func (sc *SchemaComparator) normalizeTypeName(typeName string) string {
+	// 移除空格并转为大写
+	typeName = strings.ToUpper(strings.TrimSpace(typeName))
+
+	// 处理PostgreSQL特有的类型名称
+	switch typeName {
+	case "CHARACTER VARYING":
+		return "VARCHAR"
+	case "CHARACTER":
+		return "CHAR"
+	case "DOUBLE PRECISION":
+		return "DOUBLE"
+	case "TIMESTAMP WITHOUT TIME ZONE":
+		return "TIMESTAMP"
+	case "TIMESTAMP WITH TIME ZONE":
+		return "TIMESTAMP"
+	}
+
+	// 处理MySQL特有的类型名称
+	switch typeName {
+	case "TINYINT(1)":
+		return "BOOLEAN"
+	}
+
+	return typeName
 }
 
 // modelTypeToDBType 将模型类型转换为数据库类型
@@ -539,9 +572,9 @@ func (sc *SchemaComparator) modelTypeToMySQL(modelType ColumnType) string {
 func (sc *SchemaComparator) modelTypeToPostgreSQL(modelType ColumnType) string {
 	switch modelType {
 	case ColumnTypeVarchar:
-		return "CHARACTER VARYING"
+		return "VARCHAR" // 修改为VARCHAR以便比较
 	case ColumnTypeChar:
-		return "CHARACTER"
+		return "CHAR" // 修改为CHAR以便比较
 	case ColumnTypeText:
 		return "TEXT"
 	case ColumnTypeLongText:
@@ -603,12 +636,20 @@ func (sc *SchemaComparator) modelTypeToSQLite(modelType ColumnType) string {
 
 // lengthsEqual 比较长度是否相等
 func (sc *SchemaComparator) lengthsEqual(dbLength *int, modelLength int) bool {
+	// 如果数据库长度为nil且模型长度为0，认为相等
 	if dbLength == nil && modelLength == 0 {
 		return true
 	}
-	if dbLength == nil || modelLength == 0 {
+	// 如果数据库长度为nil但模型长度不为0，认为不相等
+	if dbLength == nil && modelLength > 0 {
 		return false
 	}
+	// 如果数据库长度不为nil但模型长度为0，且模型没有明确指定类型，可能需要使用默认长度
+	if dbLength != nil && modelLength == 0 {
+		// 对于varchar/char类型，如果模型没有指定长度，使用默认长度255进行比较
+		return *dbLength == 255
+	}
+	// 正常比较
 	return *dbLength == modelLength
 }
 
