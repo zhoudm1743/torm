@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/zhoudm1743/torm/db"
+	"github.com/zhoudm1743/torm/migration"
 )
 
 // DeletedTime 软删除时间类型
@@ -159,6 +160,8 @@ type BaseModel struct {
 	deletedAt   string
 	// 内置查询构建器
 	queryBuilder db.QueryInterface
+	// 模型结构体类型（用于自动迁移）
+	modelType reflect.Type
 }
 
 // NewBaseModel 创建基础模型实例
@@ -178,6 +181,17 @@ func NewBaseModel() *BaseModel {
 		deletedAt:    "deleted_at",
 		queryBuilder: nil, // 延迟初始化，当第一次使用时创建
 	}
+}
+
+// NewBaseModelWithAutoDetect 创建基础模型实例并自动检测配置
+// 推荐在模型构造函数中使用此方法
+func NewBaseModelWithAutoDetect(modelInstance interface{}) *BaseModel {
+	baseModel := NewBaseModel()
+
+	// 自动检测配置
+	baseModel.DetectConfigFromStruct(modelInstance)
+
+	return baseModel
 }
 
 // TableName 获取表名
@@ -302,6 +316,13 @@ func (m *BaseModel) DetectPrimaryKeysFromStruct(structValue interface{}) *BaseMo
 // 结构体标签优先级高于BaseModel基础配置
 func (m *BaseModel) DetectConfigFromStruct(structValue interface{}) *BaseModel {
 	metadata := ParseModelTags(structValue)
+
+	// 保存模型结构体类型信息（用于 AutoMigrate）
+	modelType := reflect.TypeOf(structValue)
+	if modelType.Kind() == reflect.Ptr {
+		modelType = modelType.Elem()
+	}
+	m.modelType = modelType
 
 	// 更新主键配置
 	if len(metadata.PrimaryKeys) > 0 {
@@ -905,8 +926,6 @@ func (m *BaseModel) WhereIn(field string, values []interface{}) *BaseModel {
 	return m
 }
 
-
-
 // WhereNull 添加WHERE NULL条件
 func (m *BaseModel) WhereNull(field string) *BaseModel {
 	query := m.getQueryBuilder()
@@ -987,9 +1006,6 @@ func (m *BaseModel) FieldRaw(raw string, bindings ...interface{}) *BaseModel {
 	}
 	return m
 }
-
-
-
 
 // WhereRaw 添加原生WHERE条件
 func (m *BaseModel) WhereRaw(raw string, bindings ...interface{}) *BaseModel {
@@ -1703,4 +1719,781 @@ func (m *BaseModel) buildPrimaryKeyConditions(query db.QueryInterface) db.QueryI
 	}
 
 	return query
+}
+
+// AutoMigrate 自动迁移模型到数据库
+func (m *BaseModel) AutoMigrate() error {
+	// 获取数据库连接
+	manager := db.DefaultManager()
+	conn, err := manager.Connection(m.connection)
+	if err != nil {
+		return fmt.Errorf("failed to get database connection: %w", err)
+	}
+
+	// 检测模型结构
+	if err := m.detectModelStructure(); err != nil {
+		return fmt.Errorf("failed to detect model structure: %w", err)
+	}
+
+	// 获取表名
+	tableName := m.TableName()
+	if tableName == "" {
+		return fmt.Errorf("table name is required for auto migration")
+	}
+
+	// 检查表是否存在
+	exists, err := m.tableExists(conn, tableName)
+	if err != nil {
+		return fmt.Errorf("failed to check table existence: %w", err)
+	}
+
+	if !exists {
+		// 创建新表
+		return m.createTable(conn, tableName)
+	}
+
+	// 表已存在，检查是否需要更新结构
+	return m.updateTableStructure(conn, tableName)
+}
+
+// detectModelStructure 检测模型结构
+func (m *BaseModel) detectModelStructure() error {
+	// 这个方法将在调用 DetectConfigFromStruct 时由外部实现
+	// 这里只是确保必要的配置已经设置
+	if m.tableName == "" {
+		return fmt.Errorf("table name must be set before auto migration")
+	}
+	return nil
+}
+
+// tableExists 检查表是否存在
+func (m *BaseModel) tableExists(conn db.ConnectionInterface, tableName string) (bool, error) {
+	driver := conn.GetDriver()
+	var query string
+	var args []interface{}
+
+	switch driver {
+	case "mysql":
+		query = "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?"
+		args = []interface{}{tableName}
+	case "postgres", "postgresql":
+		query = "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ?"
+		args = []interface{}{tableName}
+	case "sqlite", "sqlite3":
+		query = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?"
+		args = []interface{}{tableName}
+	default:
+		return false, fmt.Errorf("unsupported database driver: %s", driver)
+	}
+
+	row := conn.QueryRow(query, args...)
+	var count int
+	if err := row.Scan(&count); err != nil {
+		return false, fmt.Errorf("failed to check table existence: %w", err)
+	}
+
+	return count > 0, nil
+}
+
+// createTable 创建新表
+func (m *BaseModel) createTable(conn db.ConnectionInterface, tableName string) error {
+	// 获取模型的结构体信息
+	modelStruct, err := m.getModelStruct()
+	if err != nil {
+		return fmt.Errorf("failed to get model structure: %w", err)
+	}
+
+	// 创建表定义
+	table := &migration.Table{
+		Name:    tableName,
+		Columns: make([]*migration.Column, 0),
+		Indexes: make([]*migration.Index, 0),
+	}
+
+	// 设置数据库引擎和字符集（MySQL）
+	driver := conn.GetDriver()
+	if driver == "mysql" {
+		table.Engine = "InnoDB"
+		table.Charset = "utf8mb4"
+	}
+
+	// 解析字段
+	if err := m.parseFieldsForMigration(modelStruct, table); err != nil {
+		return fmt.Errorf("failed to parse model fields: %w", err)
+	}
+
+	// 添加自动索引
+	m.addAutoIndexes(table)
+
+	// 使用 SchemaBuilder 创建表
+	schemaBuilder := migration.NewSchemaBuilder(conn)
+	return schemaBuilder.CreateTable(table)
+}
+
+// addAutoIndexes 为表添加自动索引
+func (m *BaseModel) addAutoIndexes(table *migration.Table) {
+	// 为有 unique 标签的字段添加唯一索引
+	for _, column := range table.Columns {
+		if column.Unique && !column.PrimaryKey {
+			index := &migration.Index{
+				Name:    fmt.Sprintf("idx_%s_%s_unique", table.Name, column.Name),
+				Columns: []string{column.Name},
+				Unique:  true,
+			}
+			table.Indexes = append(table.Indexes, index)
+		}
+
+		// 解析 comment 中的索引信息
+		if strings.Contains(column.Comment, "INDEX:") {
+			parts := strings.Split(column.Comment, "INDEX:")
+			if len(parts) > 1 {
+				indexName := strings.TrimSpace(parts[1])
+				// 移除索引标记，保留原始注释
+				column.Comment = strings.TrimSpace(parts[0])
+
+				// 如果没有指定索引名，生成默认名称
+				if indexName == "" || indexName == "true" {
+					indexName = fmt.Sprintf("idx_%s_%s", table.Name, column.Name)
+				}
+
+				index := &migration.Index{
+					Name:    indexName,
+					Columns: []string{column.Name},
+					Unique:  false,
+				}
+				table.Indexes = append(table.Indexes, index)
+			}
+		}
+	}
+
+	// 为外键字段添加索引（约定：以 _id 结尾的字段）
+	for _, column := range table.Columns {
+		if strings.HasSuffix(column.Name, "_id") && !column.PrimaryKey {
+			// 检查是否已有索引
+			hasIndex := false
+			for _, index := range table.Indexes {
+				for _, indexCol := range index.Columns {
+					if indexCol == column.Name {
+						hasIndex = true
+						break
+					}
+				}
+				if hasIndex {
+					break
+				}
+			}
+
+			if !hasIndex {
+				index := &migration.Index{
+					Name:    fmt.Sprintf("idx_%s_%s", table.Name, column.Name),
+					Columns: []string{column.Name},
+				}
+				table.Indexes = append(table.Indexes, index)
+			}
+		}
+	}
+}
+
+// getModelStruct 获取模型的结构体信息
+func (m *BaseModel) getModelStruct() (reflect.Type, error) {
+	if m.modelType == nil {
+		return nil, fmt.Errorf("model structure not available - call DetectConfigFromStruct first")
+	}
+	return m.modelType, nil
+}
+
+// HasModelStruct 检查是否已设置模型结构体信息
+func (m *BaseModel) HasModelStruct() bool {
+	return m.modelType != nil
+}
+
+// GetModelStructName 获取模型结构体名称（用于调试和测试）
+func (m *BaseModel) GetModelStructName() string {
+	if m.modelType == nil {
+		return ""
+	}
+	return m.modelType.Name()
+}
+
+// parseFieldsForMigration 解析字段用于迁移
+func (m *BaseModel) parseFieldsForMigration(modelType reflect.Type, table *migration.Table) error {
+	for i := 0; i < modelType.NumField(); i++ {
+		field := modelType.Field(i)
+
+		// 跳过 BaseModel 字段
+		if field.Name == "BaseModel" {
+			continue
+		}
+
+		// 创建列定义
+		column, err := m.fieldToColumn(field)
+		if err != nil {
+			return fmt.Errorf("failed to convert field %s: %w", field.Name, err)
+		}
+
+		if column != nil {
+			table.Columns = append(table.Columns, column)
+		}
+	}
+
+	return nil
+}
+
+// fieldToColumn 将结构体字段转换为数据库列定义
+func (m *BaseModel) fieldToColumn(field reflect.StructField) (*migration.Column, error) {
+	// 解析 db 标签
+	dbTag := field.Tag.Get("db")
+	if dbTag == "-" {
+		return nil, nil // 跳过不需要持久化的字段
+	}
+
+	columnName := dbTag
+	if columnName == "" {
+		// 如果没有 db 标签，使用字段名的小写形式
+		columnName = strings.ToLower(field.Name)
+	}
+
+	// 创建列定义
+	column := &migration.Column{
+		Name: columnName,
+	}
+
+	// 映射 Go 类型到数据库类型
+	if err := m.mapGoTypeToColumnType(field, column); err != nil {
+		return nil, err
+	}
+
+	// 解析标签中的属性
+	m.parseFieldTags(field, column)
+
+	return column, nil
+}
+
+// mapGoTypeToColumnType 映射 Go 类型到数据库列类型
+func (m *BaseModel) mapGoTypeToColumnType(field reflect.StructField, column *migration.Column) error {
+	fieldType := field.Type
+
+	// 处理指针类型
+	if fieldType.Kind() == reflect.Ptr {
+		fieldType = fieldType.Elem()
+		// 指针类型默认可为空
+		column.NotNull = false
+	} else {
+		// 非指针类型默认不为空
+		column.NotNull = true
+	}
+
+	// 优先检查 type 标签的自定义类型
+	if typeTag := field.Tag.Get("type"); typeTag != "" {
+		return m.mapCustomType(typeTag, field, column)
+	}
+
+	// 特殊类型检查
+	if fieldType == reflect.TypeOf(time.Time{}) {
+		return m.mapTimeType(field, column)
+	}
+	if fieldType == reflect.TypeOf(DeletedTime{}) {
+		column.Type = migration.ColumnTypeTimestamp
+		column.NotNull = false // 软删除字段可为空
+		return nil
+	}
+
+	// 基本类型映射
+	switch fieldType.Kind() {
+	case reflect.String:
+		return m.mapStringType(field, column)
+
+	case reflect.Int:
+		column.Type = migration.ColumnTypeInt
+
+	case reflect.Int8:
+		column.Type = migration.ColumnTypeTinyInt
+
+	case reflect.Int16:
+		column.Type = migration.ColumnTypeSmallInt
+
+	case reflect.Int32:
+		column.Type = migration.ColumnTypeInt
+
+	case reflect.Int64:
+		// 检查是否为时间戳
+		if field.Tag.Get("autoCreateTime") != "" || field.Tag.Get("autoUpdateTime") != "" {
+			column.Type = migration.ColumnTypeBigInt
+		} else {
+			column.Type = migration.ColumnTypeBigInt
+		}
+
+	case reflect.Uint:
+		column.Type = migration.ColumnTypeInt // 注意：无符号类型映射
+
+	case reflect.Uint8:
+		column.Type = migration.ColumnTypeTinyInt
+
+	case reflect.Uint16:
+		column.Type = migration.ColumnTypeSmallInt
+
+	case reflect.Uint32:
+		column.Type = migration.ColumnTypeInt
+
+	case reflect.Uint64:
+		column.Type = migration.ColumnTypeBigInt
+
+	case reflect.Float32:
+		return m.mapFloatType(field, column, true)
+
+	case reflect.Float64:
+		return m.mapFloatType(field, column, false)
+
+	case reflect.Bool:
+		column.Type = migration.ColumnTypeBoolean
+
+	case reflect.Slice, reflect.Array:
+		return m.mapSliceType(fieldType, column)
+
+	case reflect.Map, reflect.Struct:
+		// Map 和 复杂结构体使用 JSON
+		column.Type = migration.ColumnTypeJSON
+
+	case reflect.Interface:
+		// interface{} 类型使用 JSON
+		column.Type = migration.ColumnTypeJSON
+
+	default:
+		// 默认为文本类型
+		column.Type = migration.ColumnTypeText
+	}
+
+	return nil
+}
+
+// mapCustomType 处理自定义类型标签
+func (m *BaseModel) mapCustomType(typeTag string, field reflect.StructField, column *migration.Column) error {
+	switch strings.ToLower(typeTag) {
+	// 字符串类型
+	case "varchar":
+		column.Type = migration.ColumnTypeVarchar
+		if sizeTag := field.Tag.Get("size"); sizeTag != "" {
+			column.Length = parseInt(sizeTag)
+		}
+		if column.Length == 0 {
+			column.Length = 255
+		}
+	case "char":
+		column.Type = migration.ColumnTypeChar
+		if sizeTag := field.Tag.Get("size"); sizeTag != "" {
+			column.Length = parseInt(sizeTag)
+		}
+		if column.Length == 0 {
+			column.Length = 1
+		}
+	case "text":
+		column.Type = migration.ColumnTypeText
+	case "longtext":
+		column.Type = migration.ColumnTypeLongText
+
+	// 数值类型
+	case "tinyint":
+		column.Type = migration.ColumnTypeTinyInt
+	case "smallint":
+		column.Type = migration.ColumnTypeSmallInt
+	case "int", "integer":
+		column.Type = migration.ColumnTypeInt
+	case "bigint":
+		column.Type = migration.ColumnTypeBigInt
+	case "float":
+		column.Type = migration.ColumnTypeFloat
+	case "double":
+		column.Type = migration.ColumnTypeDouble
+	case "decimal", "numeric":
+		column.Type = migration.ColumnTypeDecimal
+		if precisionTag := field.Tag.Get("precision"); precisionTag != "" {
+			column.Precision = parseInt(precisionTag)
+		}
+		if scaleTag := field.Tag.Get("scale"); scaleTag != "" {
+			column.Scale = parseInt(scaleTag)
+		}
+
+	// 时间类型
+	case "datetime":
+		column.Type = migration.ColumnTypeDateTime
+	case "timestamp":
+		column.Type = migration.ColumnTypeTimestamp
+	case "date":
+		column.Type = migration.ColumnTypeDate
+	case "time":
+		column.Type = migration.ColumnTypeTime
+
+	// 其他类型
+	case "boolean", "bool":
+		column.Type = migration.ColumnTypeBoolean
+	case "blob":
+		column.Type = migration.ColumnTypeBlob
+	case "json":
+		column.Type = migration.ColumnTypeJSON
+
+	default:
+		return fmt.Errorf("unsupported custom type: %s", typeTag)
+	}
+
+	return nil
+}
+
+// mapStringType 处理字符串类型映射
+func (m *BaseModel) mapStringType(field reflect.StructField, column *migration.Column) error {
+	// 检查长度标签
+	sizeTag := field.Tag.Get("size")
+	if sizeTag != "" {
+		size := parseInt(sizeTag)
+		if size > 0 {
+			if size <= 255 {
+				column.Type = migration.ColumnTypeVarchar
+				column.Length = size
+			} else if size <= 65535 {
+				column.Type = migration.ColumnTypeText
+			} else {
+				column.Type = migration.ColumnTypeLongText
+			}
+			return nil
+		}
+	}
+
+	// 检查是否为固定长度
+	if field.Tag.Get("fixed") == "true" {
+		column.Type = migration.ColumnTypeChar
+		if column.Length == 0 {
+			column.Length = 255
+		}
+		return nil
+	}
+
+	// 默认 VARCHAR(255)
+	column.Type = migration.ColumnTypeVarchar
+	column.Length = 255
+	return nil
+}
+
+// mapTimeType 处理时间类型映射
+func (m *BaseModel) mapTimeType(field reflect.StructField, column *migration.Column) error {
+	// 检查自动时间戳标签
+	if field.Tag.Get("autoCreateTime") != "" || field.Tag.Get("autoUpdateTime") != "" {
+		column.Type = migration.ColumnTypeTimestamp
+		return nil
+	}
+
+	// 检查类型偏好
+	if field.Tag.Get("timestamp") == "true" {
+		column.Type = migration.ColumnTypeTimestamp
+	} else {
+		column.Type = migration.ColumnTypeDateTime
+	}
+
+	return nil
+}
+
+// mapFloatType 处理浮点类型映射
+func (m *BaseModel) mapFloatType(field reflect.StructField, column *migration.Column, isFloat32 bool) error {
+	// 检查是否指定为 DECIMAL
+	if field.Tag.Get("decimal") == "true" {
+		column.Type = migration.ColumnTypeDecimal
+
+		if precisionTag := field.Tag.Get("precision"); precisionTag != "" {
+			column.Precision = parseInt(precisionTag)
+		} else {
+			column.Precision = 10 // 默认精度
+		}
+
+		if scaleTag := field.Tag.Get("scale"); scaleTag != "" {
+			column.Scale = parseInt(scaleTag)
+		} else {
+			column.Scale = 2 // 默认小数位
+		}
+
+		return nil
+	}
+
+	// 默认浮点类型
+	if isFloat32 {
+		column.Type = migration.ColumnTypeFloat
+	} else {
+		column.Type = migration.ColumnTypeDouble
+	}
+
+	return nil
+}
+
+// mapSliceType 处理切片类型映射
+func (m *BaseModel) mapSliceType(fieldType reflect.Type, column *migration.Column) error {
+	elemType := fieldType.Elem()
+
+	// 检查元素类型
+	switch elemType.Kind() {
+	case reflect.Uint8:
+		// []byte 映射为 BLOB
+		column.Type = migration.ColumnTypeBlob
+	case reflect.String:
+		// []string 映射为 JSON
+		column.Type = migration.ColumnTypeJSON
+	default:
+		// 其他切片类型都映射为 JSON
+		column.Type = migration.ColumnTypeJSON
+	}
+
+	return nil
+}
+
+// parseFieldTags 解析字段标签
+func (m *BaseModel) parseFieldTags(field reflect.StructField, column *migration.Column) {
+	// 优先解析 torm 标签
+	if tormTag := field.Tag.Get("torm"); tormTag != "" {
+		m.parseTormTag(tormTag, column)
+		return
+	}
+
+	// 向后兼容：检查传统标签
+	m.parseLegacyTags(field, column)
+}
+
+// parseTormTag 解析 torm 标签
+func (m *BaseModel) parseTormTag(tormTag string, column *migration.Column) {
+	// 分割标签内容
+	parts := strings.Split(tormTag, ",")
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		// 检查是否是 key:value 格式
+		if strings.Contains(part, ":") {
+			keyValue := strings.SplitN(part, ":", 2)
+			key := strings.TrimSpace(keyValue[0])
+			value := strings.TrimSpace(keyValue[1])
+
+			m.parseTormKeyValue(key, value, column)
+		} else {
+			// 简单标志位
+			m.parseTormFlag(part, column)
+		}
+	}
+}
+
+// parseTormFlag 解析 torm 标签中的标志位
+func (m *BaseModel) parseTormFlag(flag string, column *migration.Column) {
+	switch strings.ToLower(flag) {
+	case "primary_key", "pk":
+		column.PrimaryKey = true
+		column.NotNull = true
+	case "auto_increment", "autoincrement":
+		column.AutoIncrement = true
+		column.PrimaryKey = true
+		column.NotNull = true
+	case "unique":
+		column.Unique = true
+	case "nullable", "null":
+		column.NotNull = false
+	case "not_null", "notnull":
+		column.NotNull = true
+	case "auto_create_time", "autocreate":
+		column.Default = "CURRENT_TIMESTAMP"
+	case "auto_update_time", "autoupdate":
+		column.Default = "CURRENT_TIMESTAMP"
+		// TODO: 添加 ON UPDATE CURRENT_TIMESTAMP 支持
+	case "index":
+		m.markColumnForIndex(column, "")
+	}
+}
+
+// parseTormKeyValue 解析 torm 标签中的 key:value 对
+func (m *BaseModel) parseTormKeyValue(key, value string, column *migration.Column) {
+	switch strings.ToLower(key) {
+	case "type":
+		// 直接设置类型，不使用 mapCustomType（避免查找单独标签的问题）
+		m.setColumnType(value, column)
+	case "size", "length":
+		if size := parseInt(value); size > 0 {
+			column.Length = size
+		}
+	case "precision":
+		if precision := parseInt(value); precision > 0 {
+			column.Precision = precision
+		}
+	case "scale":
+		if scale := parseInt(value); scale > 0 {
+			column.Scale = scale
+		}
+	case "default":
+		m.parseDefaultValue(value, column)
+	case "comment":
+		column.Comment = value
+	case "index":
+		m.markColumnForIndex(column, value)
+	}
+}
+
+// setColumnType 直接设置列类型（不依赖单独标签）
+func (m *BaseModel) setColumnType(typeStr string, column *migration.Column) {
+	switch strings.ToLower(typeStr) {
+	// 字符串类型
+	case "varchar":
+		column.Type = migration.ColumnTypeVarchar
+		if column.Length == 0 {
+			column.Length = 255 // 默认长度
+		}
+	case "char":
+		column.Type = migration.ColumnTypeChar
+		if column.Length == 0 {
+			column.Length = 1 // 默认长度
+		}
+	case "text":
+		column.Type = migration.ColumnTypeText
+	case "longtext":
+		column.Type = migration.ColumnTypeLongText
+
+	// 数值类型
+	case "tinyint":
+		column.Type = migration.ColumnTypeTinyInt
+	case "smallint":
+		column.Type = migration.ColumnTypeSmallInt
+	case "int", "integer":
+		column.Type = migration.ColumnTypeInt
+	case "bigint":
+		column.Type = migration.ColumnTypeBigInt
+	case "float":
+		column.Type = migration.ColumnTypeFloat
+	case "double":
+		column.Type = migration.ColumnTypeDouble
+	case "decimal", "numeric":
+		column.Type = migration.ColumnTypeDecimal
+		// 默认精度和小数位
+		if column.Precision == 0 {
+			column.Precision = 10
+		}
+		if column.Scale == 0 {
+			column.Scale = 2
+		}
+
+	// 时间类型
+	case "datetime":
+		column.Type = migration.ColumnTypeDateTime
+	case "timestamp":
+		column.Type = migration.ColumnTypeTimestamp
+	case "date":
+		column.Type = migration.ColumnTypeDate
+	case "time":
+		column.Type = migration.ColumnTypeTime
+
+	// 其他类型
+	case "boolean", "bool":
+		column.Type = migration.ColumnTypeBoolean
+	case "blob":
+		column.Type = migration.ColumnTypeBlob
+	case "json":
+		column.Type = migration.ColumnTypeJSON
+	}
+}
+
+// parseDefaultValue 解析默认值
+func (m *BaseModel) parseDefaultValue(value string, column *migration.Column) {
+	switch strings.ToLower(value) {
+	case "null":
+		column.Default = nil
+	case "current_timestamp", "now()":
+		column.Default = "CURRENT_TIMESTAMP"
+	case "true":
+		column.Default = true
+	case "false":
+		column.Default = false
+	default:
+		// 尝试解析为数字
+		if intVal := parseInt(value); intVal != 0 || value == "0" {
+			column.Default = intVal
+		} else {
+			column.Default = value
+		}
+	}
+}
+
+// markColumnForIndex 标记列需要创建索引
+func (m *BaseModel) markColumnForIndex(column *migration.Column, indexName string) {
+	if indexName == "" || indexName == "true" {
+		indexName = "auto"
+	}
+
+	if column.Comment == "" {
+		column.Comment = "INDEX:" + indexName
+	} else {
+		column.Comment += " INDEX:" + indexName
+	}
+}
+
+// parseLegacyTags 解析传统标签（向后兼容）
+func (m *BaseModel) parseLegacyTags(field reflect.StructField, column *migration.Column) {
+	// 检查主键标签
+	if field.Tag.Get("primaryKey") == "true" || field.Tag.Get("pk") != "" {
+		column.PrimaryKey = true
+		column.NotNull = true
+	}
+
+	// 检查唯一性约束
+	if field.Tag.Get("unique") == "true" {
+		column.Unique = true
+	}
+
+	// 检查自增标签
+	if field.Tag.Get("autoIncrement") == "true" || field.Tag.Get("auto_increment") == "true" {
+		column.AutoIncrement = true
+		column.PrimaryKey = true
+		column.NotNull = true
+	}
+
+	// 检查默认值
+	if defaultValue := field.Tag.Get("default"); defaultValue != "" {
+		m.parseDefaultValue(defaultValue, column)
+	}
+
+	// 检查注释
+	if comment := field.Tag.Get("comment"); comment != "" {
+		column.Comment = comment
+	}
+
+	// 检查非空约束
+	if field.Tag.Get("not_null") == "true" {
+		column.NotNull = true
+	} else if field.Tag.Get("nullable") == "true" {
+		column.NotNull = false
+	}
+
+	// 检查时间戳字段
+	if field.Tag.Get("autoCreateTime") != "" {
+		column.Default = "CURRENT_TIMESTAMP"
+	}
+	if field.Tag.Get("autoUpdateTime") != "" {
+		column.Default = "CURRENT_TIMESTAMP"
+	}
+
+	// 检查索引标签
+	if field.Tag.Get("index") != "" {
+		m.markColumnForIndex(column, field.Tag.Get("index"))
+	}
+}
+
+// parseInt 解析整数字符串
+func parseInt(s string) int {
+	result := 0
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			result = result*10 + int(r-'0')
+		} else {
+			return 0
+		}
+	}
+	return result
+}
+
+// updateTableStructure 更新表结构
+func (m *BaseModel) updateTableStructure(conn db.ConnectionInterface, tableName string) error {
+	// 检查现有表结构与模型的差异，并执行必要的ALTER TABLE操作
+	// 暂时返回nil，表示不进行结构更新
+	return nil
 }

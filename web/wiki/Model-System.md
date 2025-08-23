@@ -28,6 +28,7 @@ TORM 采用 Active Record 模式的模型系统，让你可以用面向对象的
 ## 📋 目录
 
 - [模型定义](#模型定义)
+- [自动迁移](#自动迁移)
 - [基础操作](#基础操作)
 - [查询方法](#查询方法)
 - [属性管理](#属性管理)
@@ -64,13 +65,289 @@ type User struct {
 
 // NewUser 创建用户模型实例
 func NewUser() *User {
-    user := &User{
-        BaseModel: *model.NewBaseModel(), // 内置db.QueryInterface
-    }
+    user := &User{}
+    user.BaseModel = *model.NewBaseModelWithAutoDetect(user) // 自动检测配置
     user.SetTable("users")        // 设置表名
     user.SetConnection("default") // 设置数据库连接
-    user.EnableTimestamps()       // 启用自动时间戳
     return user
+}
+```
+
+## 🗄️ 自动迁移
+
+### AutoMigrate 功能
+
+TORM v1.1.6 引入了强大的 `AutoMigrate()` 功能，可以根据模型结构体自动创建和更新数据库表结构。
+
+#### 基本使用
+
+```go
+type Product struct {
+    model.BaseModel
+    ID          int64     `json:"id" db:"id" torm:"primary_key,auto_increment,comment:产品ID"`
+    Name        string    `json:"name" db:"name" torm:"size:200,comment:产品名称"`
+    Description string    `json:"description" db:"description" torm:"type:text,comment:产品描述"`
+    Price       float64   `json:"price" db:"price" torm:"type:decimal,precision:10,scale:2,comment:价格"`
+    SKU         string    `json:"sku" db:"sku" torm:"size:50,unique,comment:产品编码"`
+    CategoryID  int64     `json:"category_id" db:"category_id" torm:"index,comment:分类ID"`
+    IsActive    bool      `json:"is_active" db:"is_active" torm:"default:true,comment:是否启用"`
+    Tags        []string  `json:"tags" db:"tags" torm:"comment:标签列表（JSON）"`
+    Images      []byte    `json:"images" db:"images" torm:"comment:图片数据"`
+    Metadata    map[string]interface{} `json:"metadata" db:"metadata" torm:"comment:元数据"`
+    CreatedAt   int64     `json:"created_at" db:"created_at" torm:"auto_create_time,comment:创建时间"`
+    UpdatedAt   int64     `json:"updated_at" db:"updated_at" torm:"auto_update_time,comment:更新时间"`
+}
+
+// NewProduct 创建产品模型
+func NewProduct() *Product {
+    product := &Product{}
+    product.BaseModel = *model.NewBaseModelWithAutoDetect(product)
+    product.SetTable("products")
+    product.SetConnection("default")
+    return product
+}
+
+func main() {
+    // 配置数据库
+    config := &db.Config{
+        Driver:   "mysql",
+        Host:     "localhost",
+        Database: "myapp",
+        Username: "root",
+        Password: "password",
+    }
+    db.AddConnection("default", config)
+    
+    // 创建模型并执行自动迁移
+    product := NewProduct()
+    if err := product.AutoMigrate(); err != nil {
+        log.Fatalf("自动迁移失败: %v", err)
+    }
+    
+    fmt.Println("产品表创建成功！")
+}
+```
+
+#### TORM 统一标签语法
+
+TORM v1.1.6 引入了统一的 `torm` 标签，大大简化了模型定义。所有标签都支持**大小写不敏感**：
+
+| 类型 | 语法格式 | 示例 | 说明 |
+|------|----------|------|------|
+| **主键约束** | `primary_key`, `pk` | `torm:"primary_key"` | 标记为主键字段 |
+| **自增长** | `auto_increment` | `torm:"primary_key,auto_increment"` | 自动递增（通常与主键一起） |
+| **唯一约束** | `unique` | `torm:"unique"` | 唯一性约束 |
+| **索引** | `index`, `index:名称` | `torm:"index"`, `torm:"index:user_idx"` | 创建索引，可指定名称 |
+| **数据类型** | `type:类型名` | `torm:"type:varchar,size:100"` | 明确指定数据库列类型 |
+| **字段长度** | `size:数字` | `torm:"size:100"` | 字符串类型的长度 |
+| **数值精度** | `precision:数字` | `torm:"type:decimal,precision:10"` | DECIMAL类型精度 |
+| **小数位** | `scale:数字` | `torm:"precision:10,scale:2"` | DECIMAL类型小数位数 |
+| **默认值** | `default:值` | `torm:"default:active"` | 设置默认值 |
+| **允许NULL** | `nullable` | `torm:"nullable"` | 明确允许NULL值 |
+| **不允许NULL** | `not_null` | `torm:"not_null"` | 明确不允许NULL值 |
+| **自动时间** | `auto_create_time` | `torm:"auto_create_time"` | 创建时自动设置当前时间 |
+| **自动更新** | `auto_update_time` | `torm:"auto_update_time"` | 更新时自动设置当前时间 |
+| **字段注释** | `comment:描述` | `torm:"comment:用户名"` | 添加列注释 |
+
+#### 大小写不敏感支持
+
+TORM 支持完全的大小写不敏感，以下所有写法都完全等效：
+
+```go
+// 所有这些定义都会产生相同的结果
+type FlexibleModel struct {
+    model.BaseModel
+    // 全小写（推荐）
+    Field1 string `torm:"type:varchar,size:50,unique,comment:字段1"`
+    
+    // 全大写
+    Field2 string `torm:"TYPE:VARCHAR,SIZE:50,UNIQUE,COMMENT:字段2"`
+    
+    // 首字母大写
+    Field3 string `torm:"Type:VarChar,Size:50,Unique,Comment:字段3"`
+    
+    // 混合大小写
+    Field4 string `torm:"TYPE:varchar,SIZE:50,unique,COMMENT:字段4"`
+    
+    // 随意大小写（不推荐，但支持）
+    Field5 string `torm:"tYpE:VaRcHaR,sIzE:50,UnIqUe,CoMmEnT:字段5"`
+}
+```
+
+**大小写不敏感范围：**
+- ✅ 标志位：`primary_key` = `PRIMARY_KEY` = `Primary_Key`
+- ✅ 类型名：`varchar` = `VARCHAR` = `VarChar`
+- ✅ 属性名：`size` = `SIZE` = `Size`
+- ✅ 默认值：`true` = `TRUE` = `True`, `null` = `NULL` = `Null`
+- ✅ 注释：`comment` = `COMMENT` = `Comment`
+
+#### 组合使用示例
+
+```go
+type User struct {
+    model.BaseModel
+    // 主键：自增、主键、注释
+    ID        int64  `db:"id" torm:"primary_key,auto_increment,comment:用户ID"`
+    
+    // 字符串：长度、唯一、注释  
+    Email     string `db:"email" torm:"size:100,unique,comment:邮箱地址"`
+    
+    // 数值：类型、精度、默认值
+    Balance   float64 `db:"balance" torm:"type:decimal,precision:10,scale:2,default:0.00"`
+    
+    // 索引：自定义索引名、注释
+    UserID    int64  `db:"user_id" torm:"index:user_relation_idx,comment:关联用户"`
+    
+    // 时间戳：自动创建时间
+    CreatedAt int64  `db:"created_at" torm:"auto_create_time,comment:创建时间"`
+    
+    // 可空字段：允许NULL、注释
+    Avatar    *string `db:"avatar" torm:"nullable,comment:头像URL"`
+}
+```
+
+#### 详细类型长度和精度控制
+
+**字符串类型长度：**
+```go
+type StringExamples struct {
+    model.BaseModel
+    ShortCode   string `db:"short_code" torm:"type:varchar,size:10,comment:短编码"`     // VARCHAR(10)
+    Name        string `db:"name" torm:"type:varchar,size:50,comment:名称"`           // VARCHAR(50)  
+    Description string `db:"description" torm:"type:varchar,size:200,comment:描述"`  // VARCHAR(200)
+    FixedCode   string `db:"fixed_code" torm:"type:char,size:8,comment:固定编码"`     // CHAR(8)
+    CountryCode string `db:"country_code" torm:"type:char,size:2,comment:国家代码"`   // CHAR(2)
+    LongText    string `db:"long_text" torm:"type:text,comment:长文本"`              // TEXT
+}
+```
+
+**数值类型精度和小数位：**
+```go
+type NumericExamples struct {
+    model.BaseModel
+    // DECIMAL(precision, scale) - precision总位数，scale小数位数
+    Price       float64 `db:"price" torm:"type:decimal,precision:10,scale:2,comment:价格"`        // DECIMAL(10,2) - 最大8位整数,2位小数
+    Rate        float64 `db:"rate" torm:"type:decimal,precision:5,scale:4,comment:利率"`          // DECIMAL(5,4)  - 最大1位整数,4位小数  
+    Amount      float64 `db:"amount" torm:"type:decimal,precision:15,scale:2,comment:金额"`       // DECIMAL(15,2) - 最大13位整数,2位小数
+    Percentage  float64 `db:"percentage" torm:"type:decimal,precision:6,scale:3,comment:百分比"`  // DECIMAL(6,3)  - 最大3位整数,3位小数
+    Weight      float64 `db:"weight" torm:"type:decimal,precision:8,scale:3,comment:重量"`        // DECIMAL(8,3)  - 最大5位整数,3位小数
+}
+```
+
+**实际数据示例：**
+| 业务场景 | 数据例子 | 推荐类型 | TORM标签 |
+|----------|----------|----------|----------|
+| 商品价格 | 123.45 | DECIMAL(10,2) | `torm:"type:decimal,precision:10,scale:2"` |
+| 利率 | 0.0325 (3.25%) | DECIMAL(5,4) | `torm:"type:decimal,precision:5,scale:4"` |
+| 银行金额 | 1234567.89 | DECIMAL(15,2) | `torm:"type:decimal,precision:15,scale:2"` |
+| 百分比得分 | 98.456% | DECIMAL(6,3) | `torm:"type:decimal,precision:6,scale:3"` |
+| 商品重量 | 12.345kg | DECIMAL(8,3) | `torm:"type:decimal,precision:8,scale:3"` |
+| 产品编码 | "P12345" | VARCHAR(10) | `torm:"type:varchar,size:10"` |
+| 国家代码 | "CN" | CHAR(2) | `torm:"type:char,size:2"` |
+
+#### 自定义类型映射
+
+```go
+type AdvancedModel struct {
+    model.BaseModel
+    // 字符串类型
+    Title       string  `db:"title" torm:"type:varchar,size:200"`
+    Content     string  `db:"content" torm:"type:text"`
+    Summary     string  `db:"summary" torm:"type:longtext"`
+    Code        string  `db:"code" torm:"type:char,size:10"`
+    
+    // 数值类型
+    SmallNum    int8    `db:"small_num" torm:"type:tinyint"`
+    MediumNum   int16   `db:"medium_num" torm:"type:smallint"`
+    BigNum      int64   `db:"big_num" torm:"type:bigint"`
+    Price       float64 `db:"price" torm:"type:decimal,precision:10,scale:2"`
+    
+    // 时间类型
+    CreatedDate time.Time `db:"created_date" torm:"type:date"`
+    UpdatedTime time.Time `db:"updated_time" torm:"type:timestamp"`
+    
+    // 二进制和JSON
+    BinaryData  []byte              `db:"binary_data" torm:"type:blob"`
+    JsonData    map[string]interface{} `db:"json_data" torm:"type:json"`
+    
+    // 布尔类型
+    IsEnabled   bool    `db:"is_enabled" torm:"type:boolean,default:true"`
+}
+```
+
+#### 跨数据库兼容
+
+AutoMigrate 自动适配不同数据库的类型映射：
+
+| Go类型 | MySQL | PostgreSQL | SQLite |
+|--------|-------|------------|--------|
+| `string` | `VARCHAR(n)` | `VARCHAR(n)` | `TEXT` |
+| `int64` | `BIGINT` | `BIGINT` | `INTEGER` |
+| `float64` | `DOUBLE` | `DOUBLE PRECISION` | `REAL` |
+| `bool` | `BOOLEAN` | `BOOLEAN` | `INTEGER` |
+| `[]byte` | `BLOB` | `BYTEA` | `BLOB` |
+| `[]string` | `JSON` | `JSONB` | `TEXT` |
+| `map[string]interface{}` | `JSON` | `JSONB` | `TEXT` |
+| `time.Time` | `DATETIME` | `TIMESTAMP` | `DATETIME` |
+
+#### 自动索引创建
+
+AutoMigrate 会自动为以下情况创建索引：
+
+1. **唯一字段**: `torm:"unique"` 自动创建唯一索引
+2. **明确索引**: `torm:"index"` 创建普通索引
+3. **外键字段**: 以 `_id` 结尾的字段自动创建索引
+4. **自定义索引名**: `torm:"index:custom_name"` 使用指定名称
+
+```go
+type UserProfile struct {
+    model.BaseModel
+    UserID      int64  `db:"user_id" torm:"index"`                    // 自动索引: idx_user_profiles_user_id
+    Email       string `db:"email" torm:"unique"`                     // 唯一索引: idx_user_profiles_email_unique  
+    Phone       string `db:"phone" torm:"index:phone_idx"`            // 自定义索引: phone_idx
+    CompanyID   int64  `db:"company_id"`                              // 自动索引: idx_user_profiles_company_id（_id后缀）
+}
+```
+
+#### 最佳实践
+
+```go
+// ✅ 推荐：使用 NewBaseModelWithAutoDetect
+func NewUser() *User {
+    user := &User{}
+    user.BaseModel = *model.NewBaseModelWithAutoDetect(user)
+    user.SetTable("users")
+    user.SetConnection("default")
+    return user
+}
+
+// ✅ 推荐：在应用启动时执行 AutoMigrate
+func initDatabase() {
+    models := []interface{}{
+        NewUser(),
+        NewProduct(),
+        NewOrder(),
+    }
+    
+    for _, model := range models {
+        if migrator, ok := model.(interface{ AutoMigrate() error }); ok {
+            if err := migrator.AutoMigrate(); err != nil {
+                log.Printf("AutoMigrate failed for %T: %v", model, err)
+            }
+        }
+    }
+}
+
+// ✅ 推荐：结合传统迁移使用
+func setupDatabase() {
+    // 1. 使用 AutoMigrate 快速创建基础表结构
+    user := NewUser()
+    user.AutoMigrate()
+    
+    // 2. 使用传统迁移处理复杂变更
+    migrator := migration.NewMigrator(conn, logger)
+    migrator.RegisterFunc("20240101_001", "添加用户表索引", addUserIndexes, dropUserIndexes)
+    migrator.Up()
 }
 ```
 
@@ -1086,6 +1363,30 @@ func (u *User) GetActiveAdults() ([]map[string]interface{}, error) {
 
 ## 🆕 v1.1.6 增强功能
 
+### AutoMigrate 自动迁移
+
+v1.1.6 的核心新功能，支持根据模型结构体自动创建数据库表：
+
+```go
+// 创建模型
+type User struct {
+    model.BaseModel
+    ID        int64  `json:"id" db:"id" primaryKey:"true" autoIncrement:"true"`
+    Email     string `json:"email" db:"email" size:"100" unique:"true"`
+    Name      string `json:"name" db:"name" size:"50"`
+    CreatedAt int64  `json:"created_at" db:"created_at" autoCreateTime:"true"`
+}
+
+// 一键创建表结构
+func NewUser() *User {
+    user := &User{}
+    user.BaseModel = *model.NewBaseModelWithAutoDetect(user)
+    user.SetTable("users")
+    user.AutoMigrate() // 自动创建表
+    return user
+}
+```
+
 ### 新增WHERE查询方法
 
 所有新增的查询方法都支持模型链式调用：
@@ -1107,6 +1408,56 @@ priorityUsers := user.OrderField("status", []interface{}{"premium", "active"}, "
 
 // 原生字段表达式
 userStats := user.FieldRaw("COUNT(*) as total").GroupBy("city")
+```
+
+### 增强的模型创建
+
+新的 `NewBaseModelWithAutoDetect` 简化了模型创建：
+
+```go
+// v1.1.6 新方式（推荐）
+func NewProduct() *Product {
+    product := &Product{}
+    product.BaseModel = *model.NewBaseModelWithAutoDetect(product)
+    product.SetTable("products")
+    return product
+}
+
+// 旧方式（仍然支持）
+func NewProductOld() *Product {
+    product := &Product{BaseModel: *model.NewBaseModel()}
+    product.SetTable("products")
+    product.DetectConfigFromStruct(product)
+    return product
+}
+```
+
+### 完整的字段类型支持
+
+支持所有主流数据库类型和精确控制：
+
+```go
+type CompleteModel struct {
+    model.BaseModel
+    // 精确数值类型
+    Price     float64 `type:"decimal" precision:"10" scale:"2"`
+    Count     int8    `type:"tinyint"`
+    BigNumber int64   `type:"bigint"`
+    
+    // 文本类型精确控制
+    Title     string `type:"varchar" size:"200"`
+    Content   string `type:"text"`
+    LongText  string `type:"longtext"`
+    FixedCode string `type:"char" size:"10"`
+    
+    // 二进制和JSON
+    Data      []byte                 `type:"blob"`
+    Config    map[string]interface{} `type:"json"`
+    
+    // 时间类型
+    BirthDate time.Time `type:"date"`
+    EventTime time.Time `type:"timestamp"`
+}
 ```
 
 ### 完整链式调用示例

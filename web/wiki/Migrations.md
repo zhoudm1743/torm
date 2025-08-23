@@ -2,6 +2,8 @@
 
 TORM提供了强大的数据迁移工具，用于版本化管理数据库结构。该系统参考了现代ORM和Laravel的设计理念，提供了更加灵活和强大的功能。
 
+**🆕 v1.1.6 新增**: AutoMigrate 自动迁移功能，支持从模型结构体自动生成表结构，结合传统迁移提供更完整的数据库管理方案。
+
 ## 🎯 核心概念
 
 ### 迁移是什么？
@@ -16,9 +18,104 @@ TORM提供了强大的数据迁移工具，用于版本化管理数据库结构�
 - **回滚支持**: 安全地回滚有问题的变更
 - **批次管理**: 按批次组织和管理迁移
 
+### AutoMigrate vs 传统迁移
+
+| 特性 | AutoMigrate | 传统迁移 | 推荐场景 |
+|------|-------------|----------|----------|
+| **学习成本** | 低 | 中等 | 快速原型开发 |
+| **代码维护** | 结构体即文档 | 需要额外迁移文件 | 简单业务逻辑 |
+| **版本控制** | 基于模型变更 | 精确的版本控制 | 复杂企业应用 |
+| **回滚能力** | 有限 | 完全支持 | 生产环境变更 |
+| **复杂变更** | 不支持 | 完全支持 | 数据迁移、索引优化 |
+| **团队协作** | 简单 | 需要协调 | 小团队快速迭代 |
+
+### 建议使用策略
+
+```go
+// 🚀 快速开发阶段：使用 AutoMigrate
+func developmentSetup() {
+    models := []interface{}{
+        NewUser(),
+        NewProduct(), 
+        NewOrder(),
+    }
+    
+    for _, model := range models {
+        if migrator, ok := model.(interface{ AutoMigrate() error }); ok {
+            migrator.AutoMigrate()
+        }
+    }
+}
+
+// 🏭 生产环境：结合使用
+func productionSetup() {
+    // 1. AutoMigrate 创建基础表结构
+    user := NewUser()
+    user.AutoMigrate()
+    
+    // 2. 传统迁移处理复杂变更
+    migrator := migration.NewMigrator(conn, logger)
+    migrator.RegisterFunc("20240101_001", "优化用户表索引", optimizeUserIndexes, rollbackIndexes)
+    migrator.RegisterFunc("20240101_002", "迁移历史数据", migrateHistoricalData, rollbackData)
+    migrator.Up()
+}
+```
+
 ## 🚀 快速开始
 
-### 基本迁移示例
+### AutoMigrate 快速开始
+
+```go
+package main
+
+import (
+    "log"
+    "github.com/zhoudm1743/torm/db"
+    "github.com/zhoudm1743/torm/model"
+)
+
+// 定义模型
+type User struct {
+    model.BaseModel
+    ID        int64  `json:"id" db:"id" primaryKey:"true" autoIncrement:"true"`
+    Email     string `json:"email" db:"email" size:"100" unique:"true"`
+    Name      string `json:"name" db:"name" size:"50"`
+    Age       int    `json:"age" db:"age" default:"0"`
+    CreatedAt int64  `json:"created_at" db:"created_at" autoCreateTime:"true"`
+    UpdatedAt int64  `json:"updated_at" db:"updated_at" autoUpdateTime:"true"`
+}
+
+func NewUser() *User {
+    user := &User{}
+    user.BaseModel = *model.NewBaseModelWithAutoDetect(user)
+    user.SetTable("users")
+    user.SetConnection("default")
+    return user
+}
+
+func main() {
+    // 配置数据库
+    config := &db.Config{
+        Driver:   "mysql",
+        Host:     "localhost",
+        Database: "myapp",
+        Username: "root",
+        Password: "password",
+    }
+    
+    db.AddConnection("default", config)
+    
+    // 一行代码创建表
+    user := NewUser()
+    if err := user.AutoMigrate(); err != nil {
+        log.Fatalf("AutoMigrate 失败: %v", err)
+    }
+    
+    log.Println("数据库表创建成功！")
+}
+```
+
+### 传统迁移示例
 
 ```go
 package main
@@ -628,6 +725,186 @@ func createComplexTableDown(ctx context.Context, conn db.ConnectionInterface) er
 
 ## 🔧 高级功能
 
+### AutoMigrate 集成
+
+#### 结合传统迁移的最佳实践
+
+```go
+// migration_manager.go
+type MigrationManager struct {
+    migrator *migration.Migrator
+    models   []interface{}
+}
+
+func NewMigrationManager(conn db.ConnectionInterface, logger db.LoggerInterface) *MigrationManager {
+    return &MigrationManager{
+        migrator: migration.NewMigrator(conn, logger),
+        models:   make([]interface{}, 0),
+    }
+}
+
+// 注册模型（用于 AutoMigrate）
+func (m *MigrationManager) RegisterModel(model interface{}) {
+    m.models = append(m.models, model)
+}
+
+// 注册传统迁移
+func (m *MigrationManager) RegisterMigration(migration migration.MigrationInterface) {
+    m.migrator.Register(migration)
+}
+
+// 执行完整迁移流程
+func (m *MigrationManager) ExecuteAll() error {
+    // 1. 首先执行 AutoMigrate 创建基础表结构
+    for _, model := range m.models {
+        if autoMigrator, ok := model.(interface{ AutoMigrate() error }); ok {
+            if err := autoMigrator.AutoMigrate(); err != nil {
+                return fmt.Errorf("AutoMigrate failed for %T: %w", model, err)
+            }
+        }
+    }
+    
+    // 2. 然后执行传统迁移处理复杂变更
+    return m.migrator.Up()
+}
+
+// 使用示例
+func setupDatabase() {
+    conn, _ := db.DB("default")
+    logger := &CustomLogger{}
+    
+    manager := NewMigrationManager(conn, logger)
+    
+    // 注册模型
+    manager.RegisterModel(NewUser())
+    manager.RegisterModel(NewProduct())
+    manager.RegisterModel(NewOrder())
+    
+    // 注册传统迁移
+    manager.RegisterMigration(NewAddUserIndexesMigration())
+    manager.RegisterMigration(NewOptimizeProductTableMigration())
+    
+    // 执行所有迁移
+    if err := manager.ExecuteAll(); err != nil {
+        log.Fatalf("Migration failed: %v", err)
+    }
+}
+```
+
+#### AutoMigrate 增强迁移
+
+将 AutoMigrate 封装为传统迁移：
+
+```go
+// auto_migrate_migration.go
+type AutoMigrateMigration struct {
+    version     string
+    description string
+    models      []interface{}
+}
+
+func NewAutoMigrateMigration(version, description string, models ...interface{}) *AutoMigrateMigration {
+    return &AutoMigrateMigration{
+        version:     version,
+        description: description,
+        models:      models,
+    }
+}
+
+func (m *AutoMigrateMigration) Version() string {
+    return m.version
+}
+
+func (m *AutoMigrateMigration) Description() string {
+    return m.description
+}
+
+func (m *AutoMigrateMigration) Up(ctx context.Context, conn db.ConnectionInterface) error {
+    for _, model := range m.models {
+        if autoMigrator, ok := model.(interface{ AutoMigrate() error }); ok {
+            if err := autoMigrator.AutoMigrate(); err != nil {
+                return fmt.Errorf("AutoMigrate failed for %T: %w", model, err)
+            }
+        }
+    }
+    return nil
+}
+
+func (m *AutoMigrateMigration) Down(ctx context.Context, conn db.ConnectionInterface) error {
+    // AutoMigrate 的回滚通常是删除表
+    schema := migration.NewSchemaBuilder(conn)
+    
+    for _, model := range m.models {
+        if tableNamer, ok := model.(interface{ TableName() string }); ok {
+            tableName := tableNamer.TableName()
+            if tableName != "" {
+                schema.DropTable(ctx, tableName)
+            }
+        }
+    }
+    return nil
+}
+
+// 注册 AutoMigrate 作为传统迁移
+func registerAutoMigrations(migrator *migration.Migrator) {
+    migrator.Register(NewAutoMigrateMigration(
+        "20240101_000001",
+        "AutoMigrate: 创建基础表结构",
+        NewUser(),
+        NewProduct(),
+        NewOrder(),
+    ))
+}
+```
+
+#### 增量 AutoMigrate
+
+```go
+// 检测模型变更并只迁移变更部分
+type IncrementalAutoMigrator struct {
+    conn db.ConnectionInterface
+}
+
+func (i *IncrementalAutoMigrator) MigrateIfChanged(model interface{}) error {
+    tableName := i.getTableName(model)
+    
+    // 检查表是否存在
+    exists, err := i.tableExists(tableName)
+    if err != nil {
+        return err
+    }
+    
+    if !exists {
+        // 表不存在，执行完整 AutoMigrate
+        if autoMigrator, ok := model.(interface{ AutoMigrate() error }); ok {
+            return autoMigrator.AutoMigrate()
+        }
+    } else {
+        // 表存在，检查结构差异
+        return i.updateTableStructure(model, tableName)
+    }
+    
+    return nil
+}
+
+func (i *IncrementalAutoMigrator) updateTableStructure(model interface{}, tableName string) error {
+    // 获取当前表结构
+    currentColumns, err := i.getTableColumns(tableName)
+    if err != nil {
+        return err
+    }
+    
+    // 获取模型期望的结构
+    expectedColumns, err := i.getModelColumns(model)
+    if err != nil {
+        return err
+    }
+    
+    // 比较差异并执行必要的 ALTER TABLE 操作
+    return i.applyColumnDifferences(tableName, currentColumns, expectedColumns)
+}
+```
+
 ### 事务支持
 
 ```go
@@ -682,6 +959,92 @@ func conditionalMigration(ctx context.Context, conn db.ConnectionInterface) erro
 }
 ```
 
+## 🆕 v1.1.6 新增功能总结
+
+### AutoMigrate 核心特性
+
+- ✅ **智能类型映射**: 支持所有 Go 基础类型自动映射到对应数据库类型
+- ✅ **跨数据库兼容**: 完美适配 MySQL、PostgreSQL、SQLite 的类型差异
+- ✅ **丰富标签支持**: 支持 30+ 种字段标签，精确控制表结构
+- ✅ **自动索引创建**: 智能创建唯一索引、普通索引和外键索引
+- ✅ **表存在性检查**: 自动检测表是否存在，避免重复创建
+- ✅ **默认配置检测**: `NewBaseModelWithAutoDetect` 简化模型创建流程
+
+### TORM 统一标签语法
+
+v1.1.6 引入统一的 `torm` 标签，大大简化模型定义：
+
+| 分类 | 标签语法 | 作用 | 示例 |
+|------|----------|------|------|
+| **主键和约束** | `primary_key` / `pk` | 主键 | `torm:"primary_key"` |
+| | `auto_increment` | 自增 | `torm:"primary_key,auto_increment"` |
+| | `unique` | 唯一约束 | `torm:"unique"` |
+| | `nullable` | 允许NULL | `torm:"nullable"` |
+| | `not_null` | 不允许NULL | `torm:"not_null"` |
+| **数据类型** | `type:类型名` | 明确数据库类型 | `torm:"type:varchar,size:100"` |
+| | `size:数字` | 字段长度 | `torm:"size:100"` |
+| | `precision:数字` | 数值精度 | `torm:"type:decimal,precision:10"` |
+| | `scale:数字` | 小数位数 | `torm:"precision:10,scale:2"` |
+| **索引优化** | `index` | 普通索引 | `torm:"index"` |
+| | `index:名称` | 自定义索引名 | `torm:"index:phone_idx"` |
+| **默认值** | `default:值` | 默认值 | `torm:"default:1"` |
+| | `default:true/false` | 布尔默认值 | `torm:"default:true"` |
+| | `default:current_timestamp` | 时间默认值 | `torm:"default:current_timestamp"` |
+| **时间戳** | `auto_create_time` | 创建时间 | `torm:"auto_create_time"` |
+| | `auto_update_time` | 更新时间 | `torm:"auto_update_time"` |
+| **其他** | `comment:描述` | 列注释 | `torm:"comment:用户名"` |
+
+#### 组合使用示例
+
+```go
+type Product struct {
+    model.BaseModel
+    // 主键：自增+主键+注释
+    ID     int64  `db:"id" torm:"primary_key,auto_increment,comment:产品ID"`
+    
+    // 字符串：类型+长度+唯一+注释
+    SKU    string `db:"sku" torm:"type:varchar,size:50,unique,comment:产品编码"`
+    
+    // 数值：类型+精度+默认值+注释
+    Price  float64 `db:"price" torm:"type:decimal,precision:10,scale:2,default:0.00,comment:价格"`
+    
+    // 索引：自定义索引名+注释
+    UserID int64  `db:"user_id" torm:"index:product_user_idx,comment:用户ID"`
+    
+    // 时间：自动创建时间
+    CreatedAt int64 `db:"created_at" torm:"auto_create_time,comment:创建时间"`
+}
+```
+
+### 类型映射支持矩阵
+
+| Go 类型 | MySQL | PostgreSQL | SQLite | 支持标签 |
+|---------|-------|------------|--------|----------|
+| `string` | VARCHAR(n) | VARCHAR(n) | TEXT | size, type, fixed |
+| `int8` | TINYINT | SMALLINT | INTEGER | type |
+| `int16` | SMALLINT | SMALLINT | INTEGER | type |
+| `int32` | INT | INTEGER | INTEGER | type |
+| `int64` | BIGINT | BIGINT | INTEGER | type |
+| `float32` | FLOAT | REAL | REAL | type, decimal |
+| `float64` | DOUBLE | DOUBLE PRECISION | REAL | type, decimal, precision, scale |
+| `bool` | BOOLEAN | BOOLEAN | INTEGER | type |
+| `[]byte` | BLOB | BYTEA | BLOB | type |
+| `[]string` | JSON | JSONB | TEXT | type |
+| `map[string]interface{}` | JSON | JSONB | TEXT | type |
+| `time.Time` | DATETIME | TIMESTAMP | DATETIME | type, timestamp |
+| `*T` | NULL-able | NULL-able | NULL-able | nullable |
+
+### 迁移策略对比
+
+| 场景 | AutoMigrate | 传统迁移 | 推荐组合 |
+|------|-------------|----------|----------|
+| **新项目快速启动** | ⭐⭐⭐⭐⭐ | ⭐⭐ | 纯 AutoMigrate |
+| **简单 CRUD 应用** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | AutoMigrate 为主 |
+| **复杂业务逻辑** | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | AutoMigrate + 传统迁移 |
+| **生产环境部署** | ⭐⭐ | ⭐⭐⭐⭐⭐ | 传统迁移为主 |
+| **团队协作开发** | ⭐⭐⭐ | ⭐⭐⭐⭐ | 混合使用 |
+| **数据迁移需求** | ❌ | ⭐⭐⭐⭐⭐ | 传统迁移 |
+
 ---
 
-**📚 更多信息请参考 [API参考文档](API-Reference) 和 [最佳实践](Best-Practices)。** 
+**📚 更多信息请参考 [API参考文档](API-Reference)、[模型系统](Model-System) 和 [最佳实践](Best-Practices)。** 
