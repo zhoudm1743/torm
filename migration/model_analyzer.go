@@ -106,6 +106,9 @@ func (ma *ModelAnalyzer) ExtractColumnNameFromTorm(tormTag string) string {
 		if strings.HasPrefix(part, "column:") {
 			return strings.TrimPrefix(part, "column:")
 		}
+		if strings.HasPrefix(part, "db:") {
+			return strings.TrimPrefix(part, "db:")
+		}
 	}
 	return ""
 }
@@ -175,8 +178,8 @@ func (ma *ModelAnalyzer) ParseTormKeyValue(part string, column *ModelColumn) err
 		column.Default = &defaultVal
 	case "comment":
 		column.Comment = value
-	case "column":
-		// 自定义列名支持
+	case "column", "db":
+		// 自定义列名支持 - column 和 db 标签都可以指定字段名
 		column.Name = value
 	case "length", "len":
 		// 长度的别名支持
@@ -568,13 +571,116 @@ func (ma *ModelAnalyzer) mapGoTypeToColumnType(goType reflect.Type) ColumnType {
 }
 
 // toSnakeCase 将驼峰命名转换为蛇形命名
+// 特别处理常见缩写，如 ID -> id, URL -> url, JSON -> json 等
 func (ma *ModelAnalyzer) toSnakeCase(str string) string {
+	// 常见的缩写词映射
+	commonAcronyms := map[string]string{
+		"ID":    "id",
+		"URL":   "url",
+		"JSON":  "json",
+		"XML":   "xml",
+		"API":   "api",
+		"HTTP":  "http",
+		"HTTPS": "https",
+		"SQL":   "sql",
+		"UUID":  "uuid",
+		"JWT":   "jwt",
+		"HTML":  "html",
+		"CSS":   "css",
+		"JS":    "js",
+		"DB":    "db",
+		"IP":    "ip",
+		"TCP":   "tcp",
+		"UDP":   "udp",
+		"FTP":   "ftp",
+		"SSH":   "ssh",
+		"SSL":   "ssl",
+		"TLS":   "tls",
+		"DNS":   "dns",
+		"CPU":   "cpu",
+		"GPU":   "gpu",
+		"RAM":   "ram",
+		"SSD":   "ssd",
+		"HDD":   "hdd",
+		"UI":    "ui",
+		"UX":    "ux",
+		"AI":    "ai",
+		"ML":    "ml",
+		"VIP":   "vip",
+		"CEO":   "ceo",
+		"CTO":   "cto",
+		"CFO":   "cfo",
+		"HR":    "hr",
+		"QR":    "qr",
+		"PDF":   "pdf",
+		"CSV":   "csv",
+		"PNG":   "png",
+		"JPG":   "jpg",
+		"JPEG":  "jpeg",
+		"GIF":   "gif",
+		"SVG":   "svg",
+		"MP3":   "mp3",
+		"MP4":   "mp4",
+		"ZIP":   "zip",
+		"RAR":   "rar",
+		"MD5":   "md5",
+		"SHA":   "sha",
+		"CRC":   "crc",
+		"RFC":   "rfc",
+		"ISO":   "iso",
+		"UTC":   "utc",
+		"GMT":   "gmt",
+		"OS":    "os",
+		"PC":    "pc",
+		"TV":    "tv",
+		"DVD":   "dvd",
+		"CD":    "cd",
+		"USB":   "usb",
+		"WIFI":  "wifi",
+		"GPS":   "gps",
+		"SMS":   "sms",
+		"MMS":   "mms",
+		"FAQ":   "faq",
+		"SEO":   "seo",
+		"CMS":   "cms",
+		"ERP":   "erp",
+		"CRM":   "crm",
+		"B2B":   "b2b",
+		"B2C":   "b2c",
+		"P2P":   "p2p",
+		"IoT":   "iot",
+		"AR":    "ar",
+		"VR":    "vr",
+		"3D":    "3d",
+		"2D":    "2d",
+	}
+
+	// 如果整个字符串就是一个缩写，直接返回小写
+	if mapped, exists := commonAcronyms[str]; exists {
+		return mapped
+	}
+
 	var result strings.Builder
-	for i, r := range str {
-		if i > 0 && 'A' <= r && r <= 'Z' {
-			result.WriteRune('_')
+	runes := []rune(str)
+
+	for i, r := range runes {
+		// 检查是否在大写字母序列中
+		if 'A' <= r && r <= 'Z' {
+			// 如果不是第一个字符，且前一个字符不是大写，或者下一个字符是小写，则添加下划线
+			if i > 0 {
+				prevIsUpper := i > 0 && 'A' <= runes[i-1] && runes[i-1] <= 'Z'
+				nextIsLower := i+1 < len(runes) && 'a' <= runes[i+1] && runes[i+1] <= 'z'
+
+				// 在以下情况下添加下划线：
+				// 1. 前一个字符不是大写（如 userName -> user_name）
+				// 2. 前一个字符是大写但下一个字符是小写（如 URLPath -> url_path）
+				if !prevIsUpper || nextIsLower {
+					result.WriteRune('_')
+				}
+			}
 		}
 		result.WriteRune(r)
 	}
+
 	return strings.ToLower(result.String())
 }

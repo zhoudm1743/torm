@@ -20,7 +20,7 @@ func SetupDefaultLogging(level string, logQueries bool) {
 func SetupFileLogging(filename, level string, logQueries bool) error {
 	logger, err := NewFileLogger(parseLogLevel(level), filename, logQueries)
 	if err != nil {
-		return fmt.Errorf("failed to create file logger: %w", err)
+		return fmt.Errorf("创建文件日志记录器失败: %w", err)
 	}
 	SetDefaultLogger(logger)
 	return nil
@@ -149,19 +149,20 @@ func (l *FileLogger) Close() error {
 // QuickEnableDebugLogging 快速启用调试日志（包括SQL查询）
 func QuickEnableDebugLogging() {
 	SetupDefaultLogging("debug", true)
-	fmt.Println("🔍 Debug logging enabled with SQL query logging")
+	// 使用简单的打印，避免循环导入
+	fmt.Println("[INFO] 调试日志已启用，包含SQL查询日志")
 }
 
 // QuickEnableInfoLogging 快速启用信息日志（包括SQL查询）
 func QuickEnableInfoLogging() {
 	SetupDefaultLogging("info", true)
-	fmt.Println("ℹ️ Info logging enabled with SQL query logging")
+	fmt.Println("[INFO] 信息日志已启用，包含SQL查询日志")
 }
 
 // QuickDisableLogging 快速禁用日志
 func QuickDisableLogging() {
 	SetDefaultLogger(nil)
-	fmt.Println("🔇 Logging disabled")
+	fmt.Println("[INFO] 日志已禁用")
 }
 
 // GetCurrentLogLevel 获取当前日志级别（用于调试）

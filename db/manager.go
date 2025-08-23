@@ -30,7 +30,7 @@ func NewManager() *Manager {
 // AddConfig 添加数据库配置
 func (m *Manager) AddConfig(name string, config *Config) error {
 	if err := config.Validate(); err != nil {
-		return fmt.Errorf("invalid config for connection '%s': %w", name, err)
+		return fmt.Errorf("连接 '%s' 的配置无效: %w", name, err)
 	}
 
 	m.mu.Lock()
@@ -96,15 +96,15 @@ func (m *Manager) createConnection(name string) (ConnectionInterface, error) {
 	case "mongodb", "mongo":
 		conn, err = NewMongoDBConnection(config, m.logger)
 	default:
-		return nil, fmt.Errorf("unsupported driver: %s", config.Driver)
+		return nil, fmt.Errorf("不支持的驱动: %s", config.Driver)
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to create connection '%s': %w", name, err)
+		return nil, fmt.Errorf("创建连接 '%s' 失败: %w", name, err)
 	}
 
 	if err := conn.Connect(); err != nil {
-		return nil, fmt.Errorf("failed to connect to database '%s': %w", name, err)
+		return nil, fmt.Errorf("连接数据库 '%s' 失败: %w", name, err)
 	}
 
 	m.connections[name] = conn
@@ -240,7 +240,7 @@ func (m *Manager) Close() error {
 	var errs []error
 	for name, conn := range m.connections {
 		if err := conn.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("failed to close connection '%s': %w", name, err))
+			errs = append(errs, fmt.Errorf("关闭连接 '%s' 失败: %w", name, err))
 		}
 	}
 
@@ -248,7 +248,7 @@ func (m *Manager) Close() error {
 	m.connections = make(map[string]ConnectionInterface)
 
 	if len(errs) > 0 {
-		return fmt.Errorf("errors closing connections: %v", errs)
+		return fmt.Errorf("关闭连接时出错: %v", errs)
 	}
 
 	return nil

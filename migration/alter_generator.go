@@ -21,8 +21,6 @@ func NewAlterGenerator(conn db.ConnectionInterface) *AlterGenerator {
 
 // GenerateAlterSQL 生成ALTER TABLE SQL语句
 func (ag *AlterGenerator) GenerateAlterSQL(tableName string, differences []ColumnDifference) ([]string, error) {
-	var alterStatements []string
-
 	switch ag.driver {
 	case "mysql":
 		return ag.generateMySQLAlterSQL(tableName, differences)
@@ -31,10 +29,8 @@ func (ag *AlterGenerator) GenerateAlterSQL(tableName string, differences []Colum
 	case "sqlite", "sqlite3":
 		return ag.generateSQLiteAlterSQL(tableName, differences)
 	default:
-		return nil, fmt.Errorf("unsupported database driver: %s", ag.driver)
+		return nil, fmt.Errorf("不支持的数据库驱动: %s", ag.driver)
 	}
-
-	return alterStatements, nil
 }
 
 // generateMySQLAlterSQL 生成MySQL的ALTER TABLE语句
@@ -238,8 +234,8 @@ func (ag *AlterGenerator) generateSQLiteRecreateStatements(tableName string, dif
 
 	// 注意：这里简化处理，实际使用时需要更复杂的逻辑
 	statements = append(statements,
-		fmt.Sprintf("-- WARNING: SQLite table %s requires recreation for complex changes", tableName),
-		fmt.Sprintf("-- Please use migration system for complex SQLite schema changes"),
+		fmt.Sprintf("-- 警告: SQLite表 %s 需要重新创建以进行复杂更改", tableName),
+		"-- 请使用迁移系统进行复杂的SQLite模式更改",
 	)
 
 	return statements

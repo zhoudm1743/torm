@@ -64,13 +64,13 @@ func TestSmartDetection(t *testing.T) {
 		err := model.AutoMigrate()
 		if err != nil {
 			// 应该包含友好的错误提示
-			if !strings.Contains(err.Error(), "💡 Quick fix") {
+			if !strings.Contains(err.Error(), "快速修复") {
 				t.Errorf("Expected friendly error message, got: %v", err)
 			}
 			if !strings.Contains(err.Error(), "NewAutoMigrateModel") {
 				t.Errorf("Expected suggestion for NewAutoMigrateModel, got: %v", err)
 			}
-			t.Logf("✅ Friendly error message provided: %v", err)
+			t.Logf(" Friendly error message provided: %v", err)
 		} else {
 			t.Error("Expected error due to missing model structure detection")
 		}
@@ -84,7 +84,7 @@ func TestSmartDetection(t *testing.T) {
 		if err != nil {
 			t.Errorf("NewAutoMigrateModel should work seamlessly: %v", err)
 		} else {
-			t.Log("✅ NewAutoMigrateModel works perfectly")
+			t.Log(" NewAutoMigrateModel works perfectly")
 		}
 
 		// 验证表是否创建
@@ -101,7 +101,7 @@ func TestSmartDetection(t *testing.T) {
 		if count != 1 {
 			t.Error("Table should be created successfully")
 		} else {
-			t.Log("✅ Table created successfully")
+			t.Log(" Table created successfully")
 		}
 
 		// 清理
@@ -116,7 +116,7 @@ func TestSmartDetection(t *testing.T) {
 		if err != nil {
 			t.Errorf("Manual SetModelStruct should work: %v", err)
 		} else {
-			t.Log("✅ Manual SetModelStruct works correctly")
+			t.Log(" Manual SetModelStruct works correctly")
 		}
 
 		// 验证表是否创建
@@ -133,7 +133,7 @@ func TestSmartDetection(t *testing.T) {
 		if count != 1 {
 			t.Error("Table should be created successfully")
 		} else {
-			t.Log("✅ Manual setup table created successfully")
+			t.Log(" Manual setup table created successfully")
 		}
 
 		// 清理
@@ -147,7 +147,7 @@ func TestSmartDetection(t *testing.T) {
 		// 检查是否设置了构造函数调用的上下文提示
 		// 注意：这个测试可能不会触发，因为它不是在模型构造函数中调用的
 		hint := baseModel.GetContextHint("constructor_call")
-		t.Logf("📝 Constructor call hint: %v", hint)
+		t.Logf(" Constructor call hint: %v", hint)
 
 		// 测试手动设置上下文提示
 		baseModel.SetContextHint("test_key", "test_value")
@@ -155,7 +155,7 @@ func TestSmartDetection(t *testing.T) {
 		if value != "test_value" {
 			t.Errorf("Expected 'test_value', got %v", value)
 		} else {
-			t.Log("✅ Context hints work correctly")
+			t.Log(" Context hints work correctly")
 		}
 	})
 
@@ -171,7 +171,7 @@ func TestSmartDetection(t *testing.T) {
 			if !strings.Contains(err.Error(), "NewAutoMigrateModel") {
 				t.Errorf("Expected guidance for NewAutoMigrateModel, got: %v", err)
 			}
-			t.Logf("✅ Helpful guidance provided: %v", err)
+			t.Logf(" Helpful guidance provided: %v", err)
 		} else {
 			t.Error("Expected error due to missing model structure")
 		}
@@ -180,29 +180,29 @@ func TestSmartDetection(t *testing.T) {
 
 func TestSmartDetection_APIComparison(t *testing.T) {
 	t.Run("API_Comparison", func(t *testing.T) {
-		t.Log("📊 API Comparison Demo:")
+		t.Log(" API Comparison Demo:")
 		t.Log("")
 
 		// 演示不同的API方式
-		t.Log("🔴 Old Way (will show friendly error):")
+		t.Log(" Old Way (will show friendly error):")
 		t.Log("   user.BaseModel = *model.NewBaseModel()")
-		t.Log("   user.AutoMigrate() // ❌ Requires manual setup")
+		t.Log("   user.AutoMigrate() //  Requires manual setup")
 		t.Log("")
 
-		t.Log("🟢 New Recommended Way:")
+		t.Log(" New Recommended Way:")
 		t.Log("   user.BaseModel = *model.NewAutoMigrateModel(user)")
-		t.Log("   user.AutoMigrate() // ✅ Works seamlessly")
+		t.Log("   user.AutoMigrate() //  Works seamlessly")
 		t.Log("")
 
-		t.Log("🟡 Manual Way:")
+		t.Log(" Manual Way:")
 		t.Log("   user.BaseModel = *model.NewBaseModel()")
 		t.Log("   user.SetModelStruct(reflect.TypeOf(*user))")
-		t.Log("   user.AutoMigrate() // ✅ Works with manual setup")
+		t.Log("   user.AutoMigrate() //  Works with manual setup")
 		t.Log("")
 
-		t.Log("🔵 Traditional Way (still supported):")
+		t.Log(" Traditional Way (still supported):")
 		t.Log("   user.BaseModel = *model.NewBaseModelWithAutoDetect(user)")
-		t.Log("   user.AutoMigrate() // ✅ Works with explicit detection")
+		t.Log("   user.AutoMigrate() //  Works with explicit detection")
 	})
 }
 

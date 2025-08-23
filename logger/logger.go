@@ -143,7 +143,7 @@ func (l *SQLLogger) LogQuery(sql string, args []interface{}, duration time.Durat
 		return
 	}
 
-	l.Info("SQL Query", map[string]interface{}{
+	l.Info("SQL查询", map[string]interface{}{
 		"sql":      sql,
 		"args":     args,
 		"duration": duration.String(),
@@ -152,7 +152,7 @@ func (l *SQLLogger) LogQuery(sql string, args []interface{}, duration time.Durat
 
 // LogQueryError 记录SQL查询错误
 func (l *SQLLogger) LogQueryError(sql string, args []interface{}, err error, duration time.Duration) {
-	l.Error("SQL Query Error", map[string]interface{}{
+	l.Error("SQL查询错误", map[string]interface{}{
 		"sql":      sql,
 		"args":     args,
 		"error":    err.Error(),
@@ -166,7 +166,7 @@ func (l *SQLLogger) LogTransaction(action string, duration time.Duration) {
 		return
 	}
 
-	l.Info("Transaction", map[string]interface{}{
+	l.Info("事务", map[string]interface{}{
 		"action":   action,
 		"duration": duration.String(),
 	})
@@ -174,7 +174,7 @@ func (l *SQLLogger) LogTransaction(action string, duration time.Duration) {
 
 // LogConnection 记录连接操作
 func (l *SQLLogger) LogConnection(action string, config *db.Config) {
-	l.Info("Database Connection", map[string]interface{}{
+	l.Info("数据库连接", map[string]interface{}{
 		"action":   action,
 		"driver":   config.Driver,
 		"host":     config.Host,

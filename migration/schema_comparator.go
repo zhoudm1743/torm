@@ -86,7 +86,7 @@ func (sc *SchemaComparator) GetDatabaseColumns(tableName string) ([]DatabaseColu
 	case "sqlite", "sqlite3":
 		return sc.getSQLiteColumns(tableName)
 	default:
-		return nil, fmt.Errorf("unsupported database driver: %s", sc.driver)
+		return nil, fmt.Errorf("不支持的数据库驱动: %s", sc.driver)
 	}
 }
 
@@ -111,7 +111,7 @@ func (sc *SchemaComparator) getMySQLColumns(tableName string) ([]DatabaseColumn,
 
 	rows, err := sc.conn.Query(query, tableName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query MySQL columns: %w", err)
+		return nil, fmt.Errorf("查询MySQL列失败: %w", err)
 	}
 	defer rows.Close()
 
@@ -127,7 +127,7 @@ func (sc *SchemaComparator) getMySQLColumns(tableName string) ([]DatabaseColumn,
 			&nullable, &defaultVal, &comment, &columnKey, &extra,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan MySQL column: %w", err)
+			return nil, fmt.Errorf("扫描MySQL列失败: %w", err)
 		}
 
 		col.Type = strings.ToUpper(dataType)
@@ -218,7 +218,7 @@ func (sc *SchemaComparator) getPostgreSQLColumns(tableName string) ([]DatabaseCo
 
 	rows, err := sc.conn.Query(query, tableName, tableName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query PostgreSQL columns: %w", err)
+		return nil, fmt.Errorf("查询PostgreSQL列失败: %w", err)
 	}
 	defer rows.Close()
 
@@ -234,7 +234,7 @@ func (sc *SchemaComparator) getPostgreSQLColumns(tableName string) ([]DatabaseCo
 			&nullable, &defaultVal, &comment, &columnKey, &extra,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan PostgreSQL column: %w", err)
+			return nil, fmt.Errorf("扫描PostgreSQL列失败: %w", err)
 		}
 
 		col.Type = strings.ToUpper(dataType)
@@ -296,7 +296,7 @@ func (sc *SchemaComparator) getSQLiteColumns(tableName string) ([]DatabaseColumn
 
 	rows, err := sc.conn.Query(query)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query SQLite columns: %w", err)
+		return nil, fmt.Errorf("查询SQLite列失败: %w", err)
 	}
 	defer rows.Close()
 
@@ -311,7 +311,7 @@ func (sc *SchemaComparator) getSQLiteColumns(tableName string) ([]DatabaseColumn
 
 		err := rows.Scan(&cid, &col.Name, &dataType, &notNull, &defaultVal, &pk)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan SQLite column: %w", err)
+			return nil, fmt.Errorf("扫描SQLite列失败: %w", err)
 		}
 
 		// 解析类型和长度
@@ -368,7 +368,7 @@ func (sc *SchemaComparator) getSQLiteCreateSQL(tableName string) (string, error)
 	var createSQL string
 	err := row.Scan(&createSQL)
 	if err != nil {
-		return "", fmt.Errorf("failed to get SQLite create SQL: %w", err)
+		return "", fmt.Errorf("获取SQLite创建SQL失败: %w", err)
 	}
 
 	return createSQL, nil

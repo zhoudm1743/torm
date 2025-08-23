@@ -7,7 +7,6 @@ import (
 	"github.com/zhoudm1743/torm/db"
 	"github.com/zhoudm1743/torm/migration"
 	"github.com/zhoudm1743/torm/model"
-	"github.com/zhoudm1743/torm/models"
 )
 
 // TestAdmin 用于测试的管理员模型
@@ -75,7 +74,7 @@ func TestSchemaComparison(t *testing.T) {
 				if col.Type != migration.ColumnTypeVarchar {
 					t.Errorf("Expected nickname type to be VARCHAR, got %s", col.Type)
 				}
-				t.Logf("✅ Original nickname column: length=%d, type=%s", col.Length, col.Type)
+				t.Logf(" Original nickname column: length=%d, type=%s", col.Length, col.Type)
 				break
 			}
 		}
@@ -111,7 +110,7 @@ func TestSchemaComparison(t *testing.T) {
 				if col.Type != migration.ColumnTypeVarchar {
 					t.Errorf("Expected nickname type to be VARCHAR, got %s", col.Type)
 				}
-				t.Logf("✅ Updated nickname column: length=%d, type=%s", col.Length, col.Type)
+				t.Logf(" Updated nickname column: length=%d, type=%s", col.Length, col.Type)
 				break
 			}
 		}
@@ -154,7 +153,7 @@ func TestSchemaComparison(t *testing.T) {
 		// 对于SQLite，由于类型映射的特殊性，可能不会检测到差异
 		// 这是正常的，因为SQLite中TEXT类型没有固定长度限制
 		if len(differences) == 0 {
-			t.Log("✅ No differences found - this is expected for SQLite")
+			t.Log(" No differences found - this is expected for SQLite")
 		}
 	})
 }
@@ -177,8 +176,12 @@ func TestPostgreSQLSchemaComparison(t *testing.T) {
 
 // TestAdminModelMigration 测试Admin模型的实际迁移
 func TestAdminModelMigration(t *testing.T) {
-	// 创建Admin实例
-	admin := models.NewAdmin()
+	// 创建TestAdmin实例
+	admin := &TestAdmin{}
+	admin.BaseModel = *model.NewBaseModel()
+	admin.SetTable("admin")
+	admin.SetPrimaryKey("id")
+	admin.SetConnection("default")
 
 	// 测试模型结构是否正确设置
 	if !admin.HasModelStruct() {
@@ -191,7 +194,7 @@ func TestAdminModelMigration(t *testing.T) {
 		t.Fatal("Admin model type should not be nil")
 	}
 
-	t.Logf("✅ Admin model type: %s", modelType.Name())
+	t.Logf(" Admin model type: %s", modelType.Name())
 
 	// 测试表名是否正确设置
 	tableName := admin.TableName()
@@ -199,7 +202,7 @@ func TestAdminModelMigration(t *testing.T) {
 		t.Errorf("Expected table name 'admin', got '%s'", tableName)
 	}
 
-	t.Logf("✅ Admin table name: %s", tableName)
+	t.Logf(" Admin table name: %s", tableName)
 
 	// 分析模型列
 	analyzer := migration.NewModelAnalyzer()
@@ -217,7 +220,7 @@ func TestAdminModelMigration(t *testing.T) {
 			if col.Length != 255 {
 				t.Errorf("Expected nickname length to be 255, got %d", col.Length)
 			} else {
-				t.Logf("✅ Nickname length is correctly set to 255")
+				t.Logf(" Nickname length is correctly set to 255")
 			}
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/zhoudm1743/torm/db"
+	"github.com/zhoudm1743/torm/logger"
 )
 
 // SafeMigrator 安全的表结构迁移器
@@ -72,12 +73,12 @@ func (sm *SafeMigrator) SafeAlterTable(tableName string, differences []ColumnDif
 
 	// 预演模式：只打印SQL，不执行
 	if sm.dryRun {
-		sm.logger.Println("🔍 DRY RUN MODE - SQL statements to be executed:")
+		sm.logger.Println("预演模式 - 将要执行的SQL语句:")
 		for i, stmt := range alterStatements {
 			sm.logger.Printf("  %d. %s", i+1, stmt)
 		}
 		result.Success = true
-		result.Message = "Dry run completed - no changes were applied"
+		result.Message = "预演完成 - 未应用任何更改"
 		return result, nil
 	}
 
@@ -87,17 +88,17 @@ func (sm *SafeMigrator) SafeAlterTable(tableName string, differences []ColumnDif
 		backupTableName, err = sm.createTableBackup(tableName)
 		if err != nil {
 			result.Error = err
-			return result, fmt.Errorf("failed to create table backup: %w", err)
+			return result, fmt.Errorf("创建表备份失败: %w", err)
 		}
 		result.BackupTable = backupTableName
-		sm.logger.Printf("✅ Table backup created: %s", backupTableName)
+		sm.logger.Printf("表备份已创建: %s", backupTableName)
 	}
 
 	// 开始事务
 	tx, err := sm.conn.Begin()
 	if err != nil {
 		result.Error = err
-		return result, fmt.Errorf("failed to begin transaction: %w", err)
+		return result, fmt.Errorf("开始事务失败: %w", err)
 	}
 
 	// 执行变更
@@ -113,7 +114,7 @@ func (sm *SafeMigrator) SafeAlterTable(tableName string, differences []ColumnDif
 		if err != nil {
 			// 回滚事务
 			if rollbackErr := tx.Rollback(); rollbackErr != nil {
-				sm.logger.Printf("❌ Failed to rollback transaction: %v", rollbackErr)
+				sm.logger.Printf("回滚事务失败: %v", rollbackErr)
 			}
 
 			result.Error = err
@@ -127,22 +128,22 @@ func (sm *SafeMigrator) SafeAlterTable(tableName string, differences []ColumnDif
 				)
 			}
 
-			return result, fmt.Errorf("failed to execute statement '%s': %w", statement, err)
+			return result, fmt.Errorf("执行语句 '%s' 失败: %w", statement, err)
 		}
 	}
 
 	// 提交事务
 	if err := tx.Commit(); err != nil {
 		result.Error = err
-		return result, fmt.Errorf("failed to commit transaction: %w", err)
+		return result, fmt.Errorf("提交事务失败: %w", err)
 	}
 
 	result.Success = true
 	result.EndTime = time.Now()
 	result.Duration = result.EndTime.Sub(result.StartTime)
-	result.Message = fmt.Sprintf("Successfully applied %d changes", len(differences))
+	result.Message = fmt.Sprintf("成功应用了 %d 项更改", len(differences))
 
-	sm.logger.Printf("✅ Table structure updated successfully in %v", result.Duration)
+	sm.logger.Printf("表结构更新成功，耗时 %v", result.Duration)
 
 	return result, nil
 }
@@ -163,13 +164,13 @@ func (sm *SafeMigrator) createTableBackup(tableName string) (string, error) {
 	case "sqlite", "sqlite3":
 		backupSQL = fmt.Sprintf("CREATE TABLE %s AS SELECT * FROM %s", backupTableName, tableName)
 	default:
-		return "", fmt.Errorf("unsupported database driver for backup: %s", driver)
+		return "", fmt.Errorf("备份操作不支持的数据库驱动: %s", driver)
 	}
 
 	// 创建表结构
 	_, err := sm.conn.Exec(backupSQL)
 	if err != nil {
-		return "", fmt.Errorf("failed to create backup table structure: %w", err)
+		return "", fmt.Errorf("创建备份表结构失败: %w", err)
 	}
 
 	// 复制数据（MySQL需要单独执行）
@@ -179,7 +180,7 @@ func (sm *SafeMigrator) createTableBackup(tableName string) (string, error) {
 		if err != nil {
 			// 清理创建的备份表
 			sm.conn.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s", backupTableName))
-			return "", fmt.Errorf("failed to copy data to backup table: %w", err)
+			return "", fmt.Errorf("复制数据到备份表失败: %w", err)
 		}
 	}
 
@@ -193,14 +194,14 @@ func (sm *SafeMigrator) RestoreFromBackup(tableName, backupTableName string) err
 	// 开始事务
 	tx, err := sm.conn.Begin()
 	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+		return fmt.Errorf("开始事务失败: %w", err)
 	}
 
 	// 删除当前表
 	_, err = tx.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s", tableName))
 	if err != nil {
 		tx.Rollback()
-		return fmt.Errorf("failed to drop current table: %w", err)
+		return fmt.Errorf("删除当前表失败: %w", err)
 	}
 
 	// 恢复备份
@@ -213,21 +214,21 @@ func (sm *SafeMigrator) RestoreFromBackup(tableName, backupTableName string) err
 		}
 	default:
 		tx.Rollback()
-		return fmt.Errorf("unsupported database driver for restore: %s", driver)
+		return fmt.Errorf("恢复操作不支持的数据库驱动: %s", driver)
 	}
 
 	_, err = tx.Exec(restoreSQL)
 	if err != nil {
 		tx.Rollback()
-		return fmt.Errorf("failed to restore table: %w", err)
+		return fmt.Errorf("恢复表失败: %w", err)
 	}
 
 	// 提交事务
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit restore transaction: %w", err)
+		return fmt.Errorf("提交恢复事务失败: %w", err)
 	}
 
-	sm.logger.Printf("✅ Table %s restored from backup %s", tableName, backupTableName)
+	sm.logger.Printf("表 %s 已从备份 %s 恢复", tableName, backupTableName)
 	return nil
 }
 
@@ -262,13 +263,13 @@ func (sm *SafeMigrator) CleanupBackups(tablePrefix string, keepDays int) error {
 			AND name GLOB '*_backup_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9]'
 		`
 	default:
-		return fmt.Errorf("unsupported database driver for cleanup: %s", driver)
+		return fmt.Errorf("清理操作不支持的数据库驱动: %s", driver)
 	}
 
 	pattern := tablePrefix + "_backup_%"
 	rows, err := sm.conn.Query(query, pattern)
 	if err != nil {
-		return fmt.Errorf("failed to query backup tables: %w", err)
+		return fmt.Errorf("查询备份表失败: %w", err)
 	}
 	defer rows.Close()
 
@@ -294,14 +295,14 @@ func (sm *SafeMigrator) CleanupBackups(tablePrefix string, keepDays int) error {
 		dropSQL := fmt.Sprintf("DROP TABLE IF EXISTS %s", tableName)
 		_, err := sm.conn.Exec(dropSQL)
 		if err != nil {
-			sm.logger.Printf("⚠️ Failed to drop backup table %s: %v", tableName, err)
+			sm.logger.Printf("删除备份表 %s 失败: %v", tableName, err)
 		} else {
-			sm.logger.Printf("🗑️ Cleaned up backup table: %s", tableName)
+			sm.logger.Printf("已清理备份表: %s", tableName)
 		}
 	}
 
 	if len(tablesToDrop) > 0 {
-		sm.logger.Printf("✅ Cleaned up %d old backup tables", len(tablesToDrop))
+		sm.logger.Printf("已清理 %d 个旧备份表", len(tablesToDrop))
 	}
 
 	return nil
@@ -345,30 +346,33 @@ type MigrationResult struct {
 
 // PrintSummary 打印迁移摘要
 func (mr *MigrationResult) PrintSummary() {
-	fmt.Printf("\n🎯 Migration Summary for table: %s\n", mr.TableName)
-	fmt.Printf("⏱️ Duration: %v\n", mr.Duration)
-	fmt.Printf("📝 Changes: %d\n", len(mr.Changes))
+	log := logger.DefaultLogger()
+	if log == nil {
+		log = logger.NewLogger(logger.INFO)
+	}
+
+	log.Info("迁移摘要",
+		"table", mr.TableName,
+		"duration", mr.Duration,
+		"changes", len(mr.Changes),
+		"success", mr.Success)
 
 	if mr.Success {
-		fmt.Printf("✅ Status: SUCCESS\n")
-		fmt.Printf("💬 Message: %s\n", mr.Message)
+		log.Info("迁移成功", "message", mr.Message)
 	} else {
-		fmt.Printf("❌ Status: FAILED\n")
 		if mr.Error != nil {
-			fmt.Printf("💬 Error: %s\n", mr.Error.Error())
+			log.Error("迁移失败", "error", mr.Error.Error())
 		}
 		if mr.FailedStatement != "" {
-			fmt.Printf("💔 Failed Statement: %s\n", mr.FailedStatement)
+			log.Error("失败的语句", "statement", mr.FailedStatement)
 		}
 	}
 
 	if mr.BackupTable != "" {
-		fmt.Printf("💾 Backup Table: %s\n", mr.BackupTable)
+		log.Info("备份信息", "backup_table", mr.BackupTable)
 	}
 
 	if mr.RecoveryInstructions != "" {
-		fmt.Printf("🔧 Recovery: %s\n", mr.RecoveryInstructions)
+		log.Info("恢复说明", "instructions", mr.RecoveryInstructions)
 	}
-
-	fmt.Println()
 }

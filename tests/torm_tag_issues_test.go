@@ -56,7 +56,7 @@ type TestModelWithCustomColumn struct {
 }
 
 func TestTormTagIssueDetection(t *testing.T) {
-	t.Log("🔍 测试torm标签修改检测能力")
+	t.Log(" 测试torm标签修改检测能力")
 
 	analyzer := migration.NewModelAnalyzer()
 
@@ -76,16 +76,16 @@ func TestTormTagIssueDetection(t *testing.T) {
 		t.Fatalf("Failed to analyze after model: %v", err)
 	}
 
-	t.Log("📊 修改前的模型列:")
+	t.Log(" 修改前的模型列:")
 	printModelColumns(t, "before", beforeColumns)
 
-	t.Log("📊 修改后的模型列:")
+	t.Log(" 修改后的模型列:")
 	printModelColumns(t, "after", afterColumns)
 
 	// 模拟数据库列比较
 	differences := simulateColumnComparison(beforeColumns, afterColumns)
 
-	t.Logf("🔧 检测到 %d 处差异:", len(differences))
+	t.Logf(" 检测到 %d 处差异:", len(differences))
 	for i, diff := range differences {
 		t.Logf("  %d. 列: %s", i+1, diff.Column)
 		t.Logf("     类型: %s", diff.Type)
@@ -109,15 +109,15 @@ func TestTormTagIssueDetection(t *testing.T) {
 
 	for field, changeType := range expectedChanges {
 		if detectedChanges[field] {
-			t.Logf("✅ %s的%s被正确检测", field, changeType)
+			t.Logf(" %s的%s被正确检测", field, changeType)
 		} else {
-			t.Logf("❌ %s的%s未被检测到", field, changeType)
+			t.Logf(" %s的%s未被检测到", field, changeType)
 		}
 	}
 }
 
 func TestCustomColumnNameSupport(t *testing.T) {
-	t.Log("🏷️ 测试自定义列名支持")
+	t.Log(" 测试自定义列名支持")
 
 	model := &TestModelWithCustomColumn{}
 	analyzer := migration.NewModelAnalyzer()
@@ -137,20 +137,20 @@ func TestCustomColumnNameSupport(t *testing.T) {
 
 	// 验证自定义列名
 	if col, exists := columnMap["username"]; exists {
-		t.Logf("✅ 自定义列名 'username' 生效，注释: %s", col.Comment)
+		t.Logf(" 自定义列名 'username' 生效，注释: %s", col.Comment)
 	} else {
-		t.Error("❌ 自定义列名 'username' 未生效")
+		t.Error(" 自定义列名 'username' 未生效")
 	}
 
 	if col, exists := columnMap["uid"]; exists {
-		t.Logf("✅ 自定义列名 'uid' 生效，注释: %s", col.Comment)
+		t.Logf(" 自定义列名 'uid' 生效，注释: %s", col.Comment)
 	} else {
-		t.Error("❌ 自定义列名 'uid' 未生效")
+		t.Error(" 自定义列名 'uid' 未生效")
 	}
 }
 
 func TestTormTagPriorityAndParsing(t *testing.T) {
-	t.Log("🎯 测试torm标签解析优先级和格式")
+	t.Log(" 测试torm标签解析优先级和格式")
 
 	// 测试不同格式的torm标签
 	testCases := []struct {
