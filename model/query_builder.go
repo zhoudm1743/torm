@@ -58,6 +58,69 @@ func (mqb *ModelQueryBuilder) Offset(offset int) *ModelQueryBuilder {
 	return mqb
 }
 
+// GroupBy 分组查询
+func (mqb *ModelQueryBuilder) GroupBy(columns ...string) *ModelQueryBuilder {
+	if mqb.err != nil {
+		return mqb
+	}
+	mqb.query = mqb.query.GroupBy(columns...)
+	return mqb
+}
+
+// Having HAVING条件
+func (mqb *ModelQueryBuilder) Having(args ...interface{}) *ModelQueryBuilder {
+	if mqb.err != nil {
+		return mqb
+	}
+	mqb.query = mqb.query.Having(args...)
+	return mqb
+}
+
+// Select 选择字段
+func (mqb *ModelQueryBuilder) Select(columns ...string) *ModelQueryBuilder {
+	if mqb.err != nil {
+		return mqb
+	}
+	mqb.query = mqb.query.Select(columns...)
+	return mqb
+}
+
+// Join 内连接
+func (mqb *ModelQueryBuilder) Join(table, localKey, operator, foreignKey string) *ModelQueryBuilder {
+	if mqb.err != nil {
+		return mqb
+	}
+	mqb.query = mqb.query.Join(table, localKey, operator, foreignKey)
+	return mqb
+}
+
+// LeftJoin 左连接
+func (mqb *ModelQueryBuilder) LeftJoin(table, localKey, operator, foreignKey string) *ModelQueryBuilder {
+	if mqb.err != nil {
+		return mqb
+	}
+	mqb.query = mqb.query.LeftJoin(table, localKey, operator, foreignKey)
+	return mqb
+}
+
+// RightJoin 右连接
+func (mqb *ModelQueryBuilder) RightJoin(table, localKey, operator, foreignKey string) *ModelQueryBuilder {
+	if mqb.err != nil {
+		return mqb
+	}
+	mqb.query = mqb.query.RightJoin(table, localKey, operator, foreignKey)
+	return mqb
+}
+
+// InnerJoin 内连接（别名）
+func (mqb *ModelQueryBuilder) InnerJoin(table, localKey, operator, foreignKey string) *ModelQueryBuilder {
+	if mqb.err != nil {
+		return mqb
+	}
+	mqb.query = mqb.query.InnerJoin(table, localKey, operator, foreignKey)
+	return mqb
+}
+
 // First 获取第一条记录
 func (mqb *ModelQueryBuilder) First() error {
 	if mqb.err != nil {

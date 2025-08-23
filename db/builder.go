@@ -250,6 +250,11 @@ func (qb *QueryBuilder) OrWhere(args ...interface{}) *QueryBuilder {
 	return qb
 }
 
+// Join 内连接（通用方法，等同于InnerJoin）
+func (qb *QueryBuilder) Join(table, localKey, operator, foreignKey string) *QueryBuilder {
+	return qb.InnerJoin(table, localKey, operator, foreignKey)
+}
+
 // LeftJoin 左连接
 func (qb *QueryBuilder) LeftJoin(table, localKey, operator, foreignKey string) *QueryBuilder {
 	condition := fmt.Sprintf("%s.%s %s %s.%s", qb.tableName, localKey, operator, table, foreignKey)
@@ -796,15 +801,62 @@ func (qb *QueryBuilder) scanRows(rows *sql.Rows) ([]map[string]interface{}, erro
 
 		row := make(map[string]interface{})
 		for i, column := range columns {
-			if values[i] != nil {
-				row[column] = values[i]
-			}
+			row[column] = qb.convertDatabaseValue(values[i])
 		}
 
 		results = append(results, row)
 	}
 
 	return results, nil
+}
+
+// convertDatabaseValue 转换数据库返回值为合适的Go类型
+func (qb *QueryBuilder) convertDatabaseValue(value interface{}) interface{} {
+	if value == nil {
+		return nil
+	}
+
+	switch v := value.(type) {
+	case []byte:
+		// 字节数组转换为字符串（大多数文本字段）
+		return string(v)
+	case int8:
+		return int64(v)
+	case int16:
+		return int64(v)
+	case int32:
+		return int64(v)
+	case int64:
+		return v
+	case uint8:
+		return int64(v)
+	case uint16:
+		return int64(v)
+	case uint32:
+		return int64(v)
+	case uint64:
+		// 注意：uint64可能超出int64范围，但为了一致性转换为int64
+		if v <= 9223372036854775807 { // math.MaxInt64
+			return int64(v)
+		}
+		return v // 保持原类型，避免溢出
+	case float32:
+		return float64(v)
+	case float64:
+		return v
+	case bool:
+		return v
+	case string:
+		return v
+	case time.Time:
+		return v
+	default:
+		// 对于其他复杂类型，尝试转换为字符串
+		if stringer, ok := v.(fmt.Stringer); ok {
+			return stringer.String()
+		}
+		return v
+	}
 }
 
 // InTransaction 在事务中执行
