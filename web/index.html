@@ -142,13 +142,13 @@ import (
 )
 
 type User struct {
-    ID        int    `db:"id" json:"id"`
-    Name      string `db:"name" json:"name"`
-    Email     string `db:"email" json:"email"`
-    Age       int    `db:"age" json:"age"`
-    Status    string `db:"status" json:"status"`
-    CreatedAt string `db:"created_at" json:"created_at"`
-    UpdatedAt string `db:"updated_at" json:"updated_at"`
+    ID        int    `json:"id" torm:"primary_key,auto_increment,comment:用户ID"`
+    Name      string `json:"name" torm:"type:varchar,size:50,comment:用户名"`
+    Email     string `json:"email" torm:"type:varchar,size:100,unique,comment:邮箱"`
+    Age       int    `json:"age" torm:"type:int,default:0,comment:年龄"`
+    Status    string `json:"status" torm:"type:varchar,size:20,default:active,comment:状态"`
+    CreatedAt string `json:"created_at" torm:"auto_create_time,comment:创建时间"`
+    UpdatedAt string `json:"updated_at" torm:"auto_update_time,comment:更新时间"`
 }
 
 func main() {
@@ -279,14 +279,14 @@ import (
 // User 用户模型 - 支持 TORM 统一标签
 type User struct {
     model.BaseModel                                           // 嵌入基础模型
-    ID        uint       `json:"id" db:"id" torm:"primary_key,auto_increment"`           // 主键，自增
-    Name      string     `json:"name" db:"name" torm:"size:50,comment:用户名"`             // 用户名
-    Email     string     `json:"email" db:"email" torm:"size:100,unique,comment:邮箱"`           // 邮箱
-    Age       int        `json:"age" db:"age" torm:"default:0,comment:年龄"`               // 年龄
-    Status    string     `json:"status" db:"status" torm:"default:active,comment:状态"`         // 状态
-    CreatedAt time.Time  `json:"created_at" db:"created_at" torm:"auto_create_time,comment:创建时间"` // 自动创建时间
-    UpdatedAt time.Time  `json:"updated_at" db:"updated_at" torm:"auto_update_time,comment:更新时间"` // 自动更新时间
-    DeletedAt model.DeletedTime `json:"deleted_at" db:"deleted_at" torm:"nullable,comment:删除时间"`          // 软删除时间
+    ID        uint       `json:"id" torm:"primary_key,auto_increment,comment:用户ID"`           // 主键，自增
+    Name      string     `json:"name" torm:"type:varchar,size:50,comment:用户名"`             // 用户名
+    Email     string     `json:"email" torm:"type:varchar,size:100,unique,comment:邮箱"`           // 邮箱
+    Age       int        `json:"age" torm:"type:int,default:0,comment:年龄"`               // 年龄
+    Status    string     `json:"status" torm:"type:varchar,size:20,default:active,comment:状态"`         // 状态
+    CreatedAt time.Time  `json:"created_at" torm:"auto_create_time,comment:创建时间"` // 自动创建时间
+    UpdatedAt time.Time  `json:"updated_at" torm:"auto_update_time,comment:更新时间"` // 自动更新时间
+    DeletedAt model.DeletedTime `json:"deleted_at" torm:"nullable,comment:删除时间"`          // 软删除时间
 }
 
 // NewUser 创建用户模型实例

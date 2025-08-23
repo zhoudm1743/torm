@@ -10,6 +10,8 @@
 - **文档系统**: 集成 wiki 文档的展示系统
 - **交互式演示**: 代码示例的标签切换展示
 - **现代化UI**: 参考现代ORM框架官网的设计理念
+- **TORM 统一标签**: 展示最新的 `torm` 标签语法
+- **大小写不敏感**: 支持各种大小写组合的标签语法
 
 ## 📁 文件结构
 
@@ -26,6 +28,54 @@ web/
 ├── assets/
 │   └── logo.svg        # LOGO文件
 └── README.md           # 本文件
+```
+
+## 💡 TORM 标签特性
+
+### 统一标签语法
+
+TORM v1.1.6 引入了统一的 `torm` 标签，简化了模型定义：
+
+```go
+type User struct {
+    model.BaseModel
+    ID    uint   `torm:"primary_key,auto_increment,comment:用户ID"`
+    Name  string `torm:"type:varchar,size:50,comment:用户名"`
+    Email string `torm:"type:varchar,size:100,unique,comment:邮箱"`
+    Price float64 `torm:"type:decimal,precision:10,scale:2,default:0.00"`
+}
+```
+
+### 大小写不敏感
+
+所有标签都支持大小写不敏感，以下写法完全等效：
+
+```go
+// 全小写（推荐）
+`torm:"type:varchar,size:50,unique,comment:用户名"`
+
+// 全大写
+`torm:"TYPE:VARCHAR,SIZE:50,UNIQUE,COMMENT:用户名"`
+
+// 首字母大写
+`torm:"Type:VarChar,Size:50,Unique,Comment:用户名"`
+
+// 混合大小写
+`torm:"TYPE:varchar,SIZE:50,unique,COMMENT:用户名"`
+```
+
+### AutoMigrate 功能
+
+支持自动迁移功能，根据模型结构体自动创建数据库表：
+
+```go
+func NewUser() *User {
+    user := &User{}
+    user.BaseModel = *model.NewBaseModelWithAutoDetect(user)
+    user.SetTable("users")
+    user.AutoMigrate() // 自动创建表结构
+    return user
+}
 ```
 
 ## 🚀 使用方法
@@ -93,6 +143,18 @@ go run -m httptest.NewServer
   - Prism.js: 代码高亮
   - Marked.js: Markdown解析
   - Inter字体: 现代化字体
+
+### TORM 特性展示
+
+网站完整展示了 TORM v1.1.6 的核心特性：
+
+- **统一标签语法**: 展示 `torm` 标签的使用方法
+- **大小写不敏感**: 演示各种大小写组合
+- **AutoMigrate**: 自动数据库迁移功能
+- **查询构建器**: 强大的 SQL 查询构建器
+- **模型系统**: Active Record 模式的模型操作
+- **事务处理**: 完整的事务支持
+- **多数据库**: MySQL、PostgreSQL、SQLite、MongoDB 支持
 
 ## 📚 文档系统
 
@@ -169,6 +231,18 @@ go run -m httptest.NewServer
 ## 📄 许可证
 
 本项目采用与 TORM 项目相同的许可证。
+
+## 📈 更新历史
+
+### v1.1.6 (最新)
+- ✅ 引入统一的 `torm` 标签语法
+- ✅ 支持大小写不敏感的标签解析
+- ✅ 新增 AutoMigrate 自动迁移功能
+- ✅ 增强的 WHERE 查询方法（NULL、BETWEEN、EXISTS 等）
+- ✅ 高级排序功能（OrderRand、OrderField、FieldRaw）
+- ✅ 完全移除 GORM 依赖
+- ✅ 新增 `NewBaseModelWithAutoDetect` 方法
+- ✅ 精确的类型长度和精度控制
 
 ---
 
