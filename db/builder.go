@@ -3,10 +3,15 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"reflect"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	_ "github.com/go-sql-driver/mysql"
 	_ "modernc.org/sqlite"
@@ -818,8 +823,8 @@ func (qb *QueryBuilder) convertDatabaseValue(value interface{}) interface{} {
 
 	switch v := value.(type) {
 	case []byte:
-		// 字节数组转换为字符串（大多数文本字段）
-		return string(v)
+		// 智能处理字节数组 - 需要判断其实际内容类型
+		return qb.convertByteArraySmart(v)
 	case int8:
 		return int64(v)
 	case int16:
@@ -847,7 +852,8 @@ func (qb *QueryBuilder) convertDatabaseValue(value interface{}) interface{} {
 	case bool:
 		return v
 	case string:
-		return v
+		// 字符串可能是Base64编码的，但要谨慎处理
+		return qb.tryBase64DecodeIfText(v)
 	case time.Time:
 		return v
 	default:
@@ -857,6 +863,385 @@ func (qb *QueryBuilder) convertDatabaseValue(value interface{}) interface{} {
 		}
 		return v
 	}
+}
+
+// convertByteArraySmart 智能转换字节数组
+func (qb *QueryBuilder) convertByteArraySmart(data []byte) interface{} {
+	if len(data) == 0 {
+		return ""
+	}
+
+	// 检查是否是有效的UTF-8字符串
+	if !utf8.Valid(data) {
+		// 如果不是有效UTF-8，可能是二进制数据，返回原字节数组
+		return data
+	}
+
+	// 转换为字符串用于分析
+	str := string(data)
+
+	// 1. NULL值处理
+	if qb.isNullValue(str) {
+		return nil
+	}
+
+	// 2. 检查是否是整数
+	if intVal, ok := qb.tryParseInteger(str); ok {
+		return intVal
+	}
+
+	// 3. 检查是否是浮点数
+	if floatVal, ok := qb.tryParseFloat(str); ok {
+		return floatVal
+	}
+
+	// 4. 检查是否是布尔值
+	if boolVal, ok := qb.tryParseBool(str); ok {
+		return boolVal
+	}
+
+	// 5. 检查是否是时间/日期
+	if timeVal, ok := qb.tryParseTime(str); ok {
+		return timeVal
+	}
+
+	// 6. 检查是否是JSON
+	if jsonVal, ok := qb.tryParseJSON(str); ok {
+		return jsonVal
+	}
+
+	// 7. 检查是否是UUID
+	if qb.isUUID(str) {
+		return str // UUID保持为字符串
+	}
+
+	// 8. 检查是否应该跳过Base64解码
+	if qb.shouldSkipBase64Decode(str) {
+		return str
+	}
+
+	// 9. 最后尝试Base64解码
+	return qb.tryBase64DecodeIfText(str)
+}
+
+// isNullValue 检查是否是NULL值表示
+func (qb *QueryBuilder) isNullValue(str string) bool {
+	switch strings.ToLower(strings.TrimSpace(str)) {
+	case "null", "nil", "<null>", "\\n":
+		return true
+	}
+	return false
+}
+
+// tryParseInteger 尝试解析整数
+func (qb *QueryBuilder) tryParseInteger(str string) (int64, bool) {
+	str = strings.TrimSpace(str)
+	if str == "" {
+		return 0, false
+	}
+
+	// 使用正则表达式检查是否是纯整数格式
+	intRegex := regexp.MustCompile(`^[+-]?\d+$`)
+	if !intRegex.MatchString(str) {
+		return 0, false
+	}
+
+	if val, err := strconv.ParseInt(str, 10, 64); err == nil {
+		return val, true
+	}
+	return 0, false
+}
+
+// tryParseFloat 尝试解析浮点数
+func (qb *QueryBuilder) tryParseFloat(str string) (float64, bool) {
+	str = strings.TrimSpace(str)
+	if str == "" {
+		return 0, false
+	}
+
+	// 使用正则表达式检查是否是浮点数格式
+	floatRegex := regexp.MustCompile(`^[+-]?(\d+\.?\d*|\d*\.\d+)([eE][+-]?\d+)?$`)
+	if !floatRegex.MatchString(str) {
+		return 0, false
+	}
+
+	// 必须包含小数点或科学记数法才认为是浮点数
+	if !strings.Contains(str, ".") && !strings.ContainsAny(strings.ToLower(str), "e") {
+		return 0, false
+	}
+
+	if val, err := strconv.ParseFloat(str, 64); err == nil {
+		return val, true
+	}
+	return 0, false
+}
+
+// tryParseBool 尝试解析布尔值
+func (qb *QueryBuilder) tryParseBool(str string) (bool, bool) {
+	str = strings.ToLower(strings.TrimSpace(str))
+	switch str {
+	case "true", "yes", "on", "1", "y", "t":
+		return true, true
+	case "false", "no", "off", "0", "n", "f":
+		return false, true
+	}
+	return false, false
+}
+
+// tryParseTime 尝试解析时间
+func (qb *QueryBuilder) tryParseTime(str string) (time.Time, bool) {
+	str = strings.TrimSpace(str)
+	if str == "" {
+		return time.Time{}, false
+	}
+
+	// 常见的时间格式
+	timeFormats := []string{
+		time.RFC3339,
+		time.RFC3339Nano,
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02T15:04:05.999999999",
+		"2006-01-02",
+		"15:04:05",
+		"2006/01/02 15:04:05",
+		"2006/01/02",
+		"01/02/2006",
+		"01-02-2006",
+	}
+
+	for _, format := range timeFormats {
+		if t, err := time.Parse(format, str); err == nil {
+			return t, true
+		}
+	}
+
+	// 尝试解析Unix时间戳
+	if qb.looksLikeTimestamp(str) {
+		if timestamp, err := strconv.ParseInt(str, 10, 64); err == nil {
+			// 区分秒级和毫秒级时间戳
+			if timestamp > 1e10 { // 毫秒级时间戳
+				return time.Unix(timestamp/1000, (timestamp%1000)*1000000), true
+			} else { // 秒级时间戳
+				return time.Unix(timestamp, 0), true
+			}
+		}
+	}
+
+	return time.Time{}, false
+}
+
+// tryParseJSON 尝试解析JSON
+func (qb *QueryBuilder) tryParseJSON(str string) (interface{}, bool) {
+	str = strings.TrimSpace(str)
+	if str == "" {
+		return nil, false
+	}
+
+	// 快速检查是否看起来像JSON
+	if !qb.looksLikeJSON(str) {
+		return nil, false
+	}
+
+	var result interface{}
+	if err := json.Unmarshal([]byte(str), &result); err == nil {
+		return result, true
+	}
+
+	return nil, false
+}
+
+// isUUID 检查是否是UUID格式
+func (qb *QueryBuilder) isUUID(str string) bool {
+	// UUID正则表达式
+	uuidRegex := regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
+	return uuidRegex.MatchString(str)
+}
+
+// shouldSkipBase64Decode 判断是否应该跳过Base64解码
+func (qb *QueryBuilder) shouldSkipBase64Decode(str string) bool {
+	// 1. 长度太短
+	if len(str) < 4 {
+		return true
+	}
+
+	// 2. 包含明显的非Base64特征
+	if strings.ContainsAny(str, "@./\\:") {
+		return true
+	}
+
+	// 3. 看起来像URL、邮箱等
+	if qb.looksLikeURL(str) || qb.looksLikeEmail(str) {
+		return true
+	}
+
+	// 4. 包含常见的中文词汇（避免误解码）
+	commonChineseWords := []string{"用户", "管理", "系统", "数据", "测试", "高级", "初级", "活跃", "状态"}
+	for _, word := range commonChineseWords {
+		if strings.Contains(str, word) {
+			return true
+		}
+	}
+
+	// 5. 如果包含中文字符，通常不是Base64
+	for _, r := range str {
+		if r > 127 { // 非ASCII字符
+			return true
+		}
+	}
+
+	return false
+}
+
+// looksLikeJSON 检查是否看起来像JSON
+func (qb *QueryBuilder) looksLikeJSON(str string) bool {
+	str = strings.TrimSpace(str)
+	return (strings.HasPrefix(str, "{") && strings.HasSuffix(str, "}")) ||
+		(strings.HasPrefix(str, "[") && strings.HasSuffix(str, "]"))
+}
+
+// looksLikeURL 检查是否看起来像URL
+func (qb *QueryBuilder) looksLikeURL(str string) bool {
+	return strings.HasPrefix(str, "http://") ||
+		strings.HasPrefix(str, "https://") ||
+		strings.HasPrefix(str, "ftp://") ||
+		strings.Contains(str, "://")
+}
+
+// looksLikeEmail 检查是否看起来像邮箱
+func (qb *QueryBuilder) looksLikeEmail(str string) bool {
+	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+	return emailRegex.MatchString(str)
+}
+
+// tryBase64DecodeIfText 只对真正的文本字段尝试Base64解码
+func (qb *QueryBuilder) tryBase64DecodeIfText(str string) string {
+	// 空字符串直接返回
+	if str == "" {
+		return str
+	}
+
+	// 检查是否符合Base64格式
+	if !qb.isValidBase64Format(str) {
+		return str
+	}
+
+	// 尝试解码
+	decoded, err := base64.StdEncoding.DecodeString(str)
+	if err != nil {
+		// 尝试URL安全的Base64解码
+		if decoded, err = base64.URLEncoding.DecodeString(str); err != nil {
+			return str
+		}
+	}
+
+	// 检查解码后的内容是否是有效的UTF-8
+	if !utf8.Valid(decoded) {
+		return str
+	}
+
+	decodedStr := string(decoded)
+
+	// 验证解码后的内容是否看起来像有意义的文本
+	if !qb.isDecodedTextMeaningful(decodedStr) {
+		return str
+	}
+
+	// 解码成功且内容合理，返回解码后的字符串
+	return decodedStr
+}
+
+// isValidBase64Format 检查是否是有效的Base64格式
+func (qb *QueryBuilder) isValidBase64Format(str string) bool {
+	// 长度必须是4的倍数（除非使用了填充）
+	if len(str) < 4 {
+		return false
+	}
+
+	// Base64字符集检查
+	base64Regex := regexp.MustCompile(`^[A-Za-z0-9+/]*={0,2}$`)
+	if !base64Regex.MatchString(str) {
+		// 尝试URL安全的Base64
+		base64URLRegex := regexp.MustCompile(`^[A-Za-z0-9_-]*={0,2}$`)
+		if !base64URLRegex.MatchString(str) {
+			return false
+		}
+	}
+
+	// 填充字符只能出现在末尾
+	if strings.Contains(str[:len(str)-2], "=") {
+		return false
+	}
+
+	return true
+}
+
+// isDecodedTextMeaningful 验证解码后的内容是否有意义
+func (qb *QueryBuilder) isDecodedTextMeaningful(decoded string) bool {
+	// 空字符串认为有效
+	if decoded == "" {
+		return true
+	}
+
+	// 长度检查：太短或太长都可能不是有意义的文本
+	if len(decoded) < 1 || len(decoded) > 10000 {
+		return false
+	}
+
+	// 检查控制字符比例
+	controlCharCount := 0
+	printableCharCount := 0
+
+	for _, r := range decoded {
+		if r < 32 && r != '\t' && r != '\n' && r != '\r' {
+			controlCharCount++
+		} else {
+			printableCharCount++
+		}
+	}
+
+	// 如果控制字符过多，可能不是文本
+	if controlCharCount > 0 && float64(controlCharCount)/float64(len(decoded)) > 0.1 {
+		return false
+	}
+
+	// 必须有可打印字符
+	if printableCharCount == 0 {
+		return false
+	}
+
+	// 检查是否包含常见的无意义字符序列
+	meaninglessPatterns := []string{
+		"\x00\x00\x00",                         // 连续的空字节
+		"\xff\xff\xff",                         // 连续的0xFF
+		string([]byte{0x89, 0x50, 0x4E, 0x47}), // PNG文件头
+		string([]byte{0xFF, 0xD8, 0xFF}),       // JPEG文件头
+		"BM",                                   // BMP文件头
+		"GIF",                                  // GIF文件头
+	}
+
+	for _, pattern := range meaninglessPatterns {
+		if strings.Contains(decoded, pattern) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// looksLikeTimestamp 检查字符串是否看起来像时间戳（保留用于时间解析）
+func (qb *QueryBuilder) looksLikeTimestamp(str string) bool {
+	// Unix时间戳通常是10位或13位数字
+	if len(str) == 10 || len(str) == 13 {
+		for _, c := range str {
+			if c < '0' || c > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // InTransaction 在事务中执行
