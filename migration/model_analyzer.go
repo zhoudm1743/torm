@@ -175,12 +175,33 @@ func (ma *ModelAnalyzer) ParseTormKeyValue(part string, column *ModelColumn) err
 		}
 	case "default":
 		defaultVal := ma.ParseDefaultValue(value)
-		column.Default = &defaultVal
+		column.Default = defaultVal
 	case "comment":
 		column.Comment = value
 	case "column", "db":
 		// 自定义列名支持 - column 和 db 标签都可以指定字段名
 		column.Name = value
+	case "foreign_key", "fk":
+		// 外键标记，值格式: "table.column" 或 "table(column)"
+		column.ForeignKey = value
+	case "references", "ref":
+		// 引用标记，外键表.字段
+		column.ForeignKey = value
+	case "on_delete":
+		// 删除时动作
+		column.OnDelete = strings.ToLower(value)
+	case "on_update":
+		// 更新时动作
+		column.OnUpdate = strings.ToLower(value)
+	case "generated":
+		// 生成列，值可以是 "virtual" 或 "stored"
+		column.Generated = strings.ToLower(value)
+	case "index":
+		// 带类型的索引: index:btree, index:hash, index:rtree
+		column.Index = true
+		if value != "" {
+			column.IndexType = strings.ToLower(value)
+		}
 	case "length", "len":
 		// 长度的别名支持
 		if size, err := strconv.Atoi(value); err == nil {
@@ -210,14 +231,14 @@ func (ma *ModelAnalyzer) ParseTormKeyValue(part string, column *ModelColumn) err
 	case "engine":
 		// 存储引擎 (仅MySQL相关)
 		// 这里先忽略，因为这是表级别的属性
-	case "auto_update", "on_update":
+	case "auto_update":
 		// ON UPDATE 子句
 		if strings.ToLower(value) == "current_timestamp" {
 			// 这是 auto_update_time 的另一种写法
 			column.NotNull = true
 			if column.Default == nil {
 				defaultVal := "CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"
-				column.Default = &defaultVal
+				column.Default = defaultVal
 			}
 		}
 	case "auto_create", "on_create":
@@ -226,7 +247,7 @@ func (ma *ModelAnalyzer) ParseTormKeyValue(part string, column *ModelColumn) err
 			column.NotNull = true
 			if column.Default == nil {
 				defaultVal := "CURRENT_TIMESTAMP"
-				column.Default = &defaultVal
+				column.Default = defaultVal
 			}
 		}
 	}
@@ -254,60 +275,91 @@ func (ma *ModelAnalyzer) ParseTormFlag(flag string, column *ModelColumn) {
 		column.NotNull = true
 		if column.Default == nil {
 			defaultVal := "CURRENT_TIMESTAMP"
-			column.Default = &defaultVal
+			column.Default = defaultVal
 		}
 	case "auto_update_time", "update_time", "updated_at", "auto_updated_at":
 		// 自动更新时间字段
 		column.NotNull = true
 		if column.Default == nil {
 			defaultVal := "CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"
-			column.Default = &defaultVal
+			column.Default = defaultVal
 		}
 	case "timestamp", "current_timestamp":
 		// 时间戳字段
 		column.NotNull = true
 		if column.Default == nil {
 			defaultVal := "CURRENT_TIMESTAMP"
-			column.Default = &defaultVal
+			column.Default = defaultVal
 		}
 	case "unsigned":
 		// 无符号数字类型 (主要用于MySQL)
-		// 这里可以通过修改类型名称来处理，但ModelColumn结构体没有专门的unsigned字段
-		// 可以考虑在类型名称后添加UNSIGNED
+		column.Unsigned = true
 	case "zerofill":
 		// 零填充 (主要用于MySQL)
-		// 类似unsigned，这里先忽略
+		column.Zerofill = true
 	case "binary":
 		// 二进制存储
-		// 类似上面，先忽略
+		column.Binary = true
 	case "index", "idx":
 		// 普通索引标记
-		// 由于ModelColumn结构体没有索引相关字段，这里先忽略
-		// 实际实现中需要在Table级别处理索引
+		column.Index = true
 	case "fulltext", "fulltext_index":
 		// 全文索引标记
-		// 这里先忽略，需要在Table级别处理
+		column.FulltextIndex = true
 	case "spatial", "spatial_index":
 		// 空间索引标记
-		// 这里先忽略，需要在Table级别处理
-	case "btree", "hash", "rtree":
-		// 索引类型标记
-		// 这里先忽略，需要在Table级别处理
+		column.SpatialIndex = true
+	case "btree":
+		// B-tree索引类型
+		column.IndexType = "btree"
+		column.Index = true
+	case "hash":
+		// Hash索引类型
+		column.IndexType = "hash"
+		column.Index = true
+	case "rtree":
+		// R-tree索引类型
+		column.IndexType = "rtree"
+		column.Index = true
 	case "foreign_key", "fk":
-		// 外键标记
-		// 这里先忽略，需要在Table级别处理外键关系
+		// 外键标记（无值版本，需要配合references使用）
+		// 具体的外键值在ParseTormKeyValue中处理
 	case "references", "ref":
-		// 引用标记
-		// 这里先忽略，需要在Table级别处理
+		// 引用标记（无值版本）
+		// 具体的引用值在ParseTormKeyValue中处理
 	case "on_delete_cascade", "cascade_delete":
 		// 级联删除
-		// 这里先忽略，外键相关
+		column.OnDelete = "cascade"
 	case "on_update_cascade", "cascade_update":
 		// 级联更新
-		// 这里先忽略，外键相关
-	case "generated", "virtual", "stored":
-		// 生成列标记
-		// 这里先忽略，需要扩展ModelColumn结构体
+		column.OnUpdate = "cascade"
+	case "on_delete_restrict", "restrict_delete":
+		// 限制删除
+		column.OnDelete = "restrict"
+	case "on_update_restrict", "restrict_update":
+		// 限制更新
+		column.OnUpdate = "restrict"
+	case "on_delete_set_null", "set_null_delete":
+		// 删除时设为NULL
+		column.OnDelete = "set null"
+	case "on_update_set_null", "set_null_update":
+		// 更新时设为NULL
+		column.OnUpdate = "set null"
+	case "on_delete_set_default", "set_default_delete":
+		// 删除时设为默认值
+		column.OnDelete = "set default"
+	case "on_update_set_default", "set_default_update":
+		// 更新时设为默认值
+		column.OnUpdate = "set default"
+	case "generated":
+		// 生成列（无值版本，默认虚拟列）
+		column.Generated = "virtual"
+	case "virtual":
+		// 虚拟生成列
+		column.Generated = "virtual"
+	case "stored":
+		// 存储生成列
+		column.Generated = "stored"
 	case "json", "is_json":
 		// JSON字段标记
 		if column.Type == "" {
@@ -315,13 +367,13 @@ func (ma *ModelAnalyzer) ParseTormFlag(flag string, column *ModelColumn) {
 		}
 	case "encrypted", "encrypt":
 		// 加密字段标记
-		// 这里先忽略，需要在应用层处理
+		column.Encrypted = true
 	case "hidden", "invisible":
 		// 隐藏字段标记
-		// 这里先忽略，需要扩展ModelColumn结构体
+		column.Hidden = true
 	case "readonly", "immutable":
 		// 只读字段标记
-		// 这里先忽略，需要在应用层处理
+		column.Readonly = true
 	}
 }
 
@@ -478,7 +530,7 @@ func (ma *ModelAnalyzer) parseLegacyTags(field reflect.StructField, column *Mode
 	// 默认值
 	if defaultVal := field.Tag.Get("default"); defaultVal != "" {
 		parsedDefault := ma.ParseDefaultValue(defaultVal)
-		column.Default = &parsedDefault
+		column.Default = parsedDefault
 	}
 
 	// 注释
@@ -500,7 +552,7 @@ func (ma *ModelAnalyzer) parseLegacyTags(field reflect.StructField, column *Mode
 		column.NotNull = true
 		if column.Default == nil {
 			defaultVal := "CURRENT_TIMESTAMP"
-			column.Default = &defaultVal
+			column.Default = defaultVal
 		}
 	}
 
@@ -509,7 +561,7 @@ func (ma *ModelAnalyzer) parseLegacyTags(field reflect.StructField, column *Mode
 		column.NotNull = true
 		if column.Default == nil {
 			defaultVal := "CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"
-			column.Default = &defaultVal
+			column.Default = defaultVal
 		}
 	}
 

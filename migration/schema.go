@@ -36,7 +36,48 @@ const (
 	ColumnTypeBoolean ColumnType = "BOOLEAN"
 	ColumnTypeBlob    ColumnType = "BLOB"
 	ColumnTypeJSON    ColumnType = "JSON"
+
+	// PostgreSQL SERIAL类型
+	ColumnTypeSerial      ColumnType = "SERIAL"
+	ColumnTypeBigSerial   ColumnType = "BIGSERIAL"
+	ColumnTypeSmallSerial ColumnType = "SMALLSERIAL"
 )
+
+// ModelColumn 模型列定义（用于分析器）
+type ModelColumn struct {
+	Name          string
+	Type          ColumnType
+	Length        int
+	Precision     int
+	Scale         int
+	NotNull       bool
+	PrimaryKey    bool
+	AutoIncrement bool
+	Default       interface{} // 默认值
+	Comment       string
+	GoType        string // Go语言中的类型
+	Unique        bool   // 是否唯一
+
+	// 扩展属性
+	Unsigned  bool   // 无符号数字类型 (MySQL)
+	Zerofill  bool   // 零填充 (MySQL)
+	Binary    bool   // 二进制存储
+	Encrypted bool   // 加密字段标记
+	Hidden    bool   // 隐藏字段
+	Readonly  bool   // 只读字段
+	Generated string // 生成列类型: "virtual", "stored", ""
+
+	// 索引相关
+	Index         bool   // 普通索引
+	FulltextIndex bool   // 全文索引
+	SpatialIndex  bool   // 空间索引
+	IndexType     string // 索引类型: "btree", "hash", "rtree"
+
+	// 外键相关
+	ForeignKey string // 外键表.字段
+	OnDelete   string // 删除时动作: "cascade", "restrict", "set null", "set default"
+	OnUpdate   string // 更新时动作: "cascade", "restrict", "set null", "set default"
+}
 
 // Column 列定义
 type Column struct {

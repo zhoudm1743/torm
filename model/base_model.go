@@ -1,860 +1,75 @@
 package model
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
-	"runtime"
 	"strings"
 	"time"
 
 	"github.com/zhoudm1743/torm/db"
-	"github.com/zhoudm1743/torm/logger"
 	"github.com/zhoudm1743/torm/migration"
 )
 
-// DeletedTime 软删除时间类型
-type DeletedTime struct {
-	*time.Time
-}
-
-// FieldTags 字段标签配置
-type FieldTags struct {
-	PrimaryKey     bool   // pk标签
-	AutoCreateTime bool   // autoCreateTime标签
-	AutoUpdateTime bool   // autoUpdateTime标签
-	SoftDelete     bool   // 软删除字段
-	FieldName      string // db字段名
-}
-
-// ModelMetadata 模型元数据
-type ModelMetadata struct {
-	TableName      string
-	PrimaryKeys    []string
-	CreatedAtField string
-	UpdatedAtField string
-	DeletedAtField string
-	HasTimestamps  bool
-	HasSoftDeletes bool
-	FieldTags      map[string]*FieldTags
-}
-
-// ParseModelTags 解析模型标签
-func ParseModelTags(model interface{}) *ModelMetadata {
-	metadata := &ModelMetadata{
-		FieldTags: make(map[string]*FieldTags),
-	}
-
-	// 处理nil输入
-	if model == nil {
-		// 返回默认配置
-		metadata.PrimaryKeys = []string{"id"}
-		return metadata
-	}
-
-	modelType := reflect.TypeOf(model)
-	if modelType == nil {
-		// 返回默认配置
-		metadata.PrimaryKeys = []string{"id"}
-		return metadata
-	}
-
-	if modelType.Kind() == reflect.Ptr {
-		modelType = modelType.Elem()
-	}
-
-	// 如果解引用后仍然为nil，返回默认配置
-	if modelType == nil {
-		metadata.PrimaryKeys = []string{"id"}
-		return metadata
-	}
-
-	for i := 0; i < modelType.NumField(); i++ {
-		field := modelType.Field(i)
-
-		// 跳过BaseModel字段
-		if field.Name == "BaseModel" {
-			continue
-		}
-
-		tags := &FieldTags{}
-
-		// 解析db标签
-		dbTag := field.Tag.Get("db")
-		if dbTag != "" && dbTag != "-" {
-			// 解析db标签中的选项，如 "created_at;autoCreateTime"
-			parts := strings.Split(dbTag, ";")
-			tags.FieldName = parts[0]
-
-			for _, part := range parts[1:] {
-				switch part {
-				case "autoCreateTime":
-					tags.AutoCreateTime = true
-					metadata.HasTimestamps = true
-					metadata.CreatedAtField = tags.FieldName
-				case "autoUpdateTime":
-					tags.AutoUpdateTime = true
-					metadata.HasTimestamps = true
-					metadata.UpdatedAtField = tags.FieldName
-				}
-			}
-		} else {
-			// 如果没有db标签，使用字段名的小写形式
-			tags.FieldName = strings.ToLower(field.Name)
-		}
-
-		// 解析pk标签
-		// 使用Lookup检查是否存在pk标签，支持 pk="true", pk="", pk
-		_, hasPKTag := field.Tag.Lookup("pk")
-		if hasPKTag {
-			// 如果有pk标签（不管值是什么），则认为是主键
-			tags.PrimaryKey = true
-			metadata.PrimaryKeys = append(metadata.PrimaryKeys, tags.FieldName)
-		}
-
-		// 检查软删除字段
-		if field.Type == reflect.TypeOf(DeletedTime{}) {
-			tags.SoftDelete = true
-			metadata.HasSoftDeletes = true
-			metadata.DeletedAtField = tags.FieldName
-		}
-
-		metadata.FieldTags[field.Name] = tags
-	}
-
-	// 推断表名
-	if metadata.TableName == "" {
-		modelName := modelType.Name()
-		metadata.TableName = strings.ToLower(modelName) + "s" // 简单复数形式
-	}
-
-	// 如果没有主键，默认使用id
-	if len(metadata.PrimaryKeys) == 0 {
-		metadata.PrimaryKeys = []string{"id"}
-	}
-
-	return metadata
-}
-
-// BaseModel 基础模型
+// BaseModel 基础模型 - 极简化版本
 type BaseModel struct {
-	// 数据库连接名
+	// 基础配置
+	tableName  string
+	primaryKey string
 	connection string
-	// 表名
-	tableName string
-	// 主键字段（支持复合主键）
-	primaryKeys []string
-	// 模型属性
 	attributes map[string]interface{}
-	// 原始属性（用于检测变更）
-	original map[string]interface{}
-	// 关联数据
-	relations map[string]interface{}
-	// 是否为新记录
-	isNew bool
-	// 是否存在于数据库中
+
+	// 状态
 	exists bool
-	// 时间戳字段
+
+	// 时间戳
 	timestamps bool
 	createdAt  string
 	updatedAt  string
+
 	// 软删除
 	softDeletes bool
 	deletedAt   string
-	// 内置查询构建器
-	queryBuilder db.QueryInterface
-	// 模型结构体类型（用于自动迁移）
-	modelType reflect.Type
-	// 上下文提示信息（用于智能检测）
-	contextHints map[string]interface{}
-	// 日志记录器
-	logger *logger.Logger
-	// 启用自动检测回退机制
-	enableAutoDetectionFallback bool
 }
 
-// NewBaseModel 创建基础模型实例
-// 现在支持自动检测！无需手动设置模型结构
+// NewBaseModel 创建新的基础模型
 func NewBaseModel() *BaseModel {
-	baseModel := &BaseModel{
-		connection:   "default",
-		primaryKeys:  []string{"id"},
-		attributes:   make(map[string]interface{}),
-		original:     make(map[string]interface{}),
-		relations:    make(map[string]interface{}),
-		isNew:        true,
-		exists:       false,
-		timestamps:   true,
-		createdAt:    "created_at",
-		updatedAt:    "updated_at",
-		softDeletes:  false,
-		deletedAt:    "deleted_at",
-		queryBuilder: nil, // 延迟初始化，当第一次使用时创建
-		contextHints: make(map[string]interface{}),
-		logger:       logger.NewLogger(logger.INFO), // 默认INFO级别
+	return &BaseModel{
+		connection:  "default",
+		primaryKey:  "id",
+		attributes:  make(map[string]interface{}),
+		exists:      false,
+		timestamps:  true,
+		createdAt:   "created_at",
+		updatedAt:   "updated_at",
+		softDeletes: false,
+		deletedAt:   "deleted_at",
 	}
-
-	// 启用智能自动检测
-	baseModel.enableAutoDetectionFallback = true
-
-	// 设置延迟检测标记，在AutoMigrate时自动检测模型结构
-	baseModel.setContextHint("auto_detect_on_migrate", true)
-
-	return baseModel
 }
 
-// NewBaseModelWithDefaultDetection 创建基础模型实例并尝试默认检测配置
-// 这个方法会在运行时尝试智能检测调用者的模型实例
-func NewBaseModelWithDefaultDetection() *BaseModel {
-	baseModel := NewBaseModel()
+// 配置方法
 
-	// 尝试通过调用栈智能检测模型类型
-	// 这是一个高级功能，用于简化用户代码
-	if modelInstance := baseModel.tryAutoDetectModelFromStack(); modelInstance != nil {
-		baseModel.DetectConfigFromStruct(modelInstance)
-	}
-
-	return baseModel
-}
-
-// NewBaseModelWithAutoDetect 创建基础模型实例并自动检测配置
-// 推荐在模型构造函数中使用此方法
-func NewBaseModelWithAutoDetect(modelInstance interface{}) *BaseModel {
-	baseModel := NewBaseModel()
-
-	// 🔥 关键修复：设置模型结构类型信息（用于AutoMigrate）
-	modelType := reflect.TypeOf(modelInstance)
-	if modelType.Kind() == reflect.Ptr {
-		modelType = modelType.Elem()
-	}
-	baseModel.SetModelStruct(modelType)
-
-	// 自动检测配置
-	baseModel.DetectConfigFromStruct(modelInstance)
-
-	return baseModel
-}
-
-// NewAutoMigrateModel 创建支持自动迁移的BaseModel
-// 这个方法会同时设置模型结构和检测配置，完全支持AutoMigrate功能
-func NewAutoMigrateModel(modelInstance interface{}) *BaseModel {
-	baseModel := NewBaseModel()
-
-	// 设置模型结构类型
-	modelType := reflect.TypeOf(modelInstance)
-	if modelType.Kind() == reflect.Ptr {
-		modelType = modelType.Elem()
-	}
-	baseModel.SetModelStruct(modelType)
-
-	// 调用传统的DetectConfigFromStruct以保持兼容性
-	baseModel.DetectConfigFromStruct(modelInstance)
-
-	return baseModel
+// SetTable 设置表名
+func (m *BaseModel) SetTable(tableName string) *BaseModel {
+	m.tableName = tableName
+	return m
 }
 
 // TableName 获取表名
 func (m *BaseModel) TableName() string {
-	if m.tableName != "" {
-		return m.tableName
-	}
-	// 如果没有设置表名，返回空字符串，让外部推断
-	// 注意：这里不做推断是因为BaseModel没有上下文知道自己被嵌入到哪个结构体中
-	return ""
+	return m.tableName
 }
 
-// SetTable 设置表名
-func (m *BaseModel) SetTable(table string) *BaseModel {
-	m.tableName = table
-	return m
-}
-
-// PrimaryKey 获取主键字段名
-func (m *BaseModel) PrimaryKey() string {
-	if len(m.primaryKeys) > 0 {
-		return m.primaryKeys[0]
-	}
-	return ""
-}
-
-// SetPrimaryKey 设置主键字段名
+// SetPrimaryKey 设置主键
 func (m *BaseModel) SetPrimaryKey(key string) *BaseModel {
-	m.primaryKeys = []string{key}
+	m.primaryKey = key
 	return m
 }
 
-// PrimaryKeys 获取所有主键字段名
-func (m *BaseModel) PrimaryKeys() []string {
-	return m.primaryKeys
-}
-
-// SetPrimaryKeys 设置多个主键字段名（复合主键）
-func (m *BaseModel) SetPrimaryKeys(keys []string) *BaseModel {
-	m.primaryKeys = keys
-	return m
-}
-
-// HasCompositePrimaryKey 检查是否有复合主键
-func (m *BaseModel) HasCompositePrimaryKey() bool {
-	return len(m.primaryKeys) > 1
-}
-
-// GetPrimaryKeyValues 获取所有主键的值（用于复合主键）
-func (m *BaseModel) GetPrimaryKeyValues() map[string]interface{} {
-	values := make(map[string]interface{})
-	for _, key := range m.primaryKeys {
-		values[key] = m.GetAttribute(key)
-	}
-	return values
-}
-
-// SetPrimaryKeyValues 设置所有主键的值（用于复合主键）
-func (m *BaseModel) SetPrimaryKeyValues(values map[string]interface{}) *BaseModel {
-	for key, value := range values {
-		if m.containsKey(key) {
-			m.SetAttribute(key, value)
-		}
-	}
-	return m
-}
-
-// containsKey 检查键是否在主键列表中
-func (m *BaseModel) containsKey(key string) bool {
-	for _, pk := range m.primaryKeys {
-		if pk == key {
-			return true
-		}
-	}
-	return false
-}
-
-// DetectPrimaryKeysFromStruct 从结构体标签中检测主键字段
-func (m *BaseModel) DetectPrimaryKeysFromStruct(structValue interface{}) *BaseModel {
-	val := reflect.ValueOf(structValue)
-	if val.Kind() == reflect.Ptr {
-		val = val.Elem()
-	}
-
-	typ := val.Type()
-	var primaryKeys []string
-
-	for i := 0; i < typ.NumField(); i++ {
-		field := typ.Field(i)
-
-		// 跳过BaseModel字段
-		if field.Name == "BaseModel" {
-			continue
-		}
-
-		// 检查primary标签
-		if primaryTag := field.Tag.Get("primary"); primaryTag == "true" {
-			// 确定字段名
-			fieldName := ""
-			if dbTag := field.Tag.Get("db"); dbTag != "" && dbTag != "-" {
-				fieldName = dbTag
-			} else if jsonTag := field.Tag.Get("json"); jsonTag != "" && jsonTag != "-" {
-				fieldName = jsonTag
-			} else {
-				fieldName = strings.ToLower(field.Name)
-			}
-
-			primaryKeys = append(primaryKeys, fieldName)
-		}
-	}
-
-	// 如果找到了主键标签，使用它们
-	if len(primaryKeys) > 0 {
-		m.primaryKeys = primaryKeys
-	}
-	// 否则保持默认的["id"]
-
-	return m
-}
-
-// DetectConfigFromStruct 从结构体标签中检测完整配置（时间戳、软删除等）
-// 结构体标签优先级高于BaseModel基础配置
-func (m *BaseModel) DetectConfigFromStruct(structValue interface{}) *BaseModel {
-	metadata := ParseModelTags(structValue)
-
-	// 保存模型结构体类型信息（用于 AutoMigrate）
-	modelType := reflect.TypeOf(structValue)
-	if modelType.Kind() == reflect.Ptr {
-		modelType = modelType.Elem()
-	}
-	m.modelType = modelType
-
-	// 更新主键配置
-	if len(metadata.PrimaryKeys) > 0 {
-		m.primaryKeys = metadata.PrimaryKeys
-	}
-
-	// 更新时间戳配置 - 结构体标签优先级更高
-	if metadata.HasTimestamps {
-		m.timestamps = true
-		if metadata.CreatedAtField != "" {
-			m.createdAt = metadata.CreatedAtField
-		}
-		if metadata.UpdatedAtField != "" {
-			m.updatedAt = metadata.UpdatedAtField
-		}
-	}
-
-	// 更新软删除配置 - 结构体标签优先级更高
-	if metadata.HasSoftDeletes {
-		m.softDeletes = true
-		if metadata.DeletedAtField != "" {
-			m.deletedAt = metadata.DeletedAtField
-		}
-	}
-
-	// 设置表名（如果模型没有设置的话）
-	if m.tableName == "" {
-		m.tableName = metadata.TableName
-	}
-
-	return m
-}
-
-// GetConnection 获取连接名
-func (m *BaseModel) GetConnection() string {
-	return m.connection
-}
-
-// SetConnection 设置连接名
+// SetConnection 设置数据库连接
 func (m *BaseModel) SetConnection(connection string) *BaseModel {
 	m.connection = connection
 	return m
-}
-
-// GetAttribute 获取属性值
-func (m *BaseModel) GetAttribute(key string) interface{} {
-	return m.attributes[key]
-}
-
-// SetAttribute 设置属性值
-func (m *BaseModel) SetAttribute(key string, value interface{}) {
-	// 如果值是 []byte 类型，转换为字符串
-	if bytes, ok := value.([]byte); ok {
-		m.attributes[key] = string(bytes)
-	} else {
-		m.attributes[key] = value
-	}
-}
-
-// GetAttributes 获取所有属性
-func (m *BaseModel) GetAttributes() map[string]interface{} {
-	return m.attributes
-}
-
-// SetAttributes 设置多个属性
-func (m *BaseModel) SetAttributes(attributes map[string]interface{}) {
-	for key, value := range attributes {
-		// 如果值是 []byte 类型，转换为字符串
-		if bytes, ok := value.([]byte); ok {
-			m.attributes[key] = string(bytes)
-		} else {
-			m.attributes[key] = value
-		}
-	}
-}
-
-// IsNew 检查是否为新记录
-func (m *BaseModel) IsNew() bool {
-	return m.isNew
-}
-
-// Exists 检查是否存在于数据库中
-func (m *BaseModel) Exists() bool {
-	return m.exists
-}
-
-// IsDirty 检查是否有未保存的更改
-func (m *BaseModel) IsDirty() bool {
-	return len(m.GetDirty()) > 0
-}
-
-// GetDirty 获取已更改的属性
-func (m *BaseModel) GetDirty() map[string]interface{} {
-	dirty := make(map[string]interface{})
-
-	for key, value := range m.attributes {
-		if original, exists := m.original[key]; !exists || !reflect.DeepEqual(value, original) {
-			dirty[key] = value
-		}
-	}
-
-	return dirty
-}
-
-// Fill 批量赋值
-func (m *BaseModel) Fill(attributes map[string]interface{}) *BaseModel {
-	m.SetAttributes(attributes)
-	return m
-}
-
-// Save 保存模型到数据库
-func (m *BaseModel) Save() error {
-	if m.isNew {
-		return m.create()
-	}
-	return m.update()
-}
-
-// create 创建新记录
-func (m *BaseModel) create() error {
-	// 添加时间戳
-	if m.timestamps {
-		now := time.Now()
-		if m.createdAt != "" && m.GetAttribute(m.createdAt) == nil {
-			m.SetAttribute(m.createdAt, now)
-		}
-		if m.updatedAt != "" && m.GetAttribute(m.updatedAt) == nil {
-			m.SetAttribute(m.updatedAt, now)
-		}
-	}
-
-	// 执行 before_create 钩子
-	if err := m.BeforeCreate(); err != nil {
-		return err
-	}
-
-	// 执行 before_save 钩子
-	if err := m.BeforeSave(); err != nil {
-		return err
-	}
-
-	// 获取查询构造器
-	query, err := db.Table(m.TableName(), m.connection)
-	if err != nil {
-		return err
-	}
-
-	// 插入数据
-	id, err := query.Insert(m.attributes)
-	if err != nil {
-		return err
-	}
-
-	// 设置主键值
-	m.SetAttribute(m.PrimaryKey(), id)
-
-	// 更新状态
-	m.isNew = false
-	m.exists = true
-	m.syncOriginal()
-
-	// 执行 after_create 钩子
-	if err := m.AfterCreate(); err != nil {
-		return err
-	}
-
-	// 执行 after_save 钩子
-	return m.AfterSave()
-}
-
-// update 更新记录
-func (m *BaseModel) update() error {
-	dirty := m.GetDirty()
-	if len(dirty) == 0 {
-		return nil // 没有更改，无需更新
-	}
-
-	// 添加更新时间戳
-	if m.timestamps && m.updatedAt != "" {
-		dirty[m.updatedAt] = time.Now()
-		m.SetAttribute(m.updatedAt, dirty[m.updatedAt])
-	}
-
-	// 执行 before_update 钩子
-	if err := m.BeforeUpdate(); err != nil {
-		return err
-	}
-
-	// 执行 before_save 钩子
-	if err := m.BeforeSave(); err != nil {
-		return err
-	}
-
-	// 获取查询构造器
-	query, err := db.Table(m.TableName(), m.connection)
-	if err != nil {
-		return err
-	}
-
-	// 更新数据
-	pkValue := m.GetAttribute(m.PrimaryKey())
-	if pkValue == nil {
-		return fmt.Errorf("更新操作需要主键值")
-	}
-
-	_, err = query.Where(m.PrimaryKey(), "=", pkValue).Update(dirty)
-	if err != nil {
-		return err
-	}
-
-	// 同步原始数据
-	m.syncOriginal()
-
-	// 执行 after_update 钩子
-	if err := m.AfterUpdate(); err != nil {
-		return err
-	}
-
-	// 执行 after_save 钩子
-	return m.AfterSave()
-}
-
-// Delete 删除记录 - 支持两种调用方式
-// 1. Delete() - 删除当前模型实例
-// 2. 链式调用如 Where(...).Delete() - 批量删除
-func (m *BaseModel) Delete() (interface{}, error) {
-	// 如果有查询条件，执行批量删除
-	if m.queryBuilder != nil {
-		return m.deleteBatch()
-	}
-
-	// 否则删除当前模型实例
-	return nil, m.deleteCurrentModel()
-}
-
-// deleteCurrentModel 删除当前模型实例
-func (m *BaseModel) deleteCurrentModel() error {
-	if m.isNew {
-		return fmt.Errorf("无法删除未保存的模型")
-	}
-
-	// 执行 before_delete 钩子
-	if err := m.BeforeDelete(); err != nil {
-		return err
-	}
-
-	// 获取查询构造器
-	query, err := db.Table(m.TableName(), m.connection)
-	if err != nil {
-		return err
-	}
-
-	// 构建主键条件
-	query = m.buildPrimaryKeyConditions(query)
-	if query == nil {
-		return fmt.Errorf("删除操作需要主键值")
-	}
-
-	if m.softDeletes {
-		// 软删除
-		deleteData := map[string]interface{}{
-			m.deletedAt: time.Now(),
-		}
-		_, err = query.Update(deleteData)
-		if err != nil {
-			return err
-		}
-		m.SetAttribute(m.deletedAt, time.Now())
-	} else {
-		// 硬删除
-		_, err = query.Delete()
-		if err != nil {
-			return err
-		}
-		m.exists = false
-	}
-
-	// 执行 after_delete 钩子
-	return m.AfterDelete()
-}
-
-// deleteBatch 批量删除记录 - 适配db.Delete
-func (m *BaseModel) deleteBatch() (int64, error) {
-	query := m.getQueryBuilder()
-	if query == nil {
-		return 0, fmt.Errorf("创建查询构建器失败")
-	}
-
-	var result int64
-	var err error
-
-	if m.softDeletes {
-		// 软删除：更新deleted_at字段
-		deleteData := map[string]interface{}{
-			m.deletedAt: time.Now(),
-		}
-		result, err = query.Update(deleteData)
-	} else {
-		// 硬删除
-		result, err = query.Delete()
-	}
-
-	m.resetQueryBuilder() // 执行后重置查询构建器
-	return result, err
-}
-
-// Reload 重新加载模型数据
-func (m *BaseModel) Reload() error {
-	if m.isNew {
-		return fmt.Errorf("无法重新加载未保存的模型")
-	}
-
-	pkValue := m.GetAttribute(m.PrimaryKey())
-	if pkValue == nil {
-		return fmt.Errorf("重新加载操作需要主键值")
-	}
-
-	// 获取查询构造器
-	query, err := db.Table(m.TableName(), m.connection)
-	if err != nil {
-		return err
-	}
-
-	// 查询数据
-	data, err := query.Where(m.PrimaryKey(), "=", pkValue).First()
-	if err != nil {
-		return err
-	}
-
-	// 更新属性
-	m.attributes = data
-	m.syncOriginal()
-
-	return nil
-}
-
-// syncOriginal 同步原始数据
-func (m *BaseModel) syncOriginal() {
-	m.original = make(map[string]interface{})
-	for key, value := range m.attributes {
-		m.original[key] = value
-	}
-}
-
-// Find 查找记录 - 支持多种调用方式
-// 1. Find(id, dest...) - 根据主键查找
-// 2. Find(dest) - 根据之前的Where条件查找
-// 返回原始的map数据
-func (m *BaseModel) Find(args ...interface{}) (map[string]interface{}, error) {
-	var data map[string]interface{}
-	var err error
-
-	if len(args) == 0 {
-		return nil, fmt.Errorf("Find() 需要至少一个参数")
-	}
-
-	// 判断调用方式
-	firstArg := args[0]
-
-	// 如果第一个参数是指针类型，说明是Find(dest)方式
-	if reflect.TypeOf(firstArg).Kind() == reflect.Ptr {
-		// 使用现有的查询条件查找
-		query := m.getQueryBuilder()
-		if query == nil {
-			return nil, fmt.Errorf("创建查询构建器失败")
-		}
-
-		data, err = query.First()
-		m.resetQueryBuilder() // 执行后重置查询构建器
-
-		if err != nil {
-			return nil, err
-		}
-
-		// 填充到指针指向的对象
-		err = m.LoadModel(firstArg, data)
-		if err != nil {
-			return data, fmt.Errorf("加载模型失败: %w", err)
-		}
-	} else {
-		// 否则是Find(id, dest...)方式
-		id := firstArg
-		query, err := db.Table(m.TableName(), m.connection)
-		if err != nil {
-			return nil, err
-		}
-
-		data, err = query.Where(m.PrimaryKey(), "=", id).First()
-		if err != nil {
-			return nil, err
-		}
-
-		// 如果有第二个参数且是指针，填充到指针指向的对象
-		if len(args) > 1 && args[1] != nil {
-			if reflect.TypeOf(args[1]).Kind() == reflect.Ptr {
-				err = m.LoadModel(args[1], data)
-				if err != nil {
-					return data, fmt.Errorf("加载模型失败: %w", err)
-				}
-			}
-		}
-	}
-
-	// 填充当前模型属性
-	m.attributes = data
-	m.syncOriginal()
-	m.isNew = false
-	m.exists = true
-
-	// 执行 after_read 钩子
-	err = m.AfterRead()
-	return data, err
-}
-
-// NewQuery 创建查询构造器
-func (m *BaseModel) NewQuery() (db.QueryInterface, error) {
-	query, err := db.Table(m.TableName(), m.connection)
-	if err != nil {
-		return nil, err
-	}
-
-	// 如果启用软删除，自动添加条件
-	if m.softDeletes {
-		query = query.WhereNull(m.deletedAt)
-	}
-
-	return query, nil
-}
-
-// 事件钩子方法（可被子类重写）
-
-// BeforeSave 保存前钩子
-func (m *BaseModel) BeforeSave() error {
-	return nil
-}
-
-// AfterSave 保存后钩子
-func (m *BaseModel) AfterSave() error {
-	return nil
-}
-
-// BeforeCreate 创建前钩子
-func (m *BaseModel) BeforeCreate() error {
-	return nil
-}
-
-// AfterCreate 创建后钩子
-func (m *BaseModel) AfterCreate() error {
-	return nil
-}
-
-// BeforeUpdate 更新前钩子
-func (m *BaseModel) BeforeUpdate() error {
-	return nil
-}
-
-// AfterUpdate 更新后钩子
-func (m *BaseModel) AfterUpdate() error {
-	return nil
-}
-
-// BeforeDelete 删除前钩子
-func (m *BaseModel) BeforeDelete() error {
-	return nil
-}
-
-// AfterDelete 删除后钩子
-func (m *BaseModel) AfterDelete() error {
-	return nil
-}
-
-// AfterRead 读取后钩子
-func (m *BaseModel) AfterRead() error {
-	return nil
 }
 
 // EnableTimestamps 启用时间戳
@@ -875,2353 +90,321 @@ func (m *BaseModel) EnableSoftDeletes() *BaseModel {
 	return m
 }
 
-// DisableSoftDeletes 禁用软删除
-func (m *BaseModel) DisableSoftDeletes() *BaseModel {
-	m.softDeletes = false
+// 属性方法
+
+// SetAttribute 设置属性
+func (m *BaseModel) SetAttribute(key string, value interface{}) *BaseModel {
+	m.attributes[key] = value
 	return m
 }
 
-// ToMap 转换为map
+// GetAttribute 获取属性
+func (m *BaseModel) GetAttribute(key string) interface{} {
+	return m.attributes[key]
+}
+
+// GetAttributes 获取所有属性
+func (m *BaseModel) GetAttributes() map[string]interface{} {
+	return m.attributes
+}
+
+// Fill 批量设置属性
+func (m *BaseModel) Fill(data map[string]interface{}) *BaseModel {
+	for key, value := range data {
+		m.attributes[key] = value
+	}
+	return m
+}
+
+// ToMap 转换为Map
 func (m *BaseModel) ToMap() map[string]interface{} {
-	result := make(map[string]interface{})
-	for key, value := range m.attributes {
-		result[key] = value
+	return m.attributes
+}
+
+// ToJSON 转换为JSON
+func (m *BaseModel) ToJSON() (string, error) {
+	data, err := json.Marshal(m.attributes)
+	if err != nil {
+		return "", err
 	}
-	return result
+	return string(data), nil
 }
 
-// SetRelation 设置关联数据
-func (m *BaseModel) SetRelation(name string, value interface{}) {
-	m.relations[name] = value
+// GetKey 获取主键值
+func (m *BaseModel) GetKey() interface{} {
+	return m.attributes[m.primaryKey]
 }
 
-// GetRelation 获取关联数据
-func (m *BaseModel) GetRelation(name string) interface{} {
-	return m.relations[name]
-}
+// 查询方法 - 基于查询构建器
 
-// GetRelations 获取所有关联数据
-func (m *BaseModel) GetRelations() map[string]interface{} {
-	return m.relations
-}
-
-// HasRelation 检查是否存在关联
-func (m *BaseModel) HasRelation(name string) bool {
-	_, exists := m.relations[name]
-	return exists
-}
-
-// String 字符串表示
-func (m *BaseModel) String() string {
-	var parts []string
-	for key, value := range m.attributes {
-		parts = append(parts, fmt.Sprintf("%s: %v", key, value))
-	}
-	return fmt.Sprintf("%s{%s}", m.TableName(), strings.Join(parts, ", "))
-}
-
-// ===== 查询构建器便捷方法 =====
-
-// GetQueryBuilder 获取查询构建器（公共方法）
-func (m *BaseModel) GetQueryBuilder() db.QueryInterface {
-	return m.getQueryBuilder()
-}
-
-// getQueryBuilder 获取或创建内置查询构建器
-func (m *BaseModel) getQueryBuilder() db.QueryInterface {
-	if m.queryBuilder == nil {
-		query, err := db.Table(m.TableName(), m.connection)
-		if err != nil {
-			// 如果创建失败，返回 nil，调用方需要处理错误
-			return nil
-		}
-
-		// 如果启用软删除，自动添加条件
-		if m.softDeletes {
-			query = query.WhereNull(m.deletedAt)
-		}
-
-		m.queryBuilder = query
-	}
-	return m.queryBuilder
-}
-
-// resetQueryBuilder 重置查询构建器（用于新查询）
-func (m *BaseModel) resetQueryBuilder() {
-	m.queryBuilder = nil
-}
-
-// Where 添加WHERE条件 - 返回自身便于链式调用
-// 支持两种调用方式:
-// 1. Where(field, operator, value) - 传统三参数方式
-// 2. Where(condition, args...) - 参数化查询方式
-func (m *BaseModel) Where(args ...interface{}) *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		m.queryBuilder = query.Where(args...)
-	}
-	return m
-}
-
-// OrWhere 添加OR WHERE条件 - 返回自身便于链式调用
-// 支持两种调用方式:
-// 1. OrWhere(field, operator, value) - 传统三参数方式
-// 2. OrWhere(condition, args...) - 参数化查询方式
-func (m *BaseModel) OrWhere(args ...interface{}) *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		m.queryBuilder = query.OrWhere(args...)
-	}
-	return m
-}
-
-// WhereIn 添加WHERE IN条件
-func (m *BaseModel) WhereIn(field string, values []interface{}) *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		m.queryBuilder = query.WhereIn(field, values)
-	}
-	return m
-}
-
-// WhereNull 添加WHERE NULL条件
-func (m *BaseModel) WhereNull(field string) *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		m.queryBuilder = query.WhereNull(field)
-	}
-	return m
-}
-
-// WhereNotNull 添加WHERE NOT NULL条件
-func (m *BaseModel) WhereNotNull(field string) *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		m.queryBuilder = query.WhereNotNull(field)
-	}
-	return m
-}
-
-// WhereBetween 添加WHERE BETWEEN条件
-func (m *BaseModel) WhereBetween(field string, values []interface{}) *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		m.queryBuilder = query.WhereBetween(field, values)
-	}
-	return m
-}
-
-// WhereNotBetween 添加WHERE NOT BETWEEN条件
-func (m *BaseModel) WhereNotBetween(field string, values []interface{}) *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		m.queryBuilder = query.WhereNotBetween(field, values)
-	}
-	return m
-}
-
-// WhereExists 添加WHERE EXISTS条件
-func (m *BaseModel) WhereExists(subQuery interface{}) *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		m.queryBuilder = query.WhereExists(subQuery)
-	}
-	return m
-}
-
-// WhereNotExists 添加WHERE NOT EXISTS条件
-func (m *BaseModel) WhereNotExists(subQuery interface{}) *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		m.queryBuilder = query.WhereNotExists(subQuery)
-	}
-	return m
-}
-
-// OrderRand 随机排序
-func (m *BaseModel) OrderRand() *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		m.queryBuilder = query.OrderRand()
-	}
-	return m
-}
-
-// OrderField 按字段值排序
-func (m *BaseModel) OrderField(field string, values []interface{}, direction string) *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		m.queryBuilder = query.OrderField(field, values, direction)
-	}
-	return m
-}
-
-// FieldRaw 添加原生字段表达式
-func (m *BaseModel) FieldRaw(raw string, bindings ...interface{}) *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		m.queryBuilder = query.FieldRaw(raw, bindings...)
-	}
-	return m
-}
-
-// WhereRaw 添加原生WHERE条件
-func (m *BaseModel) WhereRaw(raw string, bindings ...interface{}) *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		m.queryBuilder = query.WhereRaw(raw, bindings...)
-	}
-	return m
-}
-
-// OrderBy 添加排序
-func (m *BaseModel) OrderBy(field string, direction string) *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		m.queryBuilder = query.OrderBy(field, direction)
-	}
-	return m
-}
-
-// OrderByRaw 原生ORDER BY - 适配db.OrderByRaw
-func (m *BaseModel) OrderByRaw(raw string, bindings ...interface{}) *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		m.queryBuilder = query.OrderByRaw(raw, bindings...)
-	}
-	return m
-}
-
-// Limit 限制结果数量
-func (m *BaseModel) Limit(limit int) *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		m.queryBuilder = query.Limit(limit)
-	}
-	return m
-}
-
-// Offset 设置偏移量
-func (m *BaseModel) Offset(offset int) *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		m.queryBuilder = query.Offset(offset)
-	}
-	return m
-}
-
-// Select 指定查询字段
-func (m *BaseModel) Select(fields ...string) *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		m.queryBuilder = query.Select(fields...)
-	}
-	return m
-}
-
-// SelectRaw 原生SELECT字段 - 适配db.SelectRaw
-func (m *BaseModel) SelectRaw(raw string, bindings ...interface{}) *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		m.queryBuilder = query.SelectRaw(raw, bindings...)
-	}
-	return m
-}
-
-// Distinct 去重查询 - 适配db.Distinct
-func (m *BaseModel) Distinct() *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		m.queryBuilder = query.Distinct()
-	}
-	return m
-}
-
-// GroupBy 添加分组
-func (m *BaseModel) GroupBy(fields ...string) *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		m.queryBuilder = query.GroupBy(fields...)
-	}
-	return m
-}
-
-// Having 添加HAVING条件
-func (m *BaseModel) Having(field string, operator string, value interface{}) *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		m.queryBuilder = query.Having(field, operator, value)
-	}
-	return m
-}
-
-// ===== JOIN查询方法 - 适配db包的Join功能 =====
-// 注意：JOIN操作自动基于当前模型表，无需手动指定主表
-
-// Join 内连接 - 适配db.Join
-// first/second参数中如果不包含表名，会自动使用当前模型表名
-func (m *BaseModel) Join(table string, first string, operator string, second string) *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		// 智能处理字段名：如果字段名不包含表名，自动添加当前模型表名
-		first = m.qualifyColumn(first)
-		second = m.qualifyColumn(second)
-		m.queryBuilder = query.Join(table, first, operator, second)
-	}
-	return m
-}
-
-// LeftJoin 左连接 - 适配db.LeftJoin
-func (m *BaseModel) LeftJoin(table string, first string, operator string, second string) *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		first = m.qualifyColumn(first)
-		second = m.qualifyColumn(second)
-		m.queryBuilder = query.LeftJoin(table, first, operator, second)
-	}
-	return m
-}
-
-// RightJoin 右连接 - 适配db.RightJoin
-func (m *BaseModel) RightJoin(table string, first string, operator string, second string) *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		first = m.qualifyColumn(first)
-		second = m.qualifyColumn(second)
-		m.queryBuilder = query.RightJoin(table, first, operator, second)
-	}
-	return m
-}
-
-// InnerJoin 内连接 - 适配db.InnerJoin
-func (m *BaseModel) InnerJoin(table string, first string, operator string, second string) *BaseModel {
-	query := m.getQueryBuilder()
-	if query != nil {
-		first = m.qualifyColumn(first)
-		second = m.qualifyColumn(second)
-		m.queryBuilder = query.InnerJoin(table, first, operator, second)
-	}
-	return m
-}
-
-// qualifyColumn 智能处理列名：如果不包含表名则添加当前模型表名
-func (m *BaseModel) qualifyColumn(column string) string {
-	// 如果列名已经包含表名（包含.），则直接返回
-	if strings.Contains(column, ".") {
-		return column
-	}
-	// 否则添加当前模型表名
-	return m.TableName() + "." + column
-}
-
-// All 获取所有记录
-func (m *BaseModel) All() ([]map[string]interface{}, error) {
-	query := m.getQueryBuilder()
-	if query == nil {
-		return nil, fmt.Errorf("failed to create query builder")
+// newQuery 创建查询构建器
+func (m *BaseModel) newQuery() (*db.QueryBuilder, error) {
+	if m.tableName == "" {
+		return nil, fmt.Errorf("表名未设置")
 	}
 
-	results, err := query.Get()
-	m.resetQueryBuilder() // 执行完成后重置查询构建器
-	return results, err
-}
-
-// Get 获取所有记录 - All的别名
-func (m *BaseModel) Get() ([]map[string]interface{}, error) {
-	return m.All()
-}
-
-// First 获取第一条记录并填充到当前模型
-// 如果传入指针，也会填充到指针指向的对象
-// 返回原始的map数据
-func (m *BaseModel) First(dest ...interface{}) (map[string]interface{}, error) {
-	query := m.getQueryBuilder()
-	if query == nil {
-		return nil, fmt.Errorf("failed to create query builder")
-	}
-
-	result, err := query.First()
-	m.resetQueryBuilder() // 执行完成后重置查询构建器
-
+	builder, err := db.Table(m.tableName, m.connection)
 	if err != nil {
 		return nil, err
 	}
 
-	// 填充当前模型属性
-	m.Fill(result)
-	m.exists = true
-	m.isNew = false
+	// 如果启用了软删除，自动添加过滤条件
+	if m.softDeletes {
+		builder = builder.Where(m.deletedAt + " IS NULL")
+	}
 
-	// 如果传入了指针，也填充到指针指向的对象
-	if len(dest) > 0 && dest[0] != nil {
-		err = m.LoadModel(dest[0], result)
+	return builder, nil
+}
+
+// Where 添加查询条件
+func (m *BaseModel) Where(args ...interface{}) *ModelQueryBuilder {
+	query, err := m.newQuery()
+	if err != nil {
+		return &ModelQueryBuilder{err: err, model: m}
+	}
+
+	return &ModelQueryBuilder{
+		query: query.Where(args...),
+		model: m,
+	}
+}
+
+// Find 根据主键查找
+func (m *BaseModel) Find(id interface{}) error {
+	query, err := m.newQuery()
+	if err != nil {
+		return err
+	}
+
+	result, err := query.Where(m.primaryKey, "=", id).First()
+	if err != nil {
+		return err
+	}
+
+	m.fill(result)
+	m.exists = true
+	return nil
+}
+
+// First 获取第一条记录
+func (m *BaseModel) First() error {
+	query, err := m.newQuery()
+	if err != nil {
+		return err
+	}
+
+	result, err := query.First()
+	if err != nil {
+		return err
+	}
+
+	m.fill(result)
+	m.exists = true
+	return nil
+}
+
+// Get 获取多条记录
+func (m *BaseModel) Get() ([]map[string]interface{}, error) {
+	query, err := m.newQuery()
+	if err != nil {
+		return nil, err
+	}
+
+	return query.Get()
+}
+
+// Save 保存模型
+func (m *BaseModel) Save() error {
+	query, err := m.newQuery()
+	if err != nil {
+		return err
+	}
+
+	// 准备数据
+	data := make(map[string]interface{})
+	for key, value := range m.attributes {
+		data[key] = value
+	}
+
+	// 处理时间戳
+	if m.timestamps {
+		now := time.Now()
+		if !m.exists {
+			data[m.createdAt] = now
+		}
+		data[m.updatedAt] = now
+	}
+
+	if m.exists {
+		// 更新
+		primaryKeyValue := m.GetKey()
+		if primaryKeyValue == nil {
+			return fmt.Errorf("主键值不能为空")
+		}
+
+		delete(data, m.primaryKey) // 移除主键，避免更新主键
+		_, err = query.Where(m.primaryKey, "=", primaryKeyValue).Update(data)
 		if err != nil {
-			return result, fmt.Errorf("failed to load model: %w", err)
+			return err
 		}
-	}
 
-	return result, nil
-}
-
-// TakeFirst 链式查询后获取第一条记录并填充到当前模型
-func (m *BaseModel) TakeFirst(dest ...interface{}) (map[string]interface{}, error) {
-	return m.First(dest...)
-}
-
-// FirstOrCreate 查找第一条记录，如果不存在则创建
-func (m *BaseModel) FirstOrCreate(attributes map[string]interface{}) error {
-	// 先尝试查找
-	query := m.getQueryBuilder()
-	if query == nil {
-		return fmt.Errorf("failed to create query builder")
-	}
-
-	result, err := query.First()
-	m.resetQueryBuilder()
-
-	if err == nil {
-		// 找到了，填充模型
-		m.Fill(result)
-		m.exists = true
-		m.isNew = false
-		return nil
-	}
-
-	// 没找到，创建新记录
-	id, err := m.Create(attributes)
-	if err != nil {
-		return err
-	}
-
-	// 填充模型
-	m.Fill(attributes)
-	m.SetAttribute(m.PrimaryKey(), id)
-	m.exists = true
-	m.isNew = false
-
-	return nil
-}
-
-// FirstOrNew 查找第一条记录，如果不存在则创建新模型实例（不保存到数据库）
-func (m *BaseModel) FirstOrNew(attributes map[string]interface{}) error {
-	// 先尝试查找
-	query := m.getQueryBuilder()
-	if query == nil {
-		return fmt.Errorf("failed to create query builder")
-	}
-
-	result, err := query.First()
-	m.resetQueryBuilder()
-
-	if err == nil {
-		// 找到了，填充模型
-		m.Fill(result)
-		m.exists = true
-		m.isNew = false
-		return nil
-	}
-
-	// 没找到，填充新属性但不保存
-	m.Fill(attributes)
-	m.exists = false
-	m.isNew = true
-
-	return nil
-}
-
-// Count 统计记录数
-func (m *BaseModel) Count() (int64, error) {
-	query := m.getQueryBuilder()
-	if query == nil {
-		return 0, fmt.Errorf("创建查询构建器失败")
-	}
-
-	count, err := query.Count()
-	m.resetQueryBuilder() // 执行完成后重置查询构建器
-	return count, err
-}
-
-// HasRecords 检查是否存在记录
-func (m *BaseModel) HasRecords() (bool, error) {
-	query := m.getQueryBuilder()
-	if query == nil {
-		return false, fmt.Errorf("failed to create query builder")
-	}
-
-	exists, err := query.Exists()
-	m.resetQueryBuilder() // 执行完成后重置查询构建器
-	return exists, err
-}
-
-// CheckExists 检查查询条件是否有匹配记录 - 适配db.Exists
-// 这个方法与Exists()不同，Exists()检查模型实例是否存在于数据库中
-func (m *BaseModel) CheckExists() (bool, error) {
-	query := m.getQueryBuilder()
-	if query == nil {
-		return false, fmt.Errorf("failed to create query builder")
-	}
-
-	exists, err := query.Exists()
-	m.resetQueryBuilder() // 执行完成后重置查询构建器
-	return exists, err
-}
-
-// Paginate 分页查询
-func (m *BaseModel) Paginate(page, perPage int) (interface{}, error) {
-	query := m.getQueryBuilder()
-	if query == nil {
-		return nil, fmt.Errorf("failed to create query builder")
-	}
-
-	result, err := query.Paginate(page, perPage)
-	m.resetQueryBuilder() // 执行完成后重置查询构建器
-	return result, err
-}
-
-// ToSQL 获取SQL语句（不执行）
-func (m *BaseModel) ToSQL() (string, []interface{}, error) {
-	query := m.getQueryBuilder()
-	if query == nil {
-		return "", nil, fmt.Errorf("failed to create query builder")
-	}
-
-	sql, bindings, err := query.ToSQL()
-	// 注意：ToSQL 不重置查询构建器，因为它不执行查询
-	return sql, bindings, err
-}
-
-// Clone 克隆查询构建器 - 适配db.Clone
-func (m *BaseModel) Clone() *BaseModel {
-	query := m.getQueryBuilder()
-	if query == nil {
-		return m
-	}
-
-	// 创建一个新的模型实例
-	newModel := &BaseModel{
-		connection:   m.connection,
-		tableName:    m.tableName,
-		primaryKeys:  m.primaryKeys,
-		attributes:   make(map[string]interface{}),
-		original:     make(map[string]interface{}),
-		relations:    make(map[string]interface{}),
-		isNew:        m.isNew,
-		exists:       m.exists,
-		timestamps:   m.timestamps,
-		createdAt:    m.createdAt,
-		updatedAt:    m.updatedAt,
-		softDeletes:  m.softDeletes,
-		deletedAt:    m.deletedAt,
-		queryBuilder: query.Clone(), // 克隆查询构建器
-	}
-
-	// 复制属性
-	for k, v := range m.attributes {
-		newModel.attributes[k] = v
-	}
-	for k, v := range m.original {
-		newModel.original[k] = v
-	}
-	for k, v := range m.relations {
-		newModel.relations[k] = v
-	}
-
-	return newModel
-}
-
-// Create 创建记录
-func (m *BaseModel) Create(data map[string]interface{}) (int64, error) {
-	query, err := db.Table(m.TableName(), m.connection)
-	if err != nil {
-		return 0, err
-	}
-
-	// 添加时间戳
-	if m.timestamps {
-		now := time.Now()
-		data[m.createdAt] = now
-		data[m.updatedAt] = now
-	}
-
-	return query.Insert(data)
-}
-
-// Insert 插入单条记录 - 对db.Insert的直接封装
-func (m *BaseModel) Insert(data map[string]interface{}) (int64, error) {
-	query, err := db.Table(m.TableName(), m.connection)
-	if err != nil {
-		return 0, err
-	}
-
-	// 添加时间戳
-	if m.timestamps {
-		now := time.Now()
-		data[m.createdAt] = now
-		data[m.updatedAt] = now
-	}
-
-	return query.Insert(data)
-}
-
-// InsertBatch 批量插入记录 - 适配db.InsertBatch
-func (m *BaseModel) InsertBatch(data []map[string]interface{}) (int64, error) {
-	query, err := db.Table(m.TableName(), m.connection)
-	if err != nil {
-		return 0, err
-	}
-
-	// 为每条记录添加时间戳
-	if m.timestamps {
-		now := time.Now()
-		for i := range data {
-			data[i][m.createdAt] = now
-			data[i][m.updatedAt] = now
+		// 更新属性
+		for key, value := range data {
+			m.attributes[key] = value
 		}
-	}
-
-	return query.InsertBatch(data)
-}
-
-// GetKey 获取主键值（单主键返回值，复合主键返回map）
-func (m *BaseModel) GetKey() interface{} {
-	if m.HasCompositePrimaryKey() {
-		return m.GetPrimaryKeyValues()
-	}
-	return m.GetAttribute(m.PrimaryKey())
-}
-
-// ===== 静态方法（需要通过具体模型实例调用） =====
-
-// FindOrFail 根据主键查找记录，找不到则返回错误
-func (m *BaseModel) FindOrFail(id interface{}) error {
-	_, err := m.Find(id)
-	if err != nil {
-		return fmt.Errorf("找不到ID为 %v 的模型", id)
-	}
-	return nil
-}
-
-// FirstOrFail 获取第一条记录，找不到则返回错误
-func (m *BaseModel) FirstOrFail() error {
-	_, err := m.First()
-	if err != nil {
-		return fmt.Errorf("no records found")
-	}
-	return nil
-}
-
-// UpdateOrCreate 更新或创建记录
-func (m *BaseModel) UpdateOrCreate(conditions, values map[string]interface{}) error {
-	query, err := m.NewQuery()
-	if err != nil {
-		return err
-	}
-
-	// 添加查询条件
-	for field, value := range conditions {
-		query = query.Where(field, "=", value)
-	}
-
-	// 检查是否存在
-	exists, err := query.Exists()
-	if err != nil {
-		return err
-	}
-
-	if exists {
-		// 更新记录
-		if m.timestamps {
-			values[m.updatedAt] = time.Now()
-		}
-		_, err = query.Update(values)
-		return err
 	} else {
-		// 创建记录
-		mergedData := make(map[string]interface{})
-		for k, v := range conditions {
-			mergedData[k] = v
-		}
-		for k, v := range values {
-			mergedData[k] = v
-		}
-
-		if m.timestamps {
-			now := time.Now()
-			mergedData[m.createdAt] = now
-			mergedData[m.updatedAt] = now
-		}
-
-		insertQuery, err := db.Table(m.TableName(), m.connection)
+		// 插入
+		id, err := query.Insert(data)
 		if err != nil {
 			return err
 		}
 
-		id, err := insertQuery.Insert(mergedData)
-		if err != nil {
-			return err
+		// 设置主键 - 只有在ID大于0时才设置，PostgreSQL可能返回0
+		if id > 0 {
+			m.attributes[m.primaryKey] = id
 		}
-
-		// 设置主键值并填充模型
-		m.Fill(mergedData)
-		m.SetAttribute(m.PrimaryKey(), id)
-		m.isNew = false
 		m.exists = true
 
-		return nil
-	}
-}
-
-// Chunk 分块处理大量数据
-func (m *BaseModel) Chunk(size int, callback func([]map[string]interface{}) error) error {
-	offset := 0
-
-	for {
-		query, err := m.NewQuery()
-		if err != nil {
-			return err
-		}
-
-		results, err := query.Limit(size).Offset(offset).Get()
-		if err != nil {
-			return err
-		}
-
-		if len(results) == 0 {
-			break
-		}
-
-		if err := callback(results); err != nil {
-			return err
-		}
-
-		offset += size
-
-		// 如果结果数量小于分块大小，说明已经是最后一批
-		if len(results) < size {
-			break
+		// 更新其他属性
+		for key, value := range data {
+			m.attributes[key] = value
 		}
 	}
 
 	return nil
 }
 
-// LoadModel 将map数据填充到指针指向的结构体
-func (m *BaseModel) LoadModel(dest interface{}, result map[string]interface{}) error {
-	if result == nil {
-		return fmt.Errorf("no data to load")
+// Delete 删除模型
+func (m *BaseModel) Delete() error {
+	if !m.exists {
+		return fmt.Errorf("记录不存在")
 	}
 
-	// 使用反射填充目标模型
-	destValue := reflect.ValueOf(dest)
-	if destValue.Kind() != reflect.Ptr {
-		return fmt.Errorf("destination must be a pointer")
+	primaryKeyValue := m.GetKey()
+	if primaryKeyValue == nil {
+		return fmt.Errorf("主键值不能为空")
 	}
 
-	destValue = destValue.Elem()
-	destType := destValue.Type()
-
-	// 如果目标是BaseModel或包含BaseModel的结构体，填充BaseModel字段
-	if destType.Name() == "BaseModel" {
-		baseModel := dest.(*BaseModel)
-		// 确保BaseModel的map已初始化
-		if baseModel.attributes == nil {
-			baseModel.attributes = make(map[string]interface{})
-		}
-		if baseModel.original == nil {
-			baseModel.original = make(map[string]interface{})
-		}
-		if baseModel.relations == nil {
-			baseModel.relations = make(map[string]interface{})
-		}
-		baseModel.Fill(result)
-		baseModel.exists = true
-		baseModel.isNew = false
-	} else if baseModelField := destValue.FieldByName("BaseModel"); baseModelField.IsValid() {
-		// 获取BaseModel字段
-		baseModel := baseModelField.Addr().Interface().(*BaseModel)
-		// 确保BaseModel的map已初始化
-		if baseModel.attributes == nil {
-			baseModel.attributes = make(map[string]interface{})
-		}
-		if baseModel.original == nil {
-			baseModel.original = make(map[string]interface{})
-		}
-		if baseModel.relations == nil {
-			baseModel.relations = make(map[string]interface{})
-		}
-		baseModel.Fill(result)
-		baseModel.exists = true
-		baseModel.isNew = false
-	}
-
-	// 填充结构体字段
-	for i := 0; i < destType.NumField(); i++ {
-		field := destType.Field(i)
-
-		// 跳过BaseModel字段，已经在上面处理了
-		if field.Name == "BaseModel" {
-			continue
-		}
-
-		dbTag := field.Tag.Get("db")
-		jsonTag := field.Tag.Get("json")
-
-		var fieldName string
-		if dbTag != "" && dbTag != "-" {
-			fieldName = dbTag
-		} else if jsonTag != "" && jsonTag != "-" {
-			fieldName = jsonTag
-		} else {
-			fieldName = strings.ToLower(field.Name)
-		}
-
-		if value, exists := result[fieldName]; exists && destValue.Field(i).CanSet() {
-			fieldValue := destValue.Field(i)
-			if fieldValue.Kind() == reflect.Ptr {
-				if value != nil {
-					// 为指针字段分配内存
-					newValue := reflect.New(fieldValue.Type().Elem())
-					if newValue.Elem().Type() == reflect.TypeOf(value) {
-						newValue.Elem().Set(reflect.ValueOf(value))
-						fieldValue.Set(newValue)
-					}
-				}
-			} else {
-				if value != nil && reflect.TypeOf(value).AssignableTo(fieldValue.Type()) {
-					fieldValue.Set(reflect.ValueOf(value))
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
-// Update 更新记录 - 支持两种调用方式
-// 1. Update() - 更新当前模型的变更字段
-// 2. Update(data) - 根据之前的Where条件批量更新
-func (m *BaseModel) Update(data ...map[string]interface{}) (interface{}, error) {
-	// 如果没有传入data参数，更新当前模型
-	if len(data) == 0 {
-		return nil, m.updateCurrentModel()
-	}
-
-	// 否则执行批量更新
-	return m.updateBatch(data[0])
-}
-
-// updateBatch 批量更新记录 - 适配db.Update
-func (m *BaseModel) updateBatch(data map[string]interface{}) (int64, error) {
-	query := m.getQueryBuilder()
-	if query == nil {
-		return 0, fmt.Errorf("创建查询构建器失败")
-	}
-
-	// 添加更新时间戳
-	if m.timestamps && m.updatedAt != "" {
-		data[m.updatedAt] = time.Now()
-	}
-
-	result, err := query.Update(data)
-	m.resetQueryBuilder() // 执行后重置查询构建器
-	return result, err
-}
-
-// updateCurrentModel 更新当前模型实例
-func (m *BaseModel) updateCurrentModel() error {
-	// 检查是否有变更
-	dirty := m.GetDirty()
-	if len(dirty) == 0 {
-		return nil // 没有变更，不需要更新
-	}
-
-	// 创建查询构造器
-	query, err := db.Table(m.TableName(), m.connection)
+	query, err := m.newQuery()
 	if err != nil {
 		return err
 	}
 
-	// 构建主键条件
-	query = m.buildPrimaryKeyConditions(query)
-	if query == nil {
-		return fmt.Errorf("primary key values are required for update")
-	}
-
-	// 执行更新
-	_, err = query.Update(dirty)
-	if err != nil {
-		return err
-	}
-
-	// 同步原始数据
-	m.syncOriginal()
-
-	return m.AfterUpdate()
-}
-
-// buildPrimaryKeyConditions 构建主键查询条件（支持复合主键）
-func (m *BaseModel) buildPrimaryKeyConditions(query db.QueryInterface) db.QueryInterface {
-	hasValidPrimaryKey := false
-
-	for _, pkField := range m.primaryKeys {
-		pkValue := m.GetAttribute(pkField)
-		if pkValue == nil {
-			return nil // 主键值不能为空
+	if m.softDeletes {
+		// 软删除
+		data := map[string]interface{}{
+			m.deletedAt: time.Now(),
 		}
-		query = query.Where(pkField, "=", pkValue)
-		hasValidPrimaryKey = true
+		_, err = query.Where(m.primaryKey, "=", primaryKeyValue).Update(data)
+	} else {
+		// 硬删除
+		_, err = query.Where(m.primaryKey, "=", primaryKeyValue).Delete()
 	}
 
-	if !hasValidPrimaryKey {
-		return nil
-	}
-
-	return query
+	return err
 }
 
-// AutoMigrate 自动迁移模型到数据库
-// AutoMigrate 自动迁移数据库表结构
-// 现在支持智能自动检测模型结构！
-func (m *BaseModel) AutoMigrate() error {
-	// 在AutoMigrate时进行最终的模型结构检测
-	if m.getContextHint("auto_detect_on_migrate") != nil && m.modelType == nil {
-		m.performFinalModelDetection()
+// fill 填充属性
+func (m *BaseModel) fill(data map[string]interface{}) {
+	for key, value := range data {
+		m.attributes[key] = value
+	}
+}
+
+// AutoMigrate 自动迁移 - 支持传入多个模型实例
+func (m *BaseModel) AutoMigrate(models ...interface{}) error {
+	if m.tableName == "" {
+		return fmt.Errorf("表名未设置")
 	}
 
 	// 获取数据库连接
-	manager := db.DefaultManager()
-	conn, err := manager.Connection(m.connection)
+	conn, err := db.DefaultManager().Connection(m.connection)
 	if err != nil {
 		return fmt.Errorf("获取数据库连接失败: %w", err)
 	}
 
-	// 自动检测模型结构（如果尚未检测）
-	if !m.HasModelStruct() {
-		if err := m.autoDetectFromReflection(); err != nil {
-			// 提供更友好的错误提示
-			return fmt.Errorf("AutoMigrate需要模型结构信息。\n"+
-				"快速修复: 将'model.NewBaseModel()'替换为'model.NewBaseModelWithAutoDetect(modelInstance)'\n"+
-				"示例在您的NewAdmin函数中:\n"+
-				"   admin := &Admin{}\n"+
-				"   admin.BaseModel = *model.NewBaseModelWithAutoDetect(admin)  // ← 使用这个\n"+
-				"   // 而不是: admin.BaseModel = *model.NewBaseModel()\n\n"+
-				"原始错误: %w", err)
-		}
+	// 创建自动迁移器
+	migrator := migration.NewAutoMigrator(conn)
+
+	// 如果没有传入模型，尝试使用当前模型
+	if len(models) == 0 {
+		// 这种情况下无法确定具体模型类型，返回提示信息
+		return fmt.Errorf("请传入模型实例进行迁移，例如: admin.AutoMigrate(admin)")
 	}
 
-	// 确保在AutoMigrate时有模型结构信息，除非是基本表创建模式
-	if !m.HasModelStruct() && m.getContextHint("basic_table_creation") == nil {
-		return fmt.Errorf("自动检测尝试后未能检测到模型结构")
-	}
+	// 迁移所有传入的模型
+	for i, model := range models {
+		// 对于第一个模型，使用当前BaseModel的表名
+		tableName := m.tableName
 
-	// 获取表名
-	tableName := m.TableName()
-	if tableName == "" {
-		return fmt.Errorf("table name is required for auto migration")
-	}
-
-	// 检查表是否存在
-	exists, err := m.tableExists(conn, tableName)
-	if err != nil {
-		return fmt.Errorf("检查表是否存在失败: %w", err)
-	}
-
-	if !exists {
-		// 创建新表
-		return m.createTable(conn, tableName)
-	}
-
-	// 如果是基本表创建模式，跳过表结构更新
-	if m.getContextHint("basic_table_creation") != nil {
-		if isDebugMode() {
-			m.GetLogger().Debug("跳过基本表创建模式的表结构更新", "table", tableName)
-		}
-		return nil // 基本表创建模式下，不做结构更新
-	}
-
-	// 表已存在，检查是否需要更新结构
-	return m.updateTableStructure(conn, tableName)
-}
-
-// autoDetectFromReflection 通过反射自动检测模型结构
-func (m *BaseModel) autoDetectFromReflection() error {
-	// 首先检查是否已经设置了模型类型
-	if m.modelType != nil {
-		// 如果已有模型类型，创建零值实例进行配置检测
-		modelValue := reflect.New(m.modelType).Interface()
-		m.DetectConfigFromStruct(modelValue)
-		return nil
-	}
-
-	// 检查上下文提示 - 如果启用了自动检测回退，则尝试强制检测
-	if constructorCall := m.getContextHint("constructor_call"); constructorCall != nil {
-		if !m.enableAutoDetectionFallback {
-			// 如果没有启用回退机制，提供友好的错误信息
-			return fmt.Errorf("无法在构造函数上下文中自动检测模型结构\n" +
-				"快速修复: 将'model.NewBaseModel()'替换为'model.NewAutoMigrateModel(modelInstance)'\n" +
-				"示例:\n" +
-				"   // 而不是:\n" +
-				"   user.BaseModel = *model.NewBaseModel()\n" +
-				"   // 使用:\n" +
-				"   user.BaseModel = *model.NewAutoMigrateModel(user)")
-		}
-		// 启用了回退机制，继续尝试强制检测
-	}
-
-	// 尝试通过栈帧找到调用者的模型实例
-	modelInstance, err := m.findModelInstanceFromStack()
-
-	// 如果找到了模型实例，调用DetectConfigFromStruct
-	if err == nil && modelInstance != nil {
-		m.DetectConfigFromStruct(modelInstance)
-		return nil
-	}
-
-	// 启用自动检测回退：即使无法获取字段信息，也允许基本的表操作
-	if m.enableAutoDetectionFallback {
-		if isDebugMode() {
-			m.GetLogger().Debug("自动检测回退: 启用基本表操作而不进行字段分析", "error", err)
-		}
-
-		// 允许AutoMigrate继续，但跳过字段结构分析
-		// 这样至少可以创建基本的表结构
-		m.setContextHint("basic_table_creation", true)
-		return nil
-	}
-
-	// 如果没有启用回退机制，返回详细错误
-	if err != nil {
-		return fmt.Errorf("找不到模型实例: %w", err)
-	}
-	return fmt.Errorf("自动检测模型结构失败")
-}
-
-// findModelInstanceFromStack 从调用栈中查找模型实例
-func (m *BaseModel) findModelInstanceFromStack() (interface{}, error) {
-	// 通过运行时反射，尝试从调用栈中寻找包含当前BaseModel的结构体实例
-
-	// 获取调用栈信息
-	pc, _, _, ok := runtime.Caller(3) // 跳过当前方法、autoDetectFromReflection、AutoMigrate
-	if !ok {
-		return nil, fmt.Errorf("unable to get caller information")
-	}
-
-	// 获取调用函数的信息
-	fn := runtime.FuncForPC(pc)
-	if fn != nil {
-		funcName := fn.Name()
-		// 记录调用信息用于调试（在调试模式下）
-		if isDebugMode() {
-			m.GetLogger().Debug("findModelInstanceFromStack 被调用自", "function", funcName)
-		}
-	}
-
-	// 如果已经设置了模型类型，创建一个零值实例用于配置检测
-	if m.modelType != nil {
-		modelValue := reflect.New(m.modelType).Interface()
-		return modelValue, nil
-	}
-
-	// 🔥 新增：尝试通过栈帧分析找到包含当前BaseModel的结构体
-	// 这是一个高级功能，用于自动检测模型类型
-	if m.enableAutoDetectionFallback {
-		// 通过栈帧尝试检测调用者中包含BaseModel的结构体
-		for i := 1; i <= 10; i++ { // 检查前10层调用栈
-			pc, file, line, ok := runtime.Caller(i)
-			if !ok {
-				break
-			}
-
-			fn := runtime.FuncForPC(pc)
-			if fn != nil {
-				funcName := fn.Name()
-				// 如果调用者是模型构造函数（包含New且不是NewBaseModel）
-				if strings.Contains(funcName, "New") && !strings.Contains(funcName, "NewBaseModel") {
-					// 尝试从函数名推断模型类型名
-					if modelTypeName := extractModelTypeFromFuncName(funcName); modelTypeName != "" {
-						if isDebugMode() {
-							m.GetLogger().Debug("检测到潜在的模型类型",
-								"type", modelTypeName,
-								"function", funcName,
-								"file", file,
-								"line", line)
-						}
-
-						// 这里我们尝试创建一个通用的模型实例
-						// 由于Go的限制，我们无法直接从函数名创建类型实例
-						// 所以我们返回nil，让autoDetectFromReflection的调用者处理
-						return nil, nil
-					}
+		// 对于后续模型，尝试从模型本身获取表名
+		if i > 0 {
+			if tableNamer, ok := model.(interface{ TableName() string }); ok {
+				if customTableName := tableNamer.TableName(); customTableName != "" {
+					tableName = customTableName
 				}
-			}
-		}
-	}
-
-	// 如果没有预设类型，返回友好的错误提示
-	return nil, fmt.Errorf("无法从调用栈自动检测模型结构 - 请使用以下方法之一:\n" +
-		"推荐: 使用 NewAutoMigrateModel(modelInstance) 来获得完整的 AutoMigrate 支持\n" +
-		"替代方案: 在创建模型时使用 NewBaseModelWithAutoDetect(modelInstance)\n" +
-		"手动: 在 AutoMigrate 之前调用 DetectConfigFromStruct(modelInstance)\n" +
-		"高级: 使用 SetModelStruct(reflect.TypeOf(modelInstance)) 设置模型结构\n\n" +
-		"示例:\n" +
-		"  user := &User{}\n" +
-		"  user.BaseModel = *model.NewAutoMigrateModel(user)  // 推荐\n" +
-		"  // 或者\n" +
-		"  user.BaseModel = *model.NewBaseModel()\n" +
-		"  user.SetModelStruct(reflect.TypeOf(*user))        // 手动设置")
-}
-
-// extractModelTypeFromFuncName 从函数名中提取模型类型名
-func extractModelTypeFromFuncName(funcName string) string {
-	// 函数名格式通常是 package.NewXXX 或 main.NewXXX
-	parts := strings.Split(funcName, ".")
-	if len(parts) < 2 {
-		return ""
-	}
-
-	lastPart := parts[len(parts)-1]
-	if strings.HasPrefix(lastPart, "New") && len(lastPart) > 3 {
-		return lastPart[3:] // 去掉"New"前缀
-	}
-
-	return ""
-}
-
-// autoDetectModelTypeFromStack 从调用栈自动检测模型类型
-func (m *BaseModel) autoDetectModelTypeFromStack() {
-	defer func() {
-		if r := recover(); r != nil {
-			// 如果自动检测失败，静默忽略，不影响正常功能
-		}
-	}()
-
-	// 通过调用栈分析，尝试找到包含BaseModel的结构体
-	// 我们需要找到调用NewBaseModel的代码，并分析其上下文
-	for i := 1; i <= 8; i++ {
-		pc, _, _, ok := runtime.Caller(i)
-		if !ok {
-			continue
-		}
-
-		fn := runtime.FuncForPC(pc)
-		if fn == nil {
-			continue
-		}
-
-		funcName := fn.Name()
-
-		// 如果调用者是构造函数（包含New但不是NewBaseModel相关）
-		if strings.Contains(funcName, "New") &&
-			!strings.Contains(funcName, "NewBaseModel") &&
-			!strings.Contains(funcName, "NewAutoMigrate") {
-
-			// 设置上下文提示，便于后续的AutoMigrate使用
-			m.setContextHint("constructor_call", true)
-			m.setContextHint("constructor_func", funcName)
-
-			// 从函数名推断模型类型名
-			if modelTypeName := extractModelTypeFromFuncName(funcName); modelTypeName != "" {
-				m.setContextHint("model_type_name", modelTypeName)
-			}
-
-			break
-		}
-	}
-}
-
-// findModelTypeFromMemory 通过运行时内存分析找到包含BaseModel的结构体类型
-func (m *BaseModel) findModelTypeFromMemory() reflect.Type {
-	// 这是一个高级功能，通过运行时反射分析内存中的结构体
-	// 尝试找到包含当前BaseModel实例的外层结构体
-
-	// 🔥 核心思路：当用户调用 admin := &Admin{BaseModel: *model.NewBaseModel()} 时
-	// 这个BaseModel会被嵌入到Admin结构体中，我们可以通过调用栈分析找到这个外层结构体
-
-	defer func() {
-		if r := recover(); r != nil {
-			// 如果检测失败，静默忽略
-		}
-	}()
-
-	// 尝试通过调用栈的PC地址和内存布局分析
-	// 检查调用栈中是否有结构体字面量的分配
-	for i := 2; i <= 10; i++ {
-		pc, file, line, ok := runtime.Caller(i)
-		if !ok {
-			continue
-		}
-
-		fn := runtime.FuncForPC(pc)
-		if fn == nil {
-			continue
-		}
-
-		funcName := fn.Name()
-
-		// 如果是构造函数，且包含我们感兴趣的模式
-		if strings.Contains(funcName, "New") && !strings.Contains(funcName, "NewBaseModel") {
-			if isDebugMode() {
-				m.GetLogger().Debug("找到构造函数", "function", funcName, "file", file, "line", line)
-			}
-
-			// 尝试从函数名推断类型
-			modelTypeName := extractModelTypeFromFuncName(funcName)
-			if modelTypeName != "" {
-				// 这里我们使用一个巧妙的方法：
-				// 延迟到AutoMigrate时进行真正的类型检测
-				// 因为那时用户的结构体实例已经完全构建完成
-				m.setContextHint("detected_type_name", modelTypeName)
-				m.setContextHint("constructor_location", fmt.Sprintf("%s:%d", file, line))
-				return nil // 返回nil，让AutoMigrate时进行最终检测
-			}
-		}
-	}
-
-	return nil
-}
-
-// findContainerStructFromMemory 通过内存分析找到包含当前BaseModel的外层结构体实例
-func (m *BaseModel) findContainerStructFromMemory() interface{} {
-	// 🔥 终极解决方案：通过unsafe指针和内存布局分析
-	// 当BaseModel被嵌入到其他结构体中时，我们可以通过内存地址偏移找到外层结构体
-
-	defer func() {
-		if r := recover(); r != nil {
-			// 如果内存分析失败，静默忽略
-		}
-	}()
-
-	// 通过调用栈分析找到最可能的构造函数调用位置
-	for i := 3; i <= 15; i++ {
-		pc, _, _, ok := runtime.Caller(i)
-		if !ok {
-			continue
-		}
-
-		fn := runtime.FuncForPC(pc)
-		if fn == nil {
-			continue
-		}
-
-		funcName := fn.Name()
-
-		// 寻找构造函数调用
-		if strings.Contains(funcName, "New") &&
-			!strings.Contains(funcName, "NewBaseModel") &&
-			!strings.Contains(funcName, "NewAutoMigrate") {
-
-			if isDebugMode() {
-				m.GetLogger().Debug("找到潜在的构造函数", "function", funcName)
-			}
-
-			// 这里我们使用一个巧妙的trick：
-			// 由于Go的结构体内存布局规律，BaseModel通常是第一个字段
-			// 我们可以通过这个特性尝试反向推导外层结构体
-
-			// 但是由于Go的类型安全限制，我们无法直接通过unsafe进行复杂的内存操作
-			// 所以我们采用更安全的方法：延迟到运行时动态检测
-
-			return nil // 暂时返回nil，让调用者处理
-		}
-	}
-
-	return nil
-}
-
-// performFinalModelDetection 在AutoMigrate时执行最终的模型检测
-func (m *BaseModel) performFinalModelDetection() {
-	// 🔥 终极解决方案：利用Go的panic recovery机制
-	// 在这个时候，包含BaseModel的外层结构体已经完全构建好了
-
-	defer func() {
-		if r := recover(); r != nil {
-			// 如果检测失败，静默忽略，不影响基本功能
-		}
-	}()
-
-	// 利用运行时堆栈信息进行智能推断
-	// 通过分析调用栈，我们可以找到调用AutoMigrate的方法接收者
-
-	// 获取调用AutoMigrate的上下文
-	pc, _, _, ok := runtime.Caller(1) // AutoMigrate的直接调用者
-	if !ok {
-		return
-	}
-
-	fn := runtime.FuncForPC(pc)
-	if fn == nil {
-		return
-	}
-
-	funcName := fn.Name()
-
-	// 如果调用者包含模型相关的信息，我们尝试推断
-	if strings.Contains(funcName, "New") || strings.Contains(funcName, "main") || strings.Contains(funcName, "Test") {
-		// 关键技巧：利用AutoMigrate是方法接收者这一特性
-		// 我们知道AutoMigrate是通过 someModel.AutoMigrate() 调用的
-		// 这意味着someModel就是我们要找的包含BaseModel的结构体
-
-		// 但由于Go的限制，我们无法直接从方法接收者获取完整的结构体类型
-		// 所以我们采用一个实用的fallback：允许AutoMigrate继续，但提供有限的功能
-
-		if isDebugMode() {
-			m.GetLogger().Debug("AutoMigrate 被调用自", "function", funcName)
-		}
-	}
-}
-
-// SetModelStruct 手动设置模型结构类型
-func (m *BaseModel) SetModelStruct(modelType reflect.Type) *BaseModel {
-	m.modelType = modelType
-	return m
-}
-
-// SetContextHint 设置上下文提示信息
-func (m *BaseModel) SetContextHint(key string, value interface{}) {
-	if m.contextHints == nil {
-		m.contextHints = make(map[string]interface{})
-	}
-	m.contextHints[key] = value
-}
-
-// GetContextHint 获取上下文提示信息
-func (m *BaseModel) GetContextHint(key string) interface{} {
-	if m.contextHints == nil {
-		return nil
-	}
-	return m.contextHints[key]
-}
-
-// setContextHint 内部使用的设置方法
-func (m *BaseModel) setContextHint(key string, value interface{}) {
-	m.SetContextHint(key, value)
-}
-
-// getContextHint 内部使用的获取方法
-func (m *BaseModel) getContextHint(key string) interface{} {
-	return m.GetContextHint(key)
-}
-
-// tryAutoDetectModelFromStack 尝试从调用栈智能检测模型实例
-func (m *BaseModel) tryAutoDetectModelFromStack() interface{} {
-	// 获取调用栈信息，尝试分析调用上下文
-	pc, file, line, ok := runtime.Caller(2) // 跳过当前方法和NewBaseModelWithDefaultDetection
-	if !ok {
-		return nil
-	}
-
-	// 获取调用函数的信息
-	fn := runtime.FuncForPC(pc)
-	if fn == nil {
-		return nil
-	}
-
-	funcName := fn.Name()
-
-	// 启发式分析：如果调用函数名包含特定模式，尝试推断模型类型
-	// 例如：NewUser, NewProduct, CreateUser 等
-	if strings.Contains(funcName, "New") || strings.Contains(funcName, "Create") {
-		// 记录调用信息用于调试（在调试模式下）
-		if isDebugMode() {
-			m.GetLogger().Debug("自动检测尝试", "function", funcName, "file", file, "line", line)
-		}
-
-		// 这里可以根据函数名模式进行更复杂的类型推断
-		// 但由于Go的限制，我们主要提供调试信息和引导
-		return nil
-	}
-
-	return nil
-}
-
-// isDebugMode 检查是否为调试模式
-func isDebugMode() bool {
-	// 可以通过环境变量或编译标志控制
-	// 这里简化为总是返回false，避免生产环境输出过多信息
-	return false
-}
-
-// getLogger 获取日志记录器
-func getLogger() *logger.Logger {
-	// 优先使用默认日志记录器，如果没有则创建一个基本的
-	defaultLogger := logger.DefaultLogger()
-	if defaultLogger == nil {
-		// 如果没有默认日志记录器，创建一个INFO级别的
-		return logger.NewLogger(logger.INFO)
-	}
-	return defaultLogger
-}
-
-// GetLogger 获取模型的日志记录器
-func (m *BaseModel) GetLogger() *logger.Logger {
-	if m.logger == nil {
-		m.logger = getLogger()
-	}
-	return m.logger
-}
-
-// SetLogger 设置模型的日志记录器
-func (m *BaseModel) SetLogger(l *logger.Logger) *BaseModel {
-	m.logger = l
-	return m
-}
-
-// SetLogLevel 设置日志级别
-func (m *BaseModel) SetLogLevel(level logger.LogLevel) *BaseModel {
-	if m.logger == nil {
-		m.logger = logger.NewLogger(level)
-	} else {
-		m.logger.SetLevel(level)
-	}
-	return m
-}
-
-// detectModelStructure 检测模型结构
-func (m *BaseModel) detectModelStructure() error {
-	// 确保模型已经配置了必要的信息
-	if m.tableName == "" {
-		return fmt.Errorf("table name must be set before auto migration")
-	}
-
-	// 确保有模型结构类型信息
-	if m.modelType == nil {
-		return fmt.Errorf("model structure type not available - use NewAutoMigrateModel or SetModelStruct")
-	}
-
-	// 验证模型结构是否有效
-	if m.modelType.Kind() != reflect.Struct {
-		return fmt.Errorf("model type must be a struct, got %s", m.modelType.Kind())
-	}
-
-	// 检查是否有BaseModel字段（确保正确的模型继承）
-	hasBaseModel := false
-	for i := 0; i < m.modelType.NumField(); i++ {
-		field := m.modelType.Field(i)
-		if field.Type.Name() == "BaseModel" {
-			hasBaseModel = true
-			break
-		}
-	}
-
-	if !hasBaseModel {
-		// 这是一个警告，不是错误，因为用户可能有自定义的模型结构
-		m.GetLogger().Warn("模型没有嵌入BaseModel，某些功能可能无法正常工作", "model", m.modelType.Name())
-	}
-
-	return nil
-}
-
-// tableExists 检查表是否存在
-func (m *BaseModel) tableExists(conn db.ConnectionInterface, tableName string) (bool, error) {
-	driver := conn.GetDriver()
-	var query string
-	var args []interface{}
-
-	switch driver {
-	case "mysql":
-		query = "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?"
-		args = []interface{}{tableName}
-	case "postgres", "postgresql":
-		query = "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ?"
-		args = []interface{}{tableName}
-	case "sqlite", "sqlite3":
-		query = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?"
-		args = []interface{}{tableName}
-	default:
-		return false, fmt.Errorf("不支持的数据库驱动: %s", driver)
-	}
-
-	row := conn.QueryRow(query, args...)
-	var count int
-	if err := row.Scan(&count); err != nil {
-		return false, fmt.Errorf("检查表是否存在失败: %w", err)
-	}
-
-	return count > 0, nil
-}
-
-// createTable 创建新表
-func (m *BaseModel) createTable(conn db.ConnectionInterface, tableName string) error {
-	// 🔥 检查是否为基本表创建模式
-	if m.getContextHint("basic_table_creation") != nil {
-		return m.createBasicTable(conn, tableName)
-	}
-
-	// 获取模型的结构体信息
-	modelStruct, err := m.getModelStruct()
-	if err != nil {
-		return fmt.Errorf("获取模型结构失败: %w", err)
-	}
-
-	// 创建表定义
-	table := &migration.Table{
-		Name:    tableName,
-		Columns: make([]*migration.Column, 0),
-		Indexes: make([]*migration.Index, 0),
-	}
-
-	// 设置数据库引擎和字符集（MySQL）
-	driver := conn.GetDriver()
-	if driver == "mysql" {
-		table.Engine = "InnoDB"
-		table.Charset = "utf8mb4"
-	}
-
-	// 解析字段
-	if err := m.parseFieldsForMigration(modelStruct, table); err != nil {
-		return fmt.Errorf("解析模型字段失败: %w", err)
-	}
-
-	// 添加自动索引
-	m.addAutoIndexes(table)
-
-	// 使用 SchemaBuilder 创建表
-	schemaBuilder := migration.NewSchemaBuilder(conn)
-	return schemaBuilder.CreateTable(table)
-}
-
-// createBasicTable 创建基本表（不依赖模型结构分析）
-func (m *BaseModel) createBasicTable(conn db.ConnectionInterface, tableName string) error {
-	// 🔥 创建一个最基本的表，包含主键字段
-	table := &migration.Table{
-		Name:    tableName,
-		Columns: make([]*migration.Column, 0),
-		Indexes: make([]*migration.Index, 0),
-	}
-
-	// 设置数据库引擎和字符集（MySQL）
-	driver := conn.GetDriver()
-	if driver == "mysql" {
-		table.Engine = "InnoDB"
-		table.Charset = "utf8mb4"
-	}
-
-	// 添加基本的主键字段
-	primaryKey := m.primaryKeys[0] // 取第一个主键
-	primaryColumn := &migration.Column{
-		Name:          primaryKey,
-		Type:          migration.ColumnTypeInt,
-		Length:        0,
-		Precision:     0,
-		Scale:         0,
-		NotNull:       true,
-		AutoIncrement: true,
-		PrimaryKey:    true,
-		Default:       nil,
-		Comment:       "Auto-generated primary key",
-	}
-
-	// 根据数据库类型调整主键类型
-	switch driver {
-	case "sqlite":
-		primaryColumn.Type = migration.ColumnTypeInt // SQLite uses INTEGER but maps to INT
-	case "postgres":
-		primaryColumn.Type = migration.ColumnTypeInt // PostgreSQL SERIAL maps to INT with AUTO_INCREMENT
-	case "mysql":
-		primaryColumn.Type = migration.ColumnTypeInt
-	}
-
-	table.Columns = append(table.Columns, primaryColumn)
-
-	// 添加创建时间和更新时间字段（如果启用时间戳）
-	if m.timestamps {
-		createdAtColumn := &migration.Column{
-			Name:    m.createdAt,
-			Type:    migration.ColumnTypeTimestamp,
-			NotNull: true,
-			Default: "CURRENT_TIMESTAMP",
-			Comment: "Record creation time",
-		}
-
-		updatedAtColumn := &migration.Column{
-			Name:    m.updatedAt,
-			Type:    migration.ColumnTypeTimestamp,
-			NotNull: true,
-			Default: "CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP",
-			Comment: "Record update time",
-		}
-
-		// 根据数据库类型调整时间戳字段
-		if driver == "sqlite" {
-			createdAtColumn.Type = migration.ColumnTypeDateTime
-			updatedAtColumn.Type = migration.ColumnTypeDateTime
-			createdAtColumn.Default = "CURRENT_TIMESTAMP"
-			updatedAtColumn.Default = "CURRENT_TIMESTAMP"
-		} else if driver == "postgres" {
-			createdAtColumn.Type = migration.ColumnTypeTimestamp
-			updatedAtColumn.Type = migration.ColumnTypeTimestamp
-			createdAtColumn.Default = "CURRENT_TIMESTAMP"
-			updatedAtColumn.Default = "CURRENT_TIMESTAMP"
-		}
-
-		table.Columns = append(table.Columns, createdAtColumn, updatedAtColumn)
-	}
-
-	// 使用 SchemaBuilder 创建表
-	schemaBuilder := migration.NewSchemaBuilder(conn)
-
-	if isDebugMode() {
-		m.GetLogger().Debug("创建基本表", "table", tableName, "columns", len(table.Columns))
-	}
-
-	return schemaBuilder.CreateTable(table)
-}
-
-// addAutoIndexes 为表添加自动索引
-func (m *BaseModel) addAutoIndexes(table *migration.Table) {
-	// 为有 unique 标签的字段添加唯一索引
-	for _, column := range table.Columns {
-		if column.Unique && !column.PrimaryKey {
-			index := &migration.Index{
-				Name:    fmt.Sprintf("idx_%s_%s_unique", table.Name, column.Name),
-				Columns: []string{column.Name},
-				Unique:  true,
-			}
-			table.Indexes = append(table.Indexes, index)
-		}
-
-		// 解析 comment 中的索引信息
-		if strings.Contains(column.Comment, "INDEX:") {
-			parts := strings.Split(column.Comment, "INDEX:")
-			if len(parts) > 1 {
-				indexName := strings.TrimSpace(parts[1])
-				// 移除索引标记，保留原始注释
-				column.Comment = strings.TrimSpace(parts[0])
-
-				// 如果没有指定索引名，生成默认名称
-				if indexName == "" || indexName == "true" {
-					indexName = fmt.Sprintf("idx_%s_%s", table.Name, column.Name)
-				}
-
-				index := &migration.Index{
-					Name:    indexName,
-					Columns: []string{column.Name},
-					Unique:  false,
-				}
-				table.Indexes = append(table.Indexes, index)
-			}
-		}
-	}
-
-	// 为外键字段添加索引（约定：以 _id 结尾的字段）
-	for _, column := range table.Columns {
-		if strings.HasSuffix(column.Name, "_id") && !column.PrimaryKey {
-			// 检查是否已有索引
-			hasIndex := false
-			for _, index := range table.Indexes {
-				for _, indexCol := range index.Columns {
-					if indexCol == column.Name {
-						hasIndex = true
-						break
-					}
-				}
-				if hasIndex {
-					break
-				}
-			}
-
-			if !hasIndex {
-				index := &migration.Index{
-					Name:    fmt.Sprintf("idx_%s_%s", table.Name, column.Name),
-					Columns: []string{column.Name},
-				}
-				table.Indexes = append(table.Indexes, index)
-			}
-		}
-	}
-}
-
-// getModelStruct 获取模型的结构体信息
-func (m *BaseModel) getModelStruct() (reflect.Type, error) {
-	if m.modelType == nil {
-		return nil, fmt.Errorf("model structure not available - call DetectConfigFromStruct first")
-	}
-	return m.modelType, nil
-}
-
-// HasModelStruct 检查是否已设置模型结构体信息
-func (m *BaseModel) HasModelStruct() bool {
-	return m.modelType != nil
-}
-
-// GetModelStructName 获取模型结构体名称（用于调试和测试）
-func (m *BaseModel) GetModelStructName() string {
-	if m.modelType == nil {
-		return ""
-	}
-	return m.modelType.Name()
-}
-
-// parseFieldsForMigration 解析字段用于迁移
-func (m *BaseModel) parseFieldsForMigration(modelType reflect.Type, table *migration.Table) error {
-	for i := 0; i < modelType.NumField(); i++ {
-		field := modelType.Field(i)
-
-		// 跳过 BaseModel 字段
-		if field.Name == "BaseModel" {
-			continue
-		}
-
-		// 创建列定义
-		column, err := m.fieldToColumn(field)
-		if err != nil {
-			return fmt.Errorf("转换字段 %s 失败: %w", field.Name, err)
-		}
-
-		if column != nil {
-			table.Columns = append(table.Columns, column)
-		}
-	}
-
-	return nil
-}
-
-// fieldToColumn 将结构体字段转换为数据库列定义
-func (m *BaseModel) fieldToColumn(field reflect.StructField) (*migration.Column, error) {
-	// 解析 db 标签
-	dbTag := field.Tag.Get("db")
-	if dbTag == "-" {
-		return nil, nil // 跳过不需要持久化的字段
-	}
-
-	columnName := dbTag
-	if columnName == "" {
-		// 如果没有 db 标签，使用字段名的小写形式
-		columnName = strings.ToLower(field.Name)
-	}
-
-	// 创建列定义
-	column := &migration.Column{
-		Name: columnName,
-	}
-
-	// 映射 Go 类型到数据库类型
-	if err := m.mapGoTypeToColumnType(field, column); err != nil {
-		return nil, err
-	}
-
-	// 解析标签中的属性
-	m.parseFieldTags(field, column)
-
-	return column, nil
-}
-
-// mapGoTypeToColumnType 映射 Go 类型到数据库列类型
-func (m *BaseModel) mapGoTypeToColumnType(field reflect.StructField, column *migration.Column) error {
-	fieldType := field.Type
-
-	// 处理指针类型
-	if fieldType.Kind() == reflect.Ptr {
-		fieldType = fieldType.Elem()
-		// 指针类型默认可为空
-		column.NotNull = false
-	} else {
-		// 非指针类型默认不为空
-		column.NotNull = true
-	}
-
-	// 优先检查 type 标签的自定义类型
-	if typeTag := field.Tag.Get("type"); typeTag != "" {
-		return m.mapCustomType(typeTag, field, column)
-	}
-
-	// 特殊类型检查
-	if fieldType == reflect.TypeOf(time.Time{}) {
-		return m.mapTimeType(field, column)
-	}
-	if fieldType == reflect.TypeOf(DeletedTime{}) {
-		column.Type = migration.ColumnTypeTimestamp
-		column.NotNull = false // 软删除字段可为空
-		return nil
-	}
-
-	// 基本类型映射
-	switch fieldType.Kind() {
-	case reflect.String:
-		return m.mapStringType(field, column)
-
-	case reflect.Int:
-		column.Type = migration.ColumnTypeInt
-
-	case reflect.Int8:
-		column.Type = migration.ColumnTypeTinyInt
-
-	case reflect.Int16:
-		column.Type = migration.ColumnTypeSmallInt
-
-	case reflect.Int32:
-		column.Type = migration.ColumnTypeInt
-
-	case reflect.Int64:
-		// 检查是否为时间戳
-		if field.Tag.Get("autoCreateTime") != "" || field.Tag.Get("autoUpdateTime") != "" {
-			column.Type = migration.ColumnTypeBigInt
-		} else {
-			column.Type = migration.ColumnTypeBigInt
-		}
-
-	case reflect.Uint:
-		column.Type = migration.ColumnTypeInt // 注意：无符号类型映射
-
-	case reflect.Uint8:
-		column.Type = migration.ColumnTypeTinyInt
-
-	case reflect.Uint16:
-		column.Type = migration.ColumnTypeSmallInt
-
-	case reflect.Uint32:
-		column.Type = migration.ColumnTypeInt
-
-	case reflect.Uint64:
-		column.Type = migration.ColumnTypeBigInt
-
-	case reflect.Float32:
-		return m.mapFloatType(field, column, true)
-
-	case reflect.Float64:
-		return m.mapFloatType(field, column, false)
-
-	case reflect.Bool:
-		column.Type = migration.ColumnTypeBoolean
-
-	case reflect.Slice, reflect.Array:
-		return m.mapSliceType(fieldType, column)
-
-	case reflect.Map, reflect.Struct:
-		// Map 和 复杂结构体使用 JSON
-		column.Type = migration.ColumnTypeJSON
-
-	case reflect.Interface:
-		// interface{} 类型使用 JSON
-		column.Type = migration.ColumnTypeJSON
-
-	default:
-		// 默认为文本类型
-		column.Type = migration.ColumnTypeText
-	}
-
-	return nil
-}
-
-// mapCustomType 处理自定义类型标签
-func (m *BaseModel) mapCustomType(typeTag string, field reflect.StructField, column *migration.Column) error {
-	switch strings.ToLower(typeTag) {
-	// 字符串类型
-	case "varchar":
-		column.Type = migration.ColumnTypeVarchar
-		if sizeTag := field.Tag.Get("size"); sizeTag != "" {
-			column.Length = parseInt(sizeTag)
-		}
-		if column.Length == 0 {
-			column.Length = 255
-		}
-	case "char":
-		column.Type = migration.ColumnTypeChar
-		if sizeTag := field.Tag.Get("size"); sizeTag != "" {
-			column.Length = parseInt(sizeTag)
-		}
-		if column.Length == 0 {
-			column.Length = 1
-		}
-	case "text":
-		column.Type = migration.ColumnTypeText
-	case "longtext":
-		column.Type = migration.ColumnTypeLongText
-
-	// 数值类型
-	case "tinyint":
-		column.Type = migration.ColumnTypeTinyInt
-	case "smallint":
-		column.Type = migration.ColumnTypeSmallInt
-	case "int", "integer":
-		column.Type = migration.ColumnTypeInt
-	case "bigint":
-		column.Type = migration.ColumnTypeBigInt
-	case "float":
-		column.Type = migration.ColumnTypeFloat
-	case "double":
-		column.Type = migration.ColumnTypeDouble
-	case "decimal", "numeric":
-		column.Type = migration.ColumnTypeDecimal
-		if precisionTag := field.Tag.Get("precision"); precisionTag != "" {
-			column.Precision = parseInt(precisionTag)
-		}
-		if scaleTag := field.Tag.Get("scale"); scaleTag != "" {
-			column.Scale = parseInt(scaleTag)
-		}
-
-	// 时间类型
-	case "datetime":
-		column.Type = migration.ColumnTypeDateTime
-	case "timestamp":
-		column.Type = migration.ColumnTypeTimestamp
-	case "date":
-		column.Type = migration.ColumnTypeDate
-	case "time":
-		column.Type = migration.ColumnTypeTime
-
-	// 其他类型
-	case "boolean", "bool":
-		column.Type = migration.ColumnTypeBoolean
-	case "blob":
-		column.Type = migration.ColumnTypeBlob
-	case "json":
-		column.Type = migration.ColumnTypeJSON
-
-	default:
-		return fmt.Errorf("不支持的自定义类型: %s", typeTag)
-	}
-
-	return nil
-}
-
-// mapStringType 处理字符串类型映射
-func (m *BaseModel) mapStringType(field reflect.StructField, column *migration.Column) error {
-	// 检查长度标签
-	sizeTag := field.Tag.Get("size")
-	if sizeTag != "" {
-		size := parseInt(sizeTag)
-		if size > 0 {
-			if size <= 255 {
-				column.Type = migration.ColumnTypeVarchar
-				column.Length = size
-			} else if size <= 65535 {
-				column.Type = migration.ColumnTypeText
 			} else {
-				column.Type = migration.ColumnTypeLongText
+				// 如果模型没有TableName方法，从类型名推断
+				tableName = getTableNameFromModelType(model)
 			}
-			return nil
-		}
-	}
-
-	// 检查是否为固定长度
-	if field.Tag.Get("fixed") == "true" {
-		column.Type = migration.ColumnTypeChar
-		if column.Length == 0 {
-			column.Length = 255
-		}
-		return nil
-	}
-
-	// 默认 VARCHAR(255)
-	column.Type = migration.ColumnTypeVarchar
-	column.Length = 255
-	return nil
-}
-
-// mapTimeType 处理时间类型映射
-func (m *BaseModel) mapTimeType(field reflect.StructField, column *migration.Column) error {
-	// 检查自动时间戳标签
-	if field.Tag.Get("autoCreateTime") != "" || field.Tag.Get("autoUpdateTime") != "" {
-		column.Type = migration.ColumnTypeTimestamp
-		return nil
-	}
-
-	// 检查类型偏好
-	if field.Tag.Get("timestamp") == "true" {
-		column.Type = migration.ColumnTypeTimestamp
-	} else {
-		column.Type = migration.ColumnTypeDateTime
-	}
-
-	return nil
-}
-
-// mapFloatType 处理浮点类型映射
-func (m *BaseModel) mapFloatType(field reflect.StructField, column *migration.Column, isFloat32 bool) error {
-	// 检查是否指定为 DECIMAL
-	if field.Tag.Get("decimal") == "true" {
-		column.Type = migration.ColumnTypeDecimal
-
-		if precisionTag := field.Tag.Get("precision"); precisionTag != "" {
-			column.Precision = parseInt(precisionTag)
-		} else {
-			column.Precision = 10 // 默认精度
 		}
 
-		if scaleTag := field.Tag.Get("scale"); scaleTag != "" {
-			column.Scale = parseInt(scaleTag)
-		} else {
-			column.Scale = 2 // 默认小数位
-		}
-
-		return nil
-	}
-
-	// 默认浮点类型
-	if isFloat32 {
-		column.Type = migration.ColumnTypeFloat
-	} else {
-		column.Type = migration.ColumnTypeDouble
-	}
-
-	return nil
-}
-
-// mapSliceType 处理切片类型映射
-func (m *BaseModel) mapSliceType(fieldType reflect.Type, column *migration.Column) error {
-	elemType := fieldType.Elem()
-
-	// 检查元素类型
-	switch elemType.Kind() {
-	case reflect.Uint8:
-		// []byte 映射为 BLOB
-		column.Type = migration.ColumnTypeBlob
-	case reflect.String:
-		// []string 映射为 JSON
-		column.Type = migration.ColumnTypeJSON
-	default:
-		// 其他切片类型都映射为 JSON
-		column.Type = migration.ColumnTypeJSON
-	}
-
-	return nil
-}
-
-// parseFieldTags 解析字段标签
-func (m *BaseModel) parseFieldTags(field reflect.StructField, column *migration.Column) {
-	// 优先解析 torm 标签
-	if tormTag := field.Tag.Get("torm"); tormTag != "" {
-		m.parseTormTag(tormTag, column)
-		return
-	}
-
-	// 向后兼容：检查传统标签
-	m.parseLegacyTags(field, column)
-}
-
-// parseTormTag 解析 torm 标签
-func (m *BaseModel) parseTormTag(tormTag string, column *migration.Column) {
-	// 分割标签内容
-	parts := strings.Split(tormTag, ",")
-
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-
-		// 检查是否是 key:value 格式
-		if strings.Contains(part, ":") {
-			keyValue := strings.SplitN(part, ":", 2)
-			key := strings.TrimSpace(keyValue[0])
-			value := strings.TrimSpace(keyValue[1])
-
-			m.parseTormKeyValue(key, value, column)
-		} else {
-			// 简单标志位
-			m.parseTormFlag(part, column)
-		}
-	}
-}
-
-// parseTormFlag 解析 torm 标签中的标志位
-func (m *BaseModel) parseTormFlag(flag string, column *migration.Column) {
-	switch strings.ToLower(flag) {
-	case "primary_key", "pk":
-		column.PrimaryKey = true
-		column.NotNull = true
-	case "auto_increment", "autoincrement":
-		column.AutoIncrement = true
-		column.PrimaryKey = true
-		column.NotNull = true
-	case "unique":
-		column.Unique = true
-	case "nullable", "null":
-		column.NotNull = false
-	case "not_null", "notnull":
-		column.NotNull = true
-	case "auto_create_time", "autocreate":
-		column.Default = "CURRENT_TIMESTAMP"
-	case "auto_update_time", "autoupdate":
-		// 自动更新时间字段需要根据数据库类型设置不同的默认值
-		// MySQL: CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-		// PostgreSQL: CURRENT_TIMESTAMP (需要触发器)
-		// SQLite: CURRENT_TIMESTAMP (需要应用层处理)
-		column.Default = "CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"
-	case "index":
-		m.markColumnForIndex(column, "")
-	}
-}
-
-// parseTormKeyValue 解析 torm 标签中的 key:value 对
-func (m *BaseModel) parseTormKeyValue(key, value string, column *migration.Column) {
-	switch strings.ToLower(key) {
-	case "type":
-		// 直接设置类型，不使用 mapCustomType（避免查找单独标签的问题）
-		m.setColumnType(value, column)
-	case "size", "length":
-		if size := parseInt(value); size > 0 {
-			column.Length = size
-		}
-	case "precision":
-		if precision := parseInt(value); precision > 0 {
-			column.Precision = precision
-		}
-	case "scale":
-		if scale := parseInt(value); scale > 0 {
-			column.Scale = scale
-		}
-	case "default":
-		m.parseDefaultValue(value, column)
-	case "comment":
-		column.Comment = value
-	case "index":
-		m.markColumnForIndex(column, value)
-	}
-}
-
-// setColumnType 直接设置列类型（不依赖单独标签）
-func (m *BaseModel) setColumnType(typeStr string, column *migration.Column) {
-	switch strings.ToLower(typeStr) {
-	// 字符串类型
-	case "varchar":
-		column.Type = migration.ColumnTypeVarchar
-		if column.Length == 0 {
-			column.Length = 255 // 默认长度
-		}
-	case "char":
-		column.Type = migration.ColumnTypeChar
-		if column.Length == 0 {
-			column.Length = 1 // 默认长度
-		}
-	case "text":
-		column.Type = migration.ColumnTypeText
-	case "longtext":
-		column.Type = migration.ColumnTypeLongText
-
-	// 数值类型
-	case "tinyint":
-		column.Type = migration.ColumnTypeTinyInt
-	case "smallint":
-		column.Type = migration.ColumnTypeSmallInt
-	case "int", "integer":
-		column.Type = migration.ColumnTypeInt
-	case "bigint":
-		column.Type = migration.ColumnTypeBigInt
-	case "float":
-		column.Type = migration.ColumnTypeFloat
-	case "double":
-		column.Type = migration.ColumnTypeDouble
-	case "decimal", "numeric":
-		column.Type = migration.ColumnTypeDecimal
-		// 默认精度和小数位
-		if column.Precision == 0 {
-			column.Precision = 10
-		}
-		if column.Scale == 0 {
-			column.Scale = 2
-		}
-
-	// 时间类型
-	case "datetime":
-		column.Type = migration.ColumnTypeDateTime
-	case "timestamp":
-		column.Type = migration.ColumnTypeTimestamp
-	case "date":
-		column.Type = migration.ColumnTypeDate
-	case "time":
-		column.Type = migration.ColumnTypeTime
-
-	// 其他类型
-	case "boolean", "bool":
-		column.Type = migration.ColumnTypeBoolean
-	case "blob":
-		column.Type = migration.ColumnTypeBlob
-	case "json":
-		column.Type = migration.ColumnTypeJSON
-	}
-}
-
-// parseDefaultValue 解析默认值
-func (m *BaseModel) parseDefaultValue(value string, column *migration.Column) {
-	switch strings.ToLower(value) {
-	case "null":
-		column.Default = nil
-	case "current_timestamp", "now()":
-		column.Default = "CURRENT_TIMESTAMP"
-	case "true":
-		column.Default = true
-	case "false":
-		column.Default = false
-	default:
-		// 尝试解析为数字
-		if intVal := parseInt(value); intVal != 0 || value == "0" {
-			column.Default = intVal
-		} else {
-			column.Default = value
-		}
-	}
-}
-
-// markColumnForIndex 标记列需要创建索引
-func (m *BaseModel) markColumnForIndex(column *migration.Column, indexName string) {
-	if indexName == "" || indexName == "true" {
-		indexName = "auto"
-	}
-
-	if column.Comment == "" {
-		column.Comment = "INDEX:" + indexName
-	} else {
-		column.Comment += " INDEX:" + indexName
-	}
-}
-
-// parseLegacyTags 解析传统标签（向后兼容）
-func (m *BaseModel) parseLegacyTags(field reflect.StructField, column *migration.Column) {
-	// 检查主键标签
-	if field.Tag.Get("primaryKey") == "true" || field.Tag.Get("pk") != "" {
-		column.PrimaryKey = true
-		column.NotNull = true
-	}
-
-	// 检查唯一性约束
-	if field.Tag.Get("unique") == "true" {
-		column.Unique = true
-	}
-
-	// 检查自增标签
-	if field.Tag.Get("autoIncrement") == "true" || field.Tag.Get("auto_increment") == "true" {
-		column.AutoIncrement = true
-		column.PrimaryKey = true
-		column.NotNull = true
-	}
-
-	// 检查默认值
-	if defaultValue := field.Tag.Get("default"); defaultValue != "" {
-		m.parseDefaultValue(defaultValue, column)
-	}
-
-	// 检查注释
-	if comment := field.Tag.Get("comment"); comment != "" {
-		column.Comment = comment
-	}
-
-	// 检查非空约束
-	if field.Tag.Get("not_null") == "true" {
-		column.NotNull = true
-	} else if field.Tag.Get("nullable") == "true" {
-		column.NotNull = false
-	}
-
-	// 检查时间戳字段
-	if field.Tag.Get("autoCreateTime") != "" {
-		column.Default = "CURRENT_TIMESTAMP"
-	}
-	if field.Tag.Get("autoUpdateTime") != "" {
-		column.Default = "CURRENT_TIMESTAMP"
-	}
-
-	// 检查索引标签
-	if field.Tag.Get("index") != "" {
-		m.markColumnForIndex(column, field.Tag.Get("index"))
-	}
-}
-
-// parseInt 解析整数字符串
-func parseInt(s string) int {
-	result := 0
-	for _, r := range s {
-		if r >= '0' && r <= '9' {
-			result = result*10 + int(r-'0')
-		} else {
-			return 0
-		}
-	}
-	return result
-}
-
-// updateTableStructure 更新表结构
-func (m *BaseModel) updateTableStructure(conn db.ConnectionInterface, tableName string) error {
-	// 获取模型结构体信息
-	modelStruct, err := m.getModelStruct()
-	if err != nil {
-		return fmt.Errorf("获取模型结构失败: %w", err)
-	}
-
-	// 创建模型分析器和表结构对比器
-	analyzer := migration.NewModelAnalyzer()
-	comparator := migration.NewSchemaComparator(conn)
-	alterGenerator := migration.NewAlterGenerator(conn)
-
-	// 分析模型列
-	modelColumns, err := analyzer.AnalyzeModel(modelStruct)
-	if err != nil {
-		return fmt.Errorf("分析模型列失败: %w", err)
-	}
-
-	// 获取数据库中的列信息
-	dbColumns, err := comparator.GetDatabaseColumns(tableName)
-	if err != nil {
-		return fmt.Errorf("获取数据库列失败: %w", err)
-	}
-
-	// 对比差异
-	differences := comparator.CompareColumns(dbColumns, modelColumns)
-	if len(differences) == 0 {
-		// 没有差异，不需要更新
-		return nil
-	}
-
-	// 生成ALTER TABLE语句
-	alterStatements, err := alterGenerator.GenerateAlterSQL(tableName, differences)
-	if err != nil {
-		return fmt.Errorf("生成 ALTER 语句失败: %w", err)
-	}
-
-	// 执行ALTER TABLE语句
-	for _, statement := range alterStatements {
-		m.GetLogger().Info("执行SQL语句", "sql", statement)
-
-		// 跳过注释语句
-		if strings.HasPrefix(strings.TrimSpace(statement), "--") {
-			m.GetLogger().Debug("跳过注释", "comment", statement)
-			continue
-		}
-
-		_, err := conn.Exec(statement)
+		// 执行迁移
+		err = migrator.MigrateModel(model, tableName)
 		if err != nil {
-			return fmt.Errorf("执行 ALTER 语句 '%s' 失败: %w", statement, err)
+			return fmt.Errorf("模型 %d 自动迁移失败: %w", i+1, err)
 		}
 	}
-
-	m.GetLogger().Info("表结构更新成功", "changes", len(differences))
-
-	// 打印变更详情
-	m.printSchemaChanges(differences)
 
 	return nil
 }
 
-// printSchemaChanges 打印表结构变更详情
-func (m *BaseModel) printSchemaChanges(differences []migration.ColumnDifference) {
-	if len(differences) == 0 {
-		return
+// getTableNameFromModelType 从模型类型推断表名
+func getTableNameFromModelType(model interface{}) string {
+	modelType := reflect.TypeOf(model)
+	if modelType.Kind() == reflect.Ptr {
+		modelType = modelType.Elem()
 	}
 
-	fmt.Println("\n📋 Schema Changes Applied:")
-	fmt.Println("| Column | Action | Details |")
-	fmt.Println("|--------|--------|---------|")
+	typeName := modelType.Name()
 
-	for _, diff := range differences {
-		action := ""
-		details := ""
+	// 简单的命名转换：User -> users, Admin -> admins
+	// 你可以根据需要添加更复杂的命名规则
+	tableName := strings.ToLower(typeName)
 
-		switch diff.Type {
-		case "add":
-			action = "➕ ADD"
-			if modelCol, ok := diff.NewValue.(migration.ModelColumn); ok {
-				details = fmt.Sprintf("Added %s column with type %s", modelCol.Name, modelCol.Type)
-			}
-		case "modify":
-			action = "修改"
-			details = diff.Reason
-		case "drop":
-			action = "删除"
-			details = "Column removed from model"
+	// 如果不是以s结尾，添加s（简单的复数化）
+	if !strings.HasSuffix(tableName, "s") {
+		tableName += "s"
+	}
+
+	return tableName
+}
+
+// DetectConfigFromStruct 从结构体检测配置（保持兼容性）
+func (m *BaseModel) DetectConfigFromStruct(model interface{}) {
+	modelType := reflect.TypeOf(model)
+	if modelType.Kind() == reflect.Ptr {
+		modelType = modelType.Elem()
+	}
+
+	// 如果没有设置表名，从结构体名推断
+	if m.tableName == "" {
+		tableName := toSnakeCase(modelType.Name())
+		m.SetTable(tableName)
+	}
+
+	// TODO: 这里可以解析TORM标签，配置字段信息
+	// 新版本会大大简化这个过程
+}
+
+// toSnakeCase 转换为蛇形命名
+func toSnakeCase(str string) string {
+	var result strings.Builder
+	for i, r := range str {
+		if i > 0 && r >= 'A' && r <= 'Z' {
+			result.WriteRune('_')
 		}
-
-		m.GetLogger().Info("表结构变更", "column", diff.Column, "action", action, "details", details)
+		result.WriteRune(r - 'A' + 'a')
 	}
-	fmt.Println()
+	return result.String()
 }

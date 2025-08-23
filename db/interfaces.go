@@ -27,6 +27,7 @@ type ConnectionInterface interface {
 	GetConfig() *Config
 	GetDriver() string
 	GetStats() sql.DBStats
+	GetDB() *sql.DB
 }
 
 // TransactionInterface 事务接口
@@ -85,6 +86,11 @@ type QueryInterface interface {
 	WithContext(ctx context.Context) QueryInterface
 	WithTimeout(timeout time.Duration) QueryInterface
 
+	// 缓存控制
+	Cache(ttl time.Duration) QueryInterface
+	CacheWithTags(ttl time.Duration, tags ...string) QueryInterface
+	CacheKey(key string) QueryInterface
+
 	// 执行查询
 	Get() ([]map[string]interface{}, error)
 	First(dest ...interface{}) (map[string]interface{}, error)
@@ -100,7 +106,7 @@ type QueryInterface interface {
 	InsertBatch(data []map[string]interface{}) (int64, error)
 	Update(data map[string]interface{}) (int64, error)
 	Delete() (int64, error)
-	
+
 	// 高级表达式
 	Exp(field string, expression string, bindings ...interface{}) QueryInterface
 
@@ -168,6 +174,13 @@ type CacheInterface interface {
 	Delete(key string) error
 	Clear() error
 	Has(key string) (bool, error)
+}
+
+// CacheWithTagsInterface 带标签的缓存接口
+type CacheWithTagsInterface interface {
+	CacheInterface
+	SetWithTags(key string, value interface{}, ttl time.Duration, tags []string) error
+	DeleteByTags(tags []string) error
 }
 
 // LoggerInterface 日志接口

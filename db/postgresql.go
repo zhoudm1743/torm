@@ -328,3 +328,8 @@ func (t *PostgreSQLTransaction) Rollback() error {
 	t.tx = nil
 	return nil
 }
+
+// GetDB 获取底层数据库连接
+func (c *PostgreSQLConnection) GetDB() *sql.DB {
+	return c.db
+}

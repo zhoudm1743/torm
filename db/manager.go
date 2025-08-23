@@ -1,342 +1,105 @@
 package db
 
 import (
-	"context"
-	"database/sql"
 	"fmt"
-	"reflect"
-	"strings"
 	"sync"
 )
 
-// Manager 数据库管理器
+// Manager 简化的数据库管理器
 type Manager struct {
-	configs     map[string]*Config             // 数据库配置
-	connections map[string]ConnectionInterface // 连接实例
-	mu          sync.RWMutex                   // 读写锁
-	logger      LoggerInterface                // 日志接口
-	cache       CacheInterface                 // 缓存接口
-	queryTimes  int64                          // 查询次数统计
+	configs     map[string]*Config
+	connections map[string]ConnectionInterface
+	logger      LoggerInterface
+	mutex       sync.RWMutex
 }
 
-// NewManager 创建数据库管理器
+// defaultManager 默认管理器实例
+var defaultManager *Manager
+
+func init() {
+	defaultManager = NewManager()
+}
+
+// NewManager 创建新的管理器
 func NewManager() *Manager {
 	return &Manager{
 		configs:     make(map[string]*Config),
 		connections: make(map[string]ConnectionInterface),
+		logger:      nil, // 默认无日志
 	}
+}
+
+// NewManagerWithLogger 创建带日志的管理器
+func NewManagerWithLogger(logger LoggerInterface) *Manager {
+	return &Manager{
+		configs:     make(map[string]*Config),
+		connections: make(map[string]ConnectionInterface),
+		logger:      logger,
+	}
+}
+
+// SetLogger 设置日志记录器
+func (m *Manager) SetLogger(logger LoggerInterface) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.logger = logger
 }
 
 // AddConfig 添加数据库配置
 func (m *Manager) AddConfig(name string, config *Config) error {
-	if err := config.Validate(); err != nil {
-		return fmt.Errorf("连接 '%s' 的配置无效: %w", name, err)
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
 
 	m.configs[name] = config
 	return nil
 }
 
-// GetConfig 获取数据库配置
-func (m *Manager) GetConfig(name string) (*Config, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	config, exists := m.configs[name]
-	if !exists {
-		return nil, fmt.Errorf("connection '%s' not configured", name)
-	}
-
-	return config, nil
-}
-
 // Connection 获取数据库连接
 func (m *Manager) Connection(name string) (ConnectionInterface, error) {
-	m.mu.RLock()
-	conn, exists := m.connections[name]
-	m.mu.RUnlock()
-
-	if exists && conn.IsConnected() {
+	// 先检查是否已有连接（读锁）
+	m.mutex.RLock()
+	if conn, exists := m.connections[name]; exists {
+		m.mutex.RUnlock()
 		return conn, nil
 	}
 
-	return m.createConnection(name)
-}
-
-// createConnection 创建数据库连接
-func (m *Manager) createConnection(name string) (ConnectionInterface, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	// 双重检查
-	if conn, exists := m.connections[name]; exists && conn.IsConnected() {
-		return conn, nil
-	}
-
+	// 获取配置
 	config, exists := m.configs[name]
+	m.mutex.RUnlock()
 	if !exists {
-		return nil, fmt.Errorf("connection '%s' not configured", name)
+		return nil, fmt.Errorf("连接配置 '%s' 不存在", name)
 	}
 
+	// 创建连接（无锁状态）
 	var conn ConnectionInterface
 	var err error
 
 	switch config.Driver {
 	case "mysql":
 		conn, err = NewMySQLConnection(config, m.logger)
-	case "postgres", "postgresql":
-		conn, err = NewPostgreSQLConnection(config, m.logger)
 	case "sqlite", "sqlite3":
 		conn, err = NewSQLiteConnection(config, m.logger)
-	case "sqlserver", "mssql":
-		conn, err = NewSQLServerConnection(config, m.logger)
-	case "mongodb", "mongo":
-		conn, err = NewMongoDBConnection(config, m.logger)
+	case "postgres", "postgresql":
+		conn, err = NewPostgreSQLConnection(config, m.logger)
 	default:
-		return nil, fmt.Errorf("不支持的驱动: %s", config.Driver)
+		return nil, fmt.Errorf("不支持的数据库驱动: %s", config.Driver)
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("创建连接 '%s' 失败: %w", name, err)
+		return nil, fmt.Errorf("创建数据库连接失败: %w", err)
 	}
 
+	// 连接数据库
 	if err := conn.Connect(); err != nil {
-		return nil, fmt.Errorf("连接数据库 '%s' 失败: %w", name, err)
+		return nil, fmt.Errorf("连接数据库失败: %w", err)
 	}
 
+	// 缓存连接（写锁）
+	m.mutex.Lock()
 	m.connections[name] = conn
+	m.mutex.Unlock()
+
 	return conn, nil
-}
-
-// Query 创建查询构造器
-func (m *Manager) Query(connectionName ...string) (QueryInterface, error) {
-	name := "default"
-	if len(connectionName) > 0 {
-		name = connectionName[0]
-	}
-
-	conn, err := m.Connection(name)
-	if err != nil {
-		return nil, err
-	}
-
-	return NewQuery(conn), nil
-}
-
-// Table 指定表名创建查询构造器
-func (m *Manager) Table(tableName string, connectionName ...string) (QueryInterface, error) {
-	query, err := m.Query(connectionName...)
-	if err != nil {
-		return nil, err
-	}
-
-	return query.From(tableName), nil
-}
-
-// Raw 执行原生SQL查询
-func (m *Manager) Raw(ctx context.Context, sql string, bindings []interface{}, connectionName ...string) ([]map[string]interface{}, error) {
-	name := "default"
-	if len(connectionName) > 0 {
-		name = connectionName[0]
-	}
-
-	conn, err := m.Connection(name)
-	if err != nil {
-		return nil, err
-	}
-
-	rows, err := conn.Query(sql, bindings...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	return m.scanRows(rows)
-}
-
-// Exec 执行SQL语句
-func (m *Manager) Exec(ctx context.Context, sql string, bindings []interface{}, connectionName ...string) (sql.Result, error) {
-	name := "default"
-	if len(connectionName) > 0 {
-		name = connectionName[0]
-	}
-
-	conn, err := m.Connection(name)
-	if err != nil {
-		return nil, err
-	}
-
-	return conn.Exec(sql, bindings...)
-}
-
-// Transaction 执行事务
-func (m *Manager) Transaction(fn func(tx TransactionInterface) error, connectionName ...string) error {
-	name := "default"
-	if len(connectionName) > 0 {
-		name = connectionName[0]
-	}
-
-	conn, err := m.Connection(name)
-	if err != nil {
-		return err
-	}
-
-	tx, err := conn.Begin()
-	if err != nil {
-		return err
-	}
-
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-			panic(r)
-		}
-	}()
-
-	if err := fn(tx); err != nil {
-		tx.Rollback()
-		return err
-	}
-
-	return tx.Commit()
-}
-
-// SetLogger 设置日志接口
-func (m *Manager) SetLogger(logger LoggerInterface) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.logger = logger
-}
-
-// SetCache 设置缓存接口
-func (m *Manager) SetCache(cache CacheInterface) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.cache = cache
-}
-
-// GetCache 获取缓存接口
-func (m *Manager) GetCache() CacheInterface {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.cache
-}
-
-// GetLogger 获取日志接口
-func (m *Manager) GetLogger() LoggerInterface {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.logger
-}
-
-// Close 关闭所有连接
-func (m *Manager) Close() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	var errs []error
-	for name, conn := range m.connections {
-		if err := conn.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("关闭连接 '%s' 失败: %w", name, err))
-		}
-	}
-
-	// 清空连接
-	m.connections = make(map[string]ConnectionInterface)
-
-	if len(errs) > 0 {
-		return fmt.Errorf("关闭连接时出错: %v", errs)
-	}
-
-	return nil
-}
-
-// GetStats 获取连接统计信息
-func (m *Manager) GetStats() map[string]sql.DBStats {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	stats := make(map[string]sql.DBStats)
-	for name, conn := range m.connections {
-		stats[name] = conn.GetStats()
-	}
-
-	return stats
-}
-
-// scanRows 扫描行数据
-func (m *Manager) scanRows(rows *sql.Rows) ([]map[string]interface{}, error) {
-	columns, err := rows.Columns()
-	if err != nil {
-		return nil, err
-	}
-
-	columnTypes, err := rows.ColumnTypes()
-	if err != nil {
-		return nil, err
-	}
-
-	var results []map[string]interface{}
-
-	for rows.Next() {
-		values := make([]interface{}, len(columns))
-		valuePtrs := make([]interface{}, len(columns))
-
-		for i := range values {
-			valuePtrs[i] = &values[i]
-		}
-
-		if err := rows.Scan(valuePtrs...); err != nil {
-			return nil, err
-		}
-
-		row := make(map[string]interface{})
-		for i, col := range columns {
-			val := values[i]
-
-			// 处理NULL值
-			if val == nil {
-				row[col] = nil
-				continue
-			}
-
-			// 根据数据库类型转换值
-			switch columnTypes[i].DatabaseTypeName() {
-			case "VARCHAR", "TEXT", "CHAR":
-				if b, ok := val.([]byte); ok {
-					row[col] = string(b)
-				} else {
-					row[col] = val
-				}
-			case "INT", "INTEGER", "BIGINT":
-				row[col] = val
-			case "FLOAT", "DOUBLE", "DECIMAL":
-				row[col] = val
-			case "BOOLEAN", "BOOL":
-				row[col] = val
-			case "TIMESTAMP", "DATETIME", "DATE", "TIME":
-				row[col] = val
-			default:
-				row[col] = val
-			}
-		}
-
-		results = append(results, row)
-	}
-
-	return results, rows.Err()
-}
-
-// 默认管理器实例
-var defaultManager = NewManager()
-
-// 初始化默认管理器
-func init() {
-	// 设置默认logger - 需要导入logger包时才能设置
-	// 这里使用延迟初始化，在第一次使用时设置logger
 }
 
 // DefaultManager 获取默认管理器
@@ -344,77 +107,12 @@ func DefaultManager() *Manager {
 	return defaultManager
 }
 
-// SetDefaultLogger 设置默认管理器的logger
-func SetDefaultLogger(logger LoggerInterface) {
-	defaultManager.SetLogger(logger)
-}
-
-// EnableDefaultQueryLogging 启用默认查询日志记录
-func EnableDefaultQueryLogging() {
-	// 如果还没有logger，创建一个基本的logger
-	if defaultManager.GetLogger() == nil {
-		// 创建一个基本的控制台logger
-		defaultLogger := &BasicLogger{}
-		defaultManager.SetLogger(defaultLogger)
-	}
-}
-
-// BasicLogger 基本的控制台日志记录器
-type BasicLogger struct{}
-
-// Debug 调试日志
-func (l *BasicLogger) Debug(msg string, fields ...interface{}) {
-	fmt.Printf("[DEBUG] %s", msg)
-	if len(fields) > 0 {
-		fmt.Printf(" %v", fields)
-	}
-	fmt.Println()
-}
-
-// Info 信息日志
-func (l *BasicLogger) Info(msg string, fields ...interface{}) {
-	fmt.Printf("[INFO] %s", msg)
-	if len(fields) > 0 {
-		fmt.Printf(" %v", fields)
-	}
-	fmt.Println()
-}
-
-// Warn 警告日志
-func (l *BasicLogger) Warn(msg string, fields ...interface{}) {
-	fmt.Printf("[WARN] %s", msg)
-	if len(fields) > 0 {
-		fmt.Printf(" %v", fields)
-	}
-	fmt.Println()
-}
-
-// Error 错误日志
-func (l *BasicLogger) Error(msg string, fields ...interface{}) {
-	fmt.Printf("[ERROR] %s", msg)
-	if len(fields) > 0 {
-		fmt.Printf(" %v", fields)
-	}
-	fmt.Println()
-}
-
-// Fatal 致命错误日志
-func (l *BasicLogger) Fatal(msg string, fields ...interface{}) {
-	fmt.Printf("[FATAL] %s", msg)
-	if len(fields) > 0 {
-		fmt.Printf(" %v", fields)
-	}
-	fmt.Println()
-}
-
-// 便捷函数，使用默认管理器
-
-// AddConnection 添加连接配置
+// AddConnection 添加连接配置（便捷函数）
 func AddConnection(name string, config *Config) error {
 	return defaultManager.AddConfig(name, config)
 }
 
-// DB 获取数据库连接
+// DB 获取数据库连接（便捷函数）
 func DB(name ...string) (ConnectionInterface, error) {
 	connectionName := "default"
 	if len(name) > 0 {
@@ -423,190 +121,64 @@ func DB(name ...string) (ConnectionInterface, error) {
 	return defaultManager.Connection(connectionName)
 }
 
-// Query 创建查询构造器
-func Query(connectionName ...string) (QueryInterface, error) {
-	return defaultManager.Query(connectionName...)
-}
+// Table 创建表查询构建器（便捷函数）
+func Table(tableName string, connectionName ...string) (*QueryBuilder, error) {
+	connName := "default"
+	if len(connectionName) > 0 {
+		connName = connectionName[0]
+	}
 
-// Table 指定表名创建查询构造器
-func Table(tableName string, connectionName ...string) (QueryInterface, error) {
-	return defaultManager.Table(tableName, connectionName...)
-}
-
-// Raw 执行原生SQL查询
-func Raw(sql string, bindings []interface{}, connectionName ...string) ([]map[string]interface{}, error) {
-	return defaultManager.Raw(context.Background(), sql, bindings, connectionName...)
-}
-
-// Exec 执行SQL语句
-func Exec(sql string, bindings []interface{}, connectionName ...string) (sql.Result, error) {
-	return defaultManager.Exec(context.Background(), sql, bindings, connectionName...)
-}
-
-// Transaction 执行事务
-func Transaction(fn func(tx TransactionInterface) error, connectionName ...string) error {
-	return defaultManager.Transaction(fn, connectionName...)
-}
-
-// 便利的全局查询方法，提供TORM风格的API
-
-// WhereGlobal 创建带有WHERE条件的新查询 - 便利函数
-// 用法: db.WhereGlobal("name = ?", "张三").First(&user)
-func WhereGlobal(args ...interface{}) (QueryInterface, error) {
-	conn, err := DB()
+	builder, err := NewQueryBuilder(connName)
 	if err != nil {
 		return nil, err
 	}
-	return NewQuery(conn).Where(args...), nil
+
+	builder.tableName = tableName
+	return builder, nil
 }
 
-// Model 基于模型创建查询 - 自动获取表名和模型特性
-// 用法: db.Model(&User{}).Where("age > ?", 18).Find(&users)
-func Model(model interface{}) (QueryInterface, error) {
-	if model == nil {
-		return nil, fmt.Errorf("model cannot be nil")
+// Model 从模型创建查询构建器（便捷函数）
+func Model(model interface{}, connectionName ...string) (*QueryBuilder, error) {
+	connName := "default"
+	if len(connectionName) > 0 {
+		connName = connectionName[0]
 	}
 
-	// 获取表名
+	builder, err := NewQueryBuilder(connName)
+	if err != nil {
+		return nil, err
+	}
+
+	// 设置模型
+	builder.model = model
+
+	// 从模型获取表名
 	tableName := getTableNameFromModel(model)
 	if tableName == "" {
-		return nil, fmt.Errorf("cannot determine table name from model")
+		return nil, fmt.Errorf("无法从模型获取表名")
 	}
 
-	// 尝试从模型获取连接名
-	connectionName := getConnectionFromModel(model)
-	if connectionName == "" {
-		connectionName = "default" // 默认连接
-	}
-
-	// 创建查询构建器并绑定模型
-	query, err := Table(tableName, connectionName)
-	if err != nil {
-		return nil, err
-	}
-
-	return query.WithModel(model), nil
+	builder.tableName = tableName
+	return builder, nil
 }
 
-// FirstGlobal 直接查询第一条记录 - 便利函数
-// 用法: db.FirstGlobal(&user) 或 db.FirstGlobal(&user, 10)
-func FirstGlobal(dest interface{}, conds ...interface{}) error {
-	conn, err := DB()
-	if err != nil {
-		return err
+// ClearCacheByTags 根据标签清理缓存
+func ClearCacheByTags(tags ...string) error {
+	if memCache, ok := GetDefaultCache().(*MemoryCache); ok {
+		return memCache.DeleteByTags(tags)
 	}
-
-	query := NewQuery(conn)
-
-	// 如果有条件参数，添加Where条件
-	if len(conds) > 0 {
-		// 如果第一个参数是数字，视为按ID查询
-		if len(conds) == 1 {
-			query = query.Where("id", "=", conds[0])
-		} else {
-			// 否则作为条件查询
-			query = query.Where(conds...)
-		}
-	}
-
-	_, err = query.First(dest)
-	return err
+	return nil
 }
 
-// FindGlobal 直接查询记录 - 便利函数
-// 用法: db.FindGlobal(&users) 或 db.FindGlobal(&user, 10)
-func FindGlobal(dest interface{}, conds ...interface{}) error {
-	conn, err := DB()
-	if err != nil {
-		return err
-	}
-
-	query := NewQuery(conn)
-
-	// 如果有条件参数，添加Where条件
-	if len(conds) > 0 {
-		// 如果第一个参数是数字，视为按ID查询
-		if len(conds) == 1 {
-			query = query.Where("id", "=", conds[0])
-		} else {
-			// 否则作为条件查询
-			query = query.Where(conds...)
-		}
-	}
-
-	_, err = query.Find(dest)
-	return err
+// ClearAllCache 清理所有缓存
+func ClearAllCache() error {
+	return GetDefaultCache().Clear()
 }
 
-// getTableNameFromModel 从模型中获取表名
-func getTableNameFromModel(model interface{}) string {
-	if model == nil {
-		return ""
+// GetCacheStats 获取缓存统计信息
+func GetCacheStats() map[string]interface{} {
+	if memCache, ok := GetDefaultCache().(*MemoryCache); ok {
+		return memCache.Stats()
 	}
-
-	modelType := reflect.TypeOf(model)
-	if modelType.Kind() == reflect.Ptr {
-		modelType = modelType.Elem()
-	}
-
-	// 1. 尝试调用TableName方法
-	modelValue := reflect.ValueOf(model)
-	if modelValue.Kind() == reflect.Ptr {
-		modelValue = modelValue.Elem()
-	}
-
-	// 检查是否有BaseModel字段
-	if baseModelField := modelValue.FieldByName("BaseModel"); baseModelField.IsValid() {
-		// 尝试调用TableName方法
-		tableNameMethod := baseModelField.Addr().MethodByName("TableName")
-		if tableNameMethod.IsValid() {
-			result := tableNameMethod.Call(nil)
-			if len(result) > 0 {
-				if tableName, ok := result[0].Interface().(string); ok && tableName != "" {
-					return tableName
-				}
-			}
-		}
-	}
-
-	// 2. 根据结构体名称推断表名
-	modelName := modelType.Name()
-	if modelName != "" {
-		// 简单的复数形式转换
-		tableName := strings.ToLower(modelName)
-		if !strings.HasSuffix(tableName, "s") {
-			tableName += "s"
-		}
-		return tableName
-	}
-
-	return ""
-}
-
-// getConnectionFromModel 从模型中获取连接名
-func getConnectionFromModel(model interface{}) string {
-	if model == nil {
-		return ""
-	}
-
-	modelValue := reflect.ValueOf(model)
-	if modelValue.Kind() == reflect.Ptr {
-		modelValue = modelValue.Elem()
-	}
-
-	// 检查是否有BaseModel字段
-	if baseModelField := modelValue.FieldByName("BaseModel"); baseModelField.IsValid() {
-		// 尝试调用GetConnection方法
-		getConnMethod := baseModelField.Addr().MethodByName("GetConnection")
-		if getConnMethod.IsValid() {
-			result := getConnMethod.Call(nil)
-			if len(result) > 0 {
-				if connName, ok := result[0].Interface().(string); ok && connName != "" {
-					return connName
-				}
-			}
-		}
-	}
-
-	return "" // 返回空字符串，使用默认连接
+	return nil
 }

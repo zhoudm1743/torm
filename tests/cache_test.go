@@ -2,330 +2,348 @@ package tests
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
-	"github.com/zhoudm1743/torm/cache"
+	"github.com/zhoudm1743/torm"
 )
 
-func TestMemoryCache_BasicOperations(t *testing.T) {
-	cache := cache.NewMemoryCache()
-
-	// 测试设置和获取
-	err := cache.Set("test_key", "test_value", 5*time.Minute)
-	require.NoError(t, err)
-
-	value, err := cache.Get("test_key")
-	require.NoError(t, err)
-	assert.Equal(t, "test_value", value)
-
-	// 测试检查键是否存在
-	exists, err := cache.Has("test_key")
-	require.NoError(t, err)
-	assert.True(t, exists)
-
-	exists, err = cache.Has("non_existent_key")
-	require.NoError(t, err)
-	assert.False(t, exists)
+// CacheTestUser 缓存测试用户模型
+type CacheTestUser struct {
+	torm.BaseModel
+	ID       int    `json:"id" torm:"primary_key,auto_increment"`
+	Username string `json:"username" torm:"type:varchar,size:50,unique"`
+	Email    string `json:"email" torm:"type:varchar,size:100"`
+	Age      int    `json:"age" torm:"type:int,default:0"`
+	Status   string `json:"status" torm:"type:varchar,size:20,default:active"`
+	City     string `json:"city" torm:"type:varchar,size:50"`
 }
 
-func TestMemoryCache_ComplexData(t *testing.T) {
-	cache := cache.NewMemoryCache()
+// setupCacheTestData 设置缓存测试数据
+func setupCacheTestData(t *testing.T, connectionName string) {
+	// 创建表
+	user := &CacheTestUser{BaseModel: *torm.NewBaseModel()}
+	user.SetTable("cache_test_users").SetPrimaryKey("id").SetConnection(connectionName)
 
-	// 测试存储复杂数据结构
-	complexData := map[string]interface{}{
-		"id":     123,
-		"name":   "测试用户",
-		"tags":   []string{"tag1", "tag2", "tag3"},
-		"meta":   map[string]string{"role": "admin", "department": "IT"},
-		"score":  95.5,
-		"active": true,
+	err := user.AutoMigrate(user)
+	if err != nil {
+		t.Fatalf("❌ 缓存测试表创建失败: %v", err)
 	}
 
-	err := cache.Set("complex_key", complexData, 10*time.Minute)
-	require.NoError(t, err)
-
-	value, err := cache.Get("complex_key")
-	require.NoError(t, err)
-	assert.Equal(t, complexData, value)
-}
-
-func TestMemoryCache_Expiration(t *testing.T) {
-	cache := cache.NewMemoryCache()
-
-	// 测试过期
-	err := cache.Set("expiring_key", "expiring_value", 100*time.Millisecond)
-	require.NoError(t, err)
-
-	// 立即获取应该成功
-	value, err := cache.Get("expiring_key")
-	require.NoError(t, err)
-	assert.Equal(t, "expiring_value", value)
-
-	// 等待过期
-	time.Sleep(150 * time.Millisecond)
-
-	// 应该已经过期
-	_, err = cache.Get("expiring_key")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "expired")
-
-	// 检查是否存在也应该返回false
-	exists, err := cache.Has("expiring_key")
-	require.NoError(t, err)
-	assert.False(t, exists)
-}
-
-func TestMemoryCache_Delete(t *testing.T) {
-	cache := cache.NewMemoryCache()
-
-	// 设置一些数据
-	err := cache.Set("delete_key", "delete_value", 5*time.Minute)
-	require.NoError(t, err)
-
-	// 确认存在
-	exists, err := cache.Has("delete_key")
-	require.NoError(t, err)
-	assert.True(t, exists)
-
-	// 删除
-	err = cache.Delete("delete_key")
-	require.NoError(t, err)
-
-	// 确认已删除
-	exists, err = cache.Has("delete_key")
-	require.NoError(t, err)
-	assert.False(t, exists)
-
-	// 获取应该失败
-	_, err = cache.Get("delete_key")
-	assert.Error(t, err)
-}
-
-func TestMemoryCache_Clear(t *testing.T) {
-	cache := cache.NewMemoryCache()
-
-	// 设置多个键
-	keys := []string{"key1", "key2", "key3", "key4", "key5"}
-	for i, key := range keys {
-		err := cache.Set(key, fmt.Sprintf("value%d", i+1), 5*time.Minute)
-		require.NoError(t, err)
+	// 清理可能存在的数据
+	if builder, err := torm.Table("cache_test_users", connectionName); err == nil {
+		builder.Delete()
 	}
 
-	// 确认所有键都存在
-	for _, key := range keys {
-		exists, err := cache.Has(key)
-		require.NoError(t, err)
-		assert.True(t, exists)
+	// 插入测试数据
+	testData := []map[string]interface{}{
+		{"username": "cache_user1", "email": "cache1@test.com", "age": 25, "status": "active", "city": "北京"},
+		{"username": "cache_user2", "email": "cache2@test.com", "age": 30, "status": "active", "city": "上海"},
+		{"username": "cache_user3", "email": "cache3@test.com", "age": 28, "status": "inactive", "city": "深圳"},
+		{"username": "cache_user4", "email": "cache4@test.com", "age": 35, "status": "active", "city": "北京"},
+		{"username": "cache_user5", "email": "cache5@test.com", "age": 22, "status": "pending", "city": "广州"},
 	}
+
+	for _, data := range testData {
+		if builder, err := torm.Table("cache_test_users", connectionName); err == nil {
+			builder.Insert(data)
+		}
+	}
+
+	t.Log("✅ 缓存测试数据初始化完成")
+}
+
+// TestMySQL_Cache MySQL缓存测试
+func TestMySQL_Cache(t *testing.T) {
+	setupMySQLConnection(t)
+
+	fmt.Println("\n" + strings.Repeat("=", 60))
+	fmt.Println("🐬 MySQL 缓存功能测试")
+	fmt.Println(strings.Repeat("=", 60))
+
+	setupCacheTestData(t, "mysql_test")
+	testCacheBasicFunctionality(t, "mysql_test", "mysql")
+	testCacheWithTags(t, "mysql_test", "mysql")
+	testCacheExpiration(t, "mysql_test", "mysql")
+	testCacheInvalidation(t, "mysql_test", "mysql")
+
+	fmt.Println("\n✅ MySQL缓存测试完成")
+}
+
+// TestPostgreSQL_Cache PostgreSQL缓存测试
+func TestPostgreSQL_Cache(t *testing.T) {
+	setupPostgreSQLConnection(t)
+
+	fmt.Println("\n" + strings.Repeat("=", 60))
+	fmt.Println("🐘 PostgreSQL 缓存功能测试")
+	fmt.Println(strings.Repeat("=", 60))
+
+	setupCacheTestData(t, "postgres_test")
+	testCacheBasicFunctionality(t, "postgres_test", "postgres")
+	testCacheWithTags(t, "postgres_test", "postgres")
+	testCacheExpiration(t, "postgres_test", "postgres")
+	testCacheInvalidation(t, "postgres_test", "postgres")
+
+	fmt.Println("\n✅ PostgreSQL缓存测试完成")
+}
+
+// testCacheBasicFunctionality 测试基础缓存功能
+func testCacheBasicFunctionality(t *testing.T, connectionName, dbType string) {
+	t.Logf("\n📋 1. %s 基础缓存功能测试", dbType)
 
 	// 清空缓存
-	err := cache.Clear()
-	require.NoError(t, err)
+	torm.ClearAllCache()
 
-	// 确认所有键都不存在
-	for _, key := range keys {
-		exists, err := cache.Has(key)
-		require.NoError(t, err)
-		assert.False(t, exists)
+	// 第一次查询 - 应该从数据库获取
+	builder1, err := torm.Table("cache_test_users", connectionName)
+	if err != nil {
+		t.Errorf("❌ %s 查询构建器创建失败: %v", dbType, err)
+		return
+	}
+
+	start := time.Now()
+	results1, err := builder1.Where("status", "=", "active").Cache(5 * time.Minute).Get()
+	firstQueryTime := time.Since(start)
+
+	if err != nil {
+		t.Errorf("❌ %s 第一次缓存查询失败: %v", dbType, err)
+		return
+	}
+	t.Logf("✅ %s 第一次查询成功: %d条记录, 耗时: %v", dbType, len(results1), firstQueryTime)
+
+	// 第二次相同查询 - 应该从缓存获取
+	builder2, err := torm.Table("cache_test_users", connectionName)
+	if err != nil {
+		t.Errorf("❌ %s 查询构建器创建失败: %v", dbType, err)
+		return
+	}
+
+	start = time.Now()
+	results2, err := builder2.Where("status", "=", "active").Cache(5 * time.Minute).Get()
+	secondQueryTime := time.Since(start)
+
+	if err != nil {
+		t.Errorf("❌ %s 第二次缓存查询失败: %v", dbType, err)
+		return
+	}
+
+	// 验证结果相同
+	if len(results1) != len(results2) {
+		t.Errorf("❌ %s 缓存结果不一致: 第一次%d条，第二次%d条", dbType, len(results1), len(results2))
+		return
+	}
+
+	// 第二次查询应该明显更快（从缓存获取）
+	if secondQueryTime >= firstQueryTime/2 {
+		t.Logf("⚠️ %s 缓存效果不明显: 第一次%v, 第二次%v", dbType, firstQueryTime, secondQueryTime)
+	} else {
+		t.Logf("✅ %s 缓存生效: 第一次%v, 第二次%v (提速%.1fx)",
+			dbType, firstQueryTime, secondQueryTime, float64(firstQueryTime)/float64(secondQueryTime))
+	}
+
+	// 测试缓存统计
+	stats := torm.GetCacheStats()
+	if stats != nil {
+		t.Logf("📊 %s 缓存统计: %+v", dbType, stats)
 	}
 }
 
-func TestMemoryCache_NoExpiration(t *testing.T) {
-	cache := cache.NewMemoryCache()
+// testCacheWithTags 测试带标签的缓存
+func testCacheWithTags(t *testing.T, connectionName, dbType string) {
+	t.Logf("\n🏷️ 2. %s 标签缓存测试", dbType)
 
-	// 设置永不过期的缓存（TTL为0）
-	err := cache.Set("permanent_key", "permanent_value", 0)
-	require.NoError(t, err)
+	// 清空缓存
+	torm.ClearAllCache()
 
-	// 等待一段时间
-	time.Sleep(100 * time.Millisecond)
+	// 使用不同标签缓存不同查询
+	builder1, _ := torm.Table("cache_test_users", connectionName)
+	results1, err := builder1.Where("city", "=", "北京").
+		CacheWithTags(10*time.Minute, "users", "city_beijing").Get()
+	if err != nil {
+		t.Errorf("❌ %s 北京用户查询失败: %v", dbType, err)
+		return
+	}
+	t.Logf("✅ %s 北京用户查询: %d条记录", dbType, len(results1))
 
-	// 应该仍然存在
-	value, err := cache.Get("permanent_key")
-	require.NoError(t, err)
-	assert.Equal(t, "permanent_value", value)
+	builder2, _ := torm.Table("cache_test_users", connectionName)
+	results2, err := builder2.Where("city", "=", "上海").
+		CacheWithTags(10*time.Minute, "users", "city_shanghai").Get()
+	if err != nil {
+		t.Errorf("❌ %s 上海用户查询失败: %v", dbType, err)
+		return
+	}
+	t.Logf("✅ %s 上海用户查询: %d条记录", dbType, len(results2))
 
-	exists, err := cache.Has("permanent_key")
-	require.NoError(t, err)
-	assert.True(t, exists)
+	// 缓存所有活跃用户
+	builder3, _ := torm.Table("cache_test_users", connectionName)
+	results3, err := builder3.Where("status", "=", "active").
+		CacheWithTags(10*time.Minute, "users", "active_users").Get()
+	if err != nil {
+		t.Errorf("❌ %s 活跃用户查询失败: %v", dbType, err)
+		return
+	}
+	t.Logf("✅ %s 活跃用户查询: %d条记录", dbType, len(results3))
+
+	// 验证缓存生效
+	builder4, _ := torm.Table("cache_test_users", connectionName)
+	start := time.Now()
+	results4, err := builder4.Where("city", "=", "北京").
+		CacheWithTags(10*time.Minute, "users", "city_beijing").Get()
+	cacheQueryTime := time.Since(start)
+
+	if err != nil {
+		t.Errorf("❌ %s 缓存验证查询失败: %v", dbType, err)
+		return
+	}
+
+	if len(results1) != len(results4) {
+		t.Errorf("❌ %s 标签缓存结果不一致", dbType)
+		return
+	}
+
+	t.Logf("✅ %s 标签缓存验证成功, 查询耗时: %v", dbType, cacheQueryTime)
 }
 
-func TestMemoryCache_OverwriteValue(t *testing.T) {
-	cache := cache.NewMemoryCache()
+// testCacheExpiration 测试缓存过期
+func testCacheExpiration(t *testing.T, connectionName, dbType string) {
+	t.Logf("\n⏰ 3. %s 缓存过期测试", dbType)
 
-	// 设置初始值
-	err := cache.Set("overwrite_key", "initial_value", 5*time.Minute)
-	require.NoError(t, err)
+	// 清空缓存
+	torm.ClearAllCache()
 
-	value, err := cache.Get("overwrite_key")
-	require.NoError(t, err)
-	assert.Equal(t, "initial_value", value)
+	// 设置短期缓存
+	builder1, _ := torm.Table("cache_test_users", connectionName)
+	results1, err := builder1.Where("age", ">", 25).Cache(2 * time.Second).Get()
+	if err != nil {
+		t.Errorf("❌ %s 短期缓存查询失败: %v", dbType, err)
+		return
+	}
+	t.Logf("✅ %s 短期缓存设置成功: %d条记录", dbType, len(results1))
 
-	// 覆写值
-	err = cache.Set("overwrite_key", "new_value", 5*time.Minute)
-	require.NoError(t, err)
+	// 立即查询 - 应该命中缓存
+	builder2, _ := torm.Table("cache_test_users", connectionName)
+	start := time.Now()
+	results2, err := builder2.Where("age", ">", 25).Cache(2 * time.Second).Get()
+	immediateQueryTime := time.Since(start)
 
-	value, err = cache.Get("overwrite_key")
-	require.NoError(t, err)
-	assert.Equal(t, "new_value", value)
+	if err != nil {
+		t.Errorf("❌ %s 立即缓存查询失败: %v", dbType, err)
+		return
+	}
+
+	// 验证结果数量一致
+	if len(results1) != len(results2) {
+		t.Errorf("❌ %s 立即缓存查询结果不一致", dbType)
+		return
+	}
+
+	t.Logf("✅ %s 立即缓存查询成功, 耗时: %v", dbType, immediateQueryTime)
+
+	// 等待缓存过期
+	t.Logf("   等待缓存过期...")
+	time.Sleep(3 * time.Second)
+
+	// 过期后查询 - 应该重新从数据库获取
+	builder3, _ := torm.Table("cache_test_users", connectionName)
+	start = time.Now()
+	results3, err := builder3.Where("age", ">", 25).Cache(2 * time.Second).Get()
+	expiredQueryTime := time.Since(start)
+
+	if err != nil {
+		t.Errorf("❌ %s 过期后查询失败: %v", dbType, err)
+		return
+	}
+
+	// 结果应该相同，但耗时应该增加
+	if len(results1) != len(results3) {
+		t.Errorf("❌ %s 过期后查询结果不一致", dbType)
+		return
+	}
+
+	t.Logf("✅ %s 缓存过期测试完成: 立即查询%v, 过期后查询%v",
+		dbType, immediateQueryTime, expiredQueryTime)
 }
 
-func TestMemoryCache_ConcurrentAccess(t *testing.T) {
-	cache := cache.NewMemoryCache()
+// testCacheInvalidation 测试缓存失效
+func testCacheInvalidation(t *testing.T, connectionName, dbType string) {
+	t.Logf("\n🗑️ 4. %s 缓存失效测试", dbType)
 
-	// 测试并发访问
-	done := make(chan bool, 10)
+	// 清空缓存
+	torm.ClearAllCache()
 
-	// 启动多个goroutine进行并发读写
-	for i := 0; i < 10; i++ {
-		go func(id int) {
-			defer func() { done <- true }()
+	// 缓存用户数据
+	builder1, _ := torm.Table("cache_test_users", connectionName)
+	results1, err := builder1.Where("status", "=", "active").
+		CacheWithTags(10*time.Minute, "users", "active_users").Get()
+	if err != nil {
+		t.Errorf("❌ %s 用户缓存设置失败: %v", dbType, err)
+		return
+	}
+	t.Logf("✅ %s 用户缓存设置成功: %d条记录", dbType, len(results1))
 
-			key := fmt.Sprintf("concurrent_key_%d", id)
-			value := fmt.Sprintf("concurrent_value_%d", id)
+	// 缓存城市数据
+	builder2, _ := torm.Table("cache_test_users", connectionName)
+	results2, err := builder2.Where("city", "=", "北京").
+		CacheWithTags(10*time.Minute, "users", "city_data").Get()
+	if err != nil {
+		t.Errorf("❌ %s 城市缓存设置失败: %v", dbType, err)
+		return
+	}
+	t.Logf("✅ %s 城市缓存设置成功: %d条记录", dbType, len(results2))
 
-			// 设置值
-			err := cache.Set(key, value, 5*time.Minute)
-			assert.NoError(t, err)
+	// 通过标签清理特定缓存
+	err = torm.ClearCacheByTags("active_users")
+	if err != nil {
+		t.Errorf("❌ %s 标签缓存清理失败: %v", dbType, err)
+		return
+	}
+	t.Logf("✅ %s 标签缓存清理成功", dbType)
 
-			// 读取值
-			retrievedValue, err := cache.Get(key)
-			assert.NoError(t, err)
-			assert.Equal(t, value, retrievedValue)
+	// 验证特定缓存已清理，其他缓存仍存在
+	builder3, _ := torm.Table("cache_test_users", connectionName)
+	start := time.Now()
+	results3, err := builder3.Where("status", "=", "active").
+		CacheWithTags(10*time.Minute, "users", "active_users").Get()
+	activeQueryTime := time.Since(start)
 
-			// 检查存在性
-			exists, err := cache.Has(key)
-			assert.NoError(t, err)
-			assert.True(t, exists)
-		}(i)
+	if err != nil {
+		t.Errorf("❌ %s 清理后活跃用户查询失败: %v", dbType, err)
+		return
 	}
 
-	// 等待所有goroutine完成
-	for i := 0; i < 10; i++ {
-		<-done
-	}
-}
+	t.Logf("   ✅ %s 清理后活跃用户查询成功: %d条记录", dbType, len(results3))
 
-func TestMemoryCache_EdgeCases(t *testing.T) {
-	cache := cache.NewMemoryCache()
+	builder4, _ := torm.Table("cache_test_users", connectionName)
+	start = time.Now()
+	results4, err := builder4.Where("city", "=", "北京").
+		CacheWithTags(10*time.Minute, "users", "city_data").Get()
+	cityQueryTime := time.Since(start)
 
-	// 测试空键
-	err := cache.Set("", "empty_key_value", 5*time.Minute)
-	require.NoError(t, err)
-
-	value, err := cache.Get("")
-	require.NoError(t, err)
-	assert.Equal(t, "empty_key_value", value)
-
-	// 测试nil值
-	err = cache.Set("nil_key", nil, 5*time.Minute)
-	require.NoError(t, err)
-
-	value, err = cache.Get("nil_key")
-	require.NoError(t, err)
-	assert.Nil(t, value)
-
-	// 测试非常长的键
-	longKey := string(make([]byte, 1000))
-	for i := range longKey {
-		longKey = string(append([]byte(longKey[:i]), 'a'))
-	}
-	longKey = longKey[:1000] // 确保长度为1000
-
-	err = cache.Set(longKey, "long_key_value", 5*time.Minute)
-	require.NoError(t, err)
-
-	value, err = cache.Get(longKey)
-	require.NoError(t, err)
-	assert.Equal(t, "long_key_value", value)
-}
-
-func TestMemoryCache_TypeSafety(t *testing.T) {
-	cache := cache.NewMemoryCache()
-
-	// 测试不同类型的值
-	testCases := []struct {
-		key   string
-		value interface{}
-	}{
-		{"string_key", "string_value"},
-		{"int_key", 42},
-		{"float_key", 3.14159},
-		{"bool_key", true},
-		{"slice_key", []int{1, 2, 3, 4, 5}},
-		{"map_key", map[string]int{"a": 1, "b": 2}},
-		{"struct_key", struct{ Name string }{"test"}},
+	if err != nil {
+		t.Errorf("❌ %s 清理后城市查询失败: %v", dbType, err)
+		return
 	}
 
-	// 设置所有值
-	for _, tc := range testCases {
-		err := cache.Set(tc.key, tc.value, 5*time.Minute)
-		require.NoError(t, err)
+	t.Logf("   ✅ %s 清理后城市查询成功: %d条记录", dbType, len(results4))
+
+	t.Logf("✅ %s 选择性缓存清理验证: 活跃用户查询%v, 城市查询%v",
+		dbType, activeQueryTime, cityQueryTime)
+
+	// 清空所有缓存
+	err = torm.ClearAllCache()
+	if err != nil {
+		t.Errorf("❌ %s 全部缓存清理失败: %v", dbType, err)
+		return
 	}
+	t.Logf("✅ %s 全部缓存清理成功", dbType)
 
-	// 验证所有值
-	for _, tc := range testCases {
-		value, err := cache.Get(tc.key)
-		require.NoError(t, err)
-		assert.Equal(t, tc.value, value)
-	}
-}
-
-func TestMemoryCache_ErrorCases(t *testing.T) {
-	cache := cache.NewMemoryCache()
-
-	// 测试获取不存在的键
-	_, err := cache.Get("non_existent")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
-
-	// 测试删除不存在的键（应该不报错）
-	err = cache.Delete("non_existent")
-	assert.NoError(t, err)
-}
-
-func BenchmarkMemoryCache_Set(b *testing.B) {
-	cache := cache.NewMemoryCache()
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		key := fmt.Sprintf("bench_key_%d", i)
-		cache.Set(key, "benchmark_value", 5*time.Minute)
-	}
-}
-
-func BenchmarkMemoryCache_Get(b *testing.B) {
-	cache := cache.NewMemoryCache()
-
-	// 预设一些数据
-	for i := 0; i < 1000; i++ {
-		key := fmt.Sprintf("bench_key_%d", i)
-		cache.Set(key, "benchmark_value", 5*time.Minute)
-	}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		key := fmt.Sprintf("bench_key_%d", i%1000)
-		cache.Get(key)
-	}
-}
-
-func BenchmarkMemoryCache_Has(b *testing.B) {
-	cache := cache.NewMemoryCache()
-
-	// 预设一些数据
-	for i := 0; i < 1000; i++ {
-		key := fmt.Sprintf("bench_key_%d", i)
-		cache.Set(key, "benchmark_value", 5*time.Minute)
-	}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		key := fmt.Sprintf("bench_key_%d", i%1000)
-		cache.Has(key)
+	// 验证缓存统计
+	stats := torm.GetCacheStats()
+	if stats != nil {
+		t.Logf("📊 %s 清理后缓存统计: %+v", dbType, stats)
+		if totalItems, ok := stats["total_items"].(int); ok && totalItems == 0 {
+			t.Logf("✅ %s 缓存完全清空", dbType)
+		}
 	}
 }

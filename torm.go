@@ -1,32 +1,23 @@
 package torm
 
 import (
-	"github.com/zhoudm1743/torm/cache"
 	"github.com/zhoudm1743/torm/db"
 	"github.com/zhoudm1743/torm/logger"
 	"github.com/zhoudm1743/torm/migration"
 	"github.com/zhoudm1743/torm/model"
-	"github.com/zhoudm1743/torm/query"
 )
 
-// 导出主要类型和接口
+// 导出核心类型
 type (
 	// 数据库相关
 	Config               = db.Config
 	ConnectionInterface  = db.ConnectionInterface
 	TransactionInterface = db.TransactionInterface
-	QueryInterface       = db.QueryInterface
-	LoggerInterface      = db.LoggerInterface
+	QueryBuilder         = db.QueryBuilder
 	Manager              = db.Manager
 
 	// 模型相关
 	BaseModel = model.BaseModel
-
-	// 查询相关
-	AdvancedQueryBuilder = query.AdvancedQueryBuilder
-
-	// 缓存相关
-	MemoryCache = cache.MemoryCache
 
 	// 迁移相关
 	Migration = migration.Migration
@@ -35,30 +26,52 @@ type (
 	Logger = logger.Logger
 )
 
-// 导出主要函数
+// 导出核心函数
 var (
 	// 数据库连接管理
 	NewManager     = db.NewManager
 	DefaultManager = db.DefaultManager
 	AddConnection  = db.AddConnection
 	DB             = db.DB
-	Query          = db.Query
 	Table          = db.Table
-	Raw            = db.Raw
-	Exec           = db.Exec
+	Model          = db.Model
 	Transaction    = db.Transaction
 
-	// 日志相关
-	NewLogger = logger.NewLogger
+	// 模型相关
+	NewBaseModel = model.NewBaseModel
 
-	// 缓存相关
-	NewMemoryCache = cache.NewMemoryCache
+	// 日志相关
+	NewLogger        = logger.NewLogger
+	NewSQLLogger     = logger.NewSQLLogger
+	NewManagerWithLogger = db.NewManagerWithLogger
 
 	// 迁移相关
 	NewMigration = migration.NewMigration
+
+	// 缓存相关
+	ClearCacheByTags = db.ClearCacheByTags
+	ClearAllCache    = db.ClearAllCache
+	GetCacheStats    = db.GetCacheStats
 )
+
+// SetLogger 设置默认管理器的日志记录器
+func SetLogger(log db.LoggerInterface) {
+	DefaultManager().SetLogger(log)
+}
+
+// EnableSQLLogging 启用SQL日志记录
+func EnableSQLLogging() {
+	sqlLogger := logger.NewSQLLogger(logger.DEBUG, true)
+	SetLogger(sqlLogger)
+}
+
+// SetSQLLogging 设置SQL日志记录
+func SetSQLLogging(level logger.LogLevel, enabled bool) {
+	sqlLogger := logger.NewSQLLogger(level, enabled)
+	SetLogger(sqlLogger)
+}
 
 // Version 返回 TORM 版本
 func Version() string {
-	return "1.1.6"
+	return "2.0.0"
 }

@@ -308,3 +308,8 @@ func (t *MySQLTransaction) Rollback() error {
 func NewSQLServerConnection(config *Config, logger LoggerInterface) (ConnectionInterface, error) {
 	return nil, fmt.Errorf("SQL Server connector not implemented yet")
 }
+
+// GetDB 获取底层数据库连接
+func (c *MySQLConnection) GetDB() *sql.DB {
+	return c.db
+}

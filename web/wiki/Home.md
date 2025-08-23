@@ -1,242 +1,288 @@
-# TORM v1.1.6 - 高性能Go语言ORM框架
+# TORM
 
-![TORM Logo](https://img.shields.io/badge/TORM-v1.1.6-blue?style=for-the-badge&logo=go)
-![Go Version](https://img.shields.io/badge/Go-1.19+-00ADD8?style=flat-square&logo=go)
-![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
-![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen?style=flat-square)
-![Enhanced Features](https://img.shields.io/badge/v1.1.6-Enhanced%20Features-orange?style=flat-square)
+欢迎使用TORM！
 
-## 📖 欢迎使用 TORM
+## 🚀 亮点
 
-TORM (Think ORM) 是一个功能强大、高性能的Go语言ORM框架，专为现代应用程序设计。它提供了简洁的API、强大的查询构建器、完整的关联关系支持和企业级的数据迁移工具。
+### ⚡ 零配置启动
+- **一行代码**完成数据库连接和表创建
+- **无需学习**复杂的迁移语法
+- **开箱即用**的数据库表管理
 
-### 🌟 核心特性
+### 🏷️ 强大的TORM标签系统
+- **30+种标签**覆盖所有数据库特性
+- **精确控制**字段类型、长度、约束
+- **自动生成**索引、外键、注释
 
-- **🚀 高性能**: 优化的连接池管理和查询执行
-- **🔗 多数据库支持**: MySQL、PostgreSQL、SQLite、SQL Server、MongoDB
-- **🏗️ 强大的查询构建器**: 类型安全的SQL查询构建，支持复杂条件和子查询
-- **📊 Active Record模式**: 模型内置查询方法，面向对象的数据库操作
-- **🔄 完整的关联关系**: HasOne、HasMany、BelongsTo、ManyToMany
-- **📦 数据迁移工具**: 版本化数据库结构管理
-- **⚡ 并发安全**: 内置连接池和并发控制
-- **🛡️ 事务支持**: 完整的ACID事务处理
-- **💾 智能缓存**: 高性能内存缓存系统
-- **📝 详细日志**: 可配置的查询日志和性能监控
+### 🔄 智能自动迁移
+- **增量更新**自动检测表结构差异
+- **数据安全**保护现有数据完整性
+- **跨数据库**MySQL、PostgreSQL、SQLite无缝支持
 
-### 🆕 v1.1.6 新功能
+### 🔗 现代化查询构建器
+- **参数化查询**有效防止SQL注入
+- **数组参数**自动展开为IN查询
+- **跨数据库**占位符自动适配
 
-- **🔍 增强WHERE查询**: WhereNull、WhereNotNull、WhereBetween、WhereNotBetween、WhereExists、WhereNotExists
-- **📊 高级排序**: OrderRand随机排序、OrderField按值排序、FieldRaw原生字段表达式
-- **🚀 完全兼容ThinkORM**: 实现了ThinkORM的所有核心查询方法
-- **⚡ 性能优化**: 移除GORM依赖，使用纯Go SQLite驱动
-- **🔗 模型链式调用**: 所有新方法支持完整的模型链式调用
-- **🎯 查询构建器增强**: 支持复杂子查询和EXISTS操作
+### 💼 简化事务处理
+- **自动管理**提交和回滚
+- **异常安全**确保数据一致性
+- **简洁API**专注业务逻辑
 
-### 🎯 设计理念
+## 📚 快速导航
 
-TORM采用现代化的设计理念，追求以下目标：
+### 🎯 核心功能
+- [**快速开始**](Quick-Start) - 5分钟上手TORM
+- [**数据迁移**](Migrations) - 零配置的表结构管理
+- [**查询构建器**](Query-Builder) - 强大的SQL构建工具
+- [**模型系统**](Model-System) - 优雅的数据模型设计
 
-1. **简洁性**: 提供简洁直观的API，降低学习成本
-2. **性能**: 优化查询执行，提供高并发支持
-3. **灵活性**: 支持多种数据库和查询模式
-4. **可靠性**: 完整的测试覆盖和错误处理
-5. **可维护性**: 清晰的代码结构和文档
+### 💡 学习资源
+- [**实例代码**](Examples) - 基于实际测试的完整示例
+- [**关联关系**](Relationships) - 模型间的关联设计
+- [**最佳实践**](Best-Practices) - 生产环境使用指南
 
-## 🚀 快速开始
-
-### 安装
-
-```bash
-go get github.com/zhoudm1743/torm
-```
-
-### 基本使用
+## 🎯 30秒快速体验
 
 ```go
 package main
 
 import (
-    "log"
-    "github.com/zhoudm1743/torm/db"
-    "github.com/zhoudm1743/torm/model"
+    "time"
+    "github.com/zhoudm1743/torm"
 )
 
 // 定义用户模型
 type User struct {
-    model.BaseModel
-    Name  string `db:"name" json:"name"`
-    Email string `db:"email" json:"email"`
-    Age   int    `db:"age" json:"age"`
+    torm.BaseModel
+    ID        int       `torm:"primary_key,auto_increment"`
+    Username  string    `torm:"type:varchar,size:50,unique,index"`
+    Email     string    `torm:"type:varchar,size:100,unique"`
+    Age       int       `torm:"type:int,unsigned,default:0"`
+    Balance   float64   `torm:"type:decimal,precision:10,scale:2,default:0.00"`
+    IsActive  bool      `torm:"type:boolean,default:1"`
+    CreatedAt time.Time `torm:"auto_create_time"`
+    UpdatedAt time.Time `torm:"auto_update_time"`
 }
 
 func main() {
-    // 配置数据库连接
-    config := &db.Config{
-        Driver:   "mysql",
-        Host:     "localhost",
-        Port:     3306,
-        Database: "myapp",
-        Username: "root",
-        Password: "password",
-        Charset:  "utf8mb4",
+    // 1. 配置数据库
+    torm.AddConnection("default", &torm.Config{
+        Driver:   "sqlite",
+        Database: "demo.db",
+    })
+    
+    // 2. 自动创建表结构
+    user := &User{}
+    user.AutoMigrate()
+    
+    // 3. 创建用户
+    newUser := &User{
+        Username: "zhangsan",
+        Email:    "zhangsan@example.com",
+        Age:      25,
+        Balance:  1000.00,
+        IsActive: true,
     }
-
-    // 添加连接
-    err := db.AddConnection("default", config)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // 使用查询构建器查询用户
-    var users []User
-    query := db.NewQueryBuilder("default")
-    err = query.Table("users").
-        Where("age", ">", 18).
-        Where("status", "=", "active").
+    newUser.Save()
+    
+    // 4. 查询用户
+    users, _ := torm.Table("users").
+        Where("is_active = ? AND age >= ?", true, 18).
+        Where("balance > ?", 500.00).
         OrderBy("created_at", "desc").
-        Limit(10).
-        Get(&users)
-    if err != nil {
-        log.Fatal(err)
-    }
+        Get()
+    
+    // 完成！无需配置，立即可用
+}
+```
 
-    // 使用模型方法创建用户
-    user := &User{
-        Name:  "张三",
-        Email: "zhangsan@example.com", 
-        Age:   25,
+## 🔧 支持的数据库
+
+### 完全支持
+- **MySQL** 5.7+ - 生产环境推荐
+- **PostgreSQL** 10+ - 高级功能支持  
+- **SQLite** 3.25+ - 开发测试推荐
+
+### 自动适配特性
+- **数据类型映射** - 自动转换Go类型到数据库类型
+- **SQL方言适配** - 自动生成数据库特定的SQL
+- **占位符处理** - MySQL(?), PostgreSQL($N), SQLite(?)
+- **功能降级** - 自动处理数据库功能差异
+
+## 🎭 使用场景
+
+### 🚀 快速原型开发
+```go
+// 30秒搭建博客数据模型
+type Post struct {
+    torm.BaseModel
+    ID       int    `torm:"primary_key,auto_increment"`
+    Title    string `torm:"type:varchar,size:200"`
+    Content  string `torm:"type:text"`
+    AuthorID int    `torm:"type:int,references:users.id"`
+    Status   string `torm:"type:varchar,size:20,default:draft"`
+}
+
+(&User{}).AutoMigrate()
+(&Post{}).AutoMigrate()
+```
+
+### 🏢 企业级应用
+```go
+// 完整的权限系统
+type User struct {
+    torm.BaseModel
+    ID         int     `torm:"primary_key,auto_increment"`
+    Username   string  `torm:"type:varchar,size:50,unique,index"`
+    Email      string  `torm:"type:varchar,size:100,unique"`
+    Password   string  `torm:"type:varchar,size:255"`
+    Salary     float64 `torm:"type:decimal,precision:10,scale:2"`
+    DeptID     int     `torm:"type:int,references:departments.id,on_delete:set_null"`
+    ManagerID  int     `torm:"type:int,references:users.id,on_delete:set_null"`
+    IsActive   bool    `torm:"type:boolean,default:1"`
+    
+    CreatedAt  time.Time `torm:"auto_create_time"`
+    UpdatedAt  time.Time `torm:"auto_update_time"`
+}
+```
+
+### 🌐 微服务架构
+```go
+// 每个服务独立的数据模型
+func setupOrderService() {
+    torm.AddConnection("orders", orderConfig)
+    
+    models := []interface{}{
+        &Order{}, &OrderItem{}, &Payment{},
     }
     
-    err = query.Table("users").Insert(user)
-    if err != nil {
-        log.Fatal(err)
+    for _, model := range models {
+        model.(interface{ AutoMigrate() error }).AutoMigrate()
     }
-
-    log.Printf("找到 %d 个用户", len(users))
-    log.Printf("创建用户成功，ID: %d", user.ID)
 }
 ```
 
-## 📊 性能基准
-
-TORM在多种场景下都表现出色：
-
-| 操作类型 | TORM | 其他ORM-A | 其他ORM-B |
-|---------|------|---------|---------|
-| 简单查询 | **2.1ms** | 3.2ms | 2.8ms |
-| 复杂JOIN | **8.5ms** | 12.3ms | 11.1ms |
-| 批量插入 | **15ms** | 28ms | 22ms |
-| 并发查询 | **1.8ms** | 4.1ms | 3.2ms |
-
-*基准测试环境: Go 1.21, MySQL 8.0, 16GB RAM*
-
-## 🏆 项目状态
-
-- ✅ **核心ORM功能**: 完整实现
-- ✅ **多数据库支持**: MySQL、PostgreSQL、SQLite、MongoDB
-- ✅ **查询构建器**: 功能完整
-- ✅ **关联关系**: HasOne、HasMany、BelongsTo、ManyToMany
-- ✅ **数据迁移**: 企业级迁移工具
-- ✅ **事务支持**: ACID事务处理
-- ✅ **缓存系统**: 内存缓存
-- ✅ **测试覆盖**: 95%+ 代码覆盖率
-
-## 🎨 代码示例
-
-### 模型定义
+### 🔄 多环境部署
 ```go
-type User struct {
-    model.BaseModel
-    Name     string    `db:"name" json:"name"`
-    Email    string    `db:"email" json:"email"`
-    Age      int       `db:"age" json:"age"`
-    Profile  string    `db:"profile" json:"profile"` // JSON字段
-    Posts    []*Post   `relation:"has_many,user_id"`
-    Profile  *Profile  `relation:"has_one,user_id"`
+// 同一套代码，多环境部署
+func deployToEnvironment(env string) {
+    config := getConfigByEnv(env) // dev/test/prod
+    torm.AddConnection("default", config)
+    
+    // 自动适配不同环境的数据库
+    (&User{}).AutoMigrate()
+    (&Product{}).AutoMigrate()
 }
 ```
 
-### v1.1.0 新功能演示
-```go
-// 1. 支持两种Where查询方式
-// 传统三参数方式
-users, err := query.Table("users").
-    Where("age", ">", 18).
-    Where("status", "=", "active").
-    Get()
+## 📊 性能表现
 
-// 参数化查询方式
-users, err = query.Table("users").
-    Where("name = ?", "张三").
-    Where("age >= ? AND city = ?", 18, "北京").
-    Get()
+### 🚀 查询性能
+- **零反射开销** - 直接SQL构建，避免运行时反射
+- **连接池优化** - 高效的数据库连接管理
+- **批量操作** - 原生支持批量插入和数组参数
+- **索引自动化** - 根据TORM标签自动创建优化索引
 
-// 混合使用两种方式
-users, err = query.Table("users").
-    Where("age", ">=", 18).           // 传统方式
-    Where("name LIKE ?", "%王%").      // 参数化方式
-    Where("status", "=", "active").   // 传统方式
-    Get()
+### 💾 内存效率
+- **轻量级设计** - 核心库体积小，依赖少
+- **对象池** - 复用查询构建器对象
+- **延迟加载** - 按需加载关联数据
+- **GC友好** - 最小化内存分配
 
-// 2. 增强的First/Find方法
-var user User
-_, err = query.Where("email = ?", "user@example.com").First(&user)
+## 🛠️ 开发工具链
 
-var userList []User
-_, err = query.Where("status", "=", "active").Find(&userList)
-
-// 3. 分页查询
-result, err := query.Table("users").
-    Where("age", ">", 18).
-    Paginate(1, 10) // 第1页，每页10条
-
-// 4. JSON字段查询 (v1.1.0新功能)
-advQuery := query.NewAdvancedQueryBuilder(query)
-users, err := advQuery.
-    WhereJSON("profile", "$.age", ">", 25).
-    WhereJSONContains("skills", "$.languages", "Go").
-    Get()
-
-// 5. 高级查询 - 窗口函数
-result, err := advQuery.
-    WithRowNumber("rank", "department", "salary DESC").
-    WithAvgWindow("salary", "dept_avg", "department").
-    Get()
+### 📝 代码生成
+```bash
+# 未来版本将支持
+torm generate model User
+torm generate migration create_users
+torm validate schema
 ```
 
-## 📞 联系我们
+### 🔍 调试工具
+```go
+// 查看生成的SQL
+sql, params := torm.Table("users").
+    Where("status = ?", "active").
+    ToSQL()
+fmt.Printf("SQL: %s\nParams: %v\n", sql, params)
+```
 
-- **GitHub**: https://github.com/zhoudm1743/torm
-- **作者邮箱**: zhoudm1743@163.com
-- **Issues**: [提交问题](https://github.com/zhoudm1743/torm/issues)
-- **Discussions**: [讨论区](https://github.com/zhoudm1743/torm/discussions)
+### 📊 性能分析
+```go
+// 查询性能监控
+torm.EnableDebug()  // 显示执行时间
+torm.EnableTrace()  // 显示完整调用栈
+```
 
-## 📄 许可证
+## 🌍 社区与生态
 
-本项目采用 [Apache2.0 许可证](https://github.com/zhoudm1743/torm/blob/main/LICENSE)。
+### 📚 学习资源
+- **官方文档** - [torm.site](http://torm.site)
+- **示例代码** - 基于实际项目的完整示例
+- **视频教程** - 从入门到精通的系列教程
+- **最佳实践** - 生产环境使用指南
+
+### 🤝 社区支持
+- **GitHub Issues** - 问题反馈和功能请求
+- **讨论区** - 技术交流和经验分享
+- **QQ群** - 实时答疑和讨论
+- **微信群** - 官方技术支持
+
+### 🔌 生态扩展
+- **缓存集成** - Redis, Memcached支持
+- **消息队列** - RabbitMQ, Kafka集成
+- **监控集成** - Prometheus, Grafana支持
+- **日志集成** - 结构化日志和链路追踪
+
+## 🗺️ 版本路线图
+
+### 🎯 v1.2.x (当前)
+- ✅ 零配置自动迁移
+- ✅ 30+种TORM标签
+- ✅ 跨数据库兼容
+- ✅ 参数化查询
+- ✅ 数组参数支持
+
+### 🚀 v1.3.0 (规划中)
+- 🔄 关联关系预加载
+- 🔄 软删除支持
+- 🔄 模型事件钩子
+- 🔄 JSON查询增强
+- 🔄 分库分表支持
+
+### 🌟 v1.4.0 (未来)
+- 🔄 代码生成工具
+- 🔄 图形化管理界面
+- 🔄 性能监控面板
+- 🔄 集群支持
+- 🔄 云原生集成
+
+## 🎉 立即开始
+
+### 🚀 安装
+```bash
+go mod init your-project
+go get github.com/zhoudm1743/torm
+```
+
+### 📚 学习路径
+1. [**快速开始**](Quick-Start) - 5分钟体验核心功能
+2. [**数据迁移**](Migrations) - 掌握表结构管理
+3. [**查询构建器**](Query-Builder) - 学习高级查询技巧
+4. [**模型系统**](Model-System) - 深入理解模型设计
+5. [**实例代码**](Examples) - 通过实例加深理解
+
+### 🎯 最佳实践
+- 从小项目开始，逐步掌握TORM特性
+- 充分利用TORM标签的强大功能
+- 在开发环境使用AutoMigrate，生产环境谨慎使用
+- 利用参数化查询确保安全性
+- 根据业务需求选择合适的数据库
 
 ---
 
-## 🔥 为什么选择 TORM？
+**🎊 开始你的TORM之旅！** TORM 让Go数据库开发变得简单而强大。
 
-### vs 其他ORM
-- **更好的性能**: 优化的查询构建器和连接池管理
-- **更强的类型安全**: 编译时类型检查和参数验证
-- **更完整的迁移工具**: 企业级数据库版本管理
-- **更好的MongoDB支持**: 原生NoSQL支持
-
-### vs Xorm  
-- **更现代的API**: 符合Go语言习惯的接口设计
-- **更强的关联关系**: 完整的ORM关系映射
-- **更好的并发性**: 优化的连接池管理
-- **更活跃的维护**: 持续更新和社区支持
-
-### vs 原生SQL
-- **开发效率**: 大幅提升开发速度
-- **类型安全**: 避免SQL注入和类型错误
-- **代码可维护性**: 结构化的数据访问层
-- **跨数据库兼容**: 一套代码支持多种数据库
-
----
-
-**立即开始使用TORM，体验高性能Go语言ORM的魅力！** 🚀 
+**📞 获取帮助**: [官方文档](http://torm.site) | [GitHub](https://github.com/zhoudm1743/torm) | [Issues](https://github.com/zhoudm1743/torm/issues)
