@@ -167,13 +167,18 @@ type ModelInterface interface {
 	AfterDelete() error
 }
 
-// CacheInterface 缓存接口
+// CacheInterface 基础缓存接口
 type CacheInterface interface {
+	// 基础操作
 	Get(key string) (interface{}, error)
 	Set(key string, value interface{}, ttl time.Duration) error
 	Delete(key string) error
 	Clear() error
 	Has(key string) (bool, error)
+	Size() int
+
+	// 生命周期管理
+	Close() error
 }
 
 // CacheWithTagsInterface 带标签的缓存接口
@@ -181,6 +186,49 @@ type CacheWithTagsInterface interface {
 	CacheInterface
 	SetWithTags(key string, value interface{}, ttl time.Duration, tags []string) error
 	DeleteByTags(tags []string) error
+}
+
+// CacheWithBatchInterface 支持批量操作的缓存接口
+type CacheWithBatchInterface interface {
+	CacheInterface
+	GetMulti(keys []string) (map[string]interface{}, error)
+	SetMulti(data map[string]interface{}, ttl time.Duration) error
+	DeleteMulti(keys []string) error
+}
+
+// CacheWithStatsInterface 支持统计的缓存接口
+type CacheWithStatsInterface interface {
+	CacheInterface
+	Stats() map[string]interface{}
+	ResetStats() error
+}
+
+// CacheWithAdvancedInterface 支持高级操作的缓存接口
+type CacheWithAdvancedInterface interface {
+	CacheInterface
+	GetOrSet(key string, valueFunc func() (interface{}, error), ttl time.Duration) (interface{}, error)
+	Increment(key string, delta int64) (int64, error)
+	Decrement(key string, delta int64) (int64, error)
+	Touch(key string, ttl time.Duration) error
+	Expire(key string, ttl time.Duration) error
+	TTL(key string) (time.Duration, error)
+}
+
+// FullCacheInterface 完整的缓存接口，包含所有功能
+type FullCacheInterface interface {
+	CacheInterface
+	CacheWithTagsInterface
+	CacheWithBatchInterface
+	CacheWithStatsInterface
+	CacheWithAdvancedInterface
+}
+
+// CacheConfig 缓存配置接口
+type CacheConfigInterface interface {
+	GetMaxSize() int
+	GetDefaultTTL() time.Duration
+	GetEvictionPolicy() string
+	Validate() error
 }
 
 // LoggerInterface 日志接口
