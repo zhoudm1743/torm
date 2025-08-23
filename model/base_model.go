@@ -169,6 +169,136 @@ func (m *BaseModel) Where(args ...interface{}) *ModelQueryBuilder {
 	}
 }
 
+// WhereIn WHERE IN条件
+func (m *BaseModel) WhereIn(field string, values []interface{}) *ModelQueryBuilder {
+	query, err := m.newQuery()
+	if err != nil {
+		return &ModelQueryBuilder{err: err, model: m}
+	}
+
+	return &ModelQueryBuilder{
+		query: query.WhereIn(field, values),
+		model: m,
+	}
+}
+
+// WhereNotIn WHERE NOT IN条件
+func (m *BaseModel) WhereNotIn(field string, values []interface{}) *ModelQueryBuilder {
+	query, err := m.newQuery()
+	if err != nil {
+		return &ModelQueryBuilder{err: err, model: m}
+	}
+
+	return &ModelQueryBuilder{
+		query: query.WhereNotIn(field, values),
+		model: m,
+	}
+}
+
+// WhereBetween WHERE BETWEEN条件
+func (m *BaseModel) WhereBetween(field string, values []interface{}) *ModelQueryBuilder {
+	query, err := m.newQuery()
+	if err != nil {
+		return &ModelQueryBuilder{err: err, model: m}
+	}
+
+	return &ModelQueryBuilder{
+		query: query.WhereBetween(field, values),
+		model: m,
+	}
+}
+
+// WhereNotBetween WHERE NOT BETWEEN条件
+func (m *BaseModel) WhereNotBetween(field string, values []interface{}) *ModelQueryBuilder {
+	query, err := m.newQuery()
+	if err != nil {
+		return &ModelQueryBuilder{err: err, model: m}
+	}
+
+	return &ModelQueryBuilder{
+		query: query.WhereNotBetween(field, values),
+		model: m,
+	}
+}
+
+// WhereNull WHERE IS NULL条件
+func (m *BaseModel) WhereNull(field string) *ModelQueryBuilder {
+	query, err := m.newQuery()
+	if err != nil {
+		return &ModelQueryBuilder{err: err, model: m}
+	}
+
+	return &ModelQueryBuilder{
+		query: query.WhereNull(field),
+		model: m,
+	}
+}
+
+// WhereNotNull WHERE IS NOT NULL条件
+func (m *BaseModel) WhereNotNull(field string) *ModelQueryBuilder {
+	query, err := m.newQuery()
+	if err != nil {
+		return &ModelQueryBuilder{err: err, model: m}
+	}
+
+	return &ModelQueryBuilder{
+		query: query.WhereNotNull(field),
+		model: m,
+	}
+}
+
+// WhereExists WHERE EXISTS条件
+func (m *BaseModel) WhereExists(subQuery interface{}) *ModelQueryBuilder {
+	query, err := m.newQuery()
+	if err != nil {
+		return &ModelQueryBuilder{err: err, model: m}
+	}
+
+	return &ModelQueryBuilder{
+		query: query.WhereExists(subQuery),
+		model: m,
+	}
+}
+
+// WhereNotExists WHERE NOT EXISTS条件
+func (m *BaseModel) WhereNotExists(subQuery interface{}) *ModelQueryBuilder {
+	query, err := m.newQuery()
+	if err != nil {
+		return &ModelQueryBuilder{err: err, model: m}
+	}
+
+	return &ModelQueryBuilder{
+		query: query.WhereNotExists(subQuery),
+		model: m,
+	}
+}
+
+// WhereRaw 原生WHERE条件
+func (m *BaseModel) WhereRaw(raw string, bindings ...interface{}) *ModelQueryBuilder {
+	query, err := m.newQuery()
+	if err != nil {
+		return &ModelQueryBuilder{err: err, model: m}
+	}
+
+	return &ModelQueryBuilder{
+		query: query.WhereRaw(raw, bindings...),
+		model: m,
+	}
+}
+
+// OrWhere 添加OR WHERE条件
+func (m *BaseModel) OrWhere(args ...interface{}) *ModelQueryBuilder {
+	query, err := m.newQuery()
+	if err != nil {
+		return &ModelQueryBuilder{err: err, model: m}
+	}
+
+	return &ModelQueryBuilder{
+		query: query.OrWhere(args...),
+		model: m,
+	}
+}
+
 // Find 根据主键查找
 func (m *BaseModel) Find(id interface{}) error {
 	query, err := m.newQuery()
@@ -211,6 +341,179 @@ func (m *BaseModel) Get() ([]map[string]interface{}, error) {
 	}
 
 	return query.Get()
+}
+
+// Count 计算记录数量
+func (m *BaseModel) Count() (int64, error) {
+	query, err := m.newQuery()
+	if err != nil {
+		return 0, err
+	}
+
+	return query.Count()
+}
+
+// Exists 检查记录是否存在
+func (m *BaseModel) Exists() (bool, error) {
+	query, err := m.newQuery()
+	if err != nil {
+		return false, err
+	}
+
+	return query.Exists()
+}
+
+// Insert 插入数据
+func (m *BaseModel) Insert(data map[string]interface{}) (int64, error) {
+	query, err := m.newQuery()
+	if err != nil {
+		return 0, err
+	}
+
+	// 处理时间戳
+	if m.timestamps {
+		now := time.Now()
+		data[m.createdAt] = now
+		data[m.updatedAt] = now
+	}
+
+	return query.Insert(data)
+}
+
+// InsertBatch 批量插入数据
+func (m *BaseModel) InsertBatch(data []map[string]interface{}) (int64, error) {
+	query, err := m.newQuery()
+	if err != nil {
+		return 0, err
+	}
+
+	// 处理时间戳
+	if m.timestamps {
+		now := time.Now()
+		for i := range data {
+			data[i][m.createdAt] = now
+			data[i][m.updatedAt] = now
+		}
+	}
+
+	return query.InsertBatch(data)
+}
+
+// Select 选择字段
+func (m *BaseModel) Select(fields ...string) *ModelQueryBuilder {
+	query, err := m.newQuery()
+	if err != nil {
+		return &ModelQueryBuilder{err: err, model: m}
+	}
+
+	return &ModelQueryBuilder{
+		query: query.Select(fields...),
+		model: m,
+	}
+}
+
+// OrderBy 排序
+func (m *BaseModel) OrderBy(field string, direction string) *ModelQueryBuilder {
+	query, err := m.newQuery()
+	if err != nil {
+		return &ModelQueryBuilder{err: err, model: m}
+	}
+
+	return &ModelQueryBuilder{
+		query: query.OrderBy(field, direction),
+		model: m,
+	}
+}
+
+// Limit 限制数量
+func (m *BaseModel) Limit(limit int) *ModelQueryBuilder {
+	query, err := m.newQuery()
+	if err != nil {
+		return &ModelQueryBuilder{err: err, model: m}
+	}
+
+	return &ModelQueryBuilder{
+		query: query.Limit(limit),
+		model: m,
+	}
+}
+
+// Offset 偏移量
+func (m *BaseModel) Offset(offset int) *ModelQueryBuilder {
+	query, err := m.newQuery()
+	if err != nil {
+		return &ModelQueryBuilder{err: err, model: m}
+	}
+
+	return &ModelQueryBuilder{
+		query: query.Offset(offset),
+		model: m,
+	}
+}
+
+// GroupBy 分组查询
+func (m *BaseModel) GroupBy(fields ...string) *ModelQueryBuilder {
+	query, err := m.newQuery()
+	if err != nil {
+		return &ModelQueryBuilder{err: err, model: m}
+	}
+
+	return &ModelQueryBuilder{
+		query: query.GroupBy(fields...),
+		model: m,
+	}
+}
+
+// Join 内连接
+func (m *BaseModel) Join(table string, first string, operator string, second string) *ModelQueryBuilder {
+	query, err := m.newQuery()
+	if err != nil {
+		return &ModelQueryBuilder{err: err, model: m}
+	}
+
+	return &ModelQueryBuilder{
+		query: query.Join(table, first, operator, second),
+		model: m,
+	}
+}
+
+// LeftJoin 左连接
+func (m *BaseModel) LeftJoin(table string, first string, operator string, second string) *ModelQueryBuilder {
+	query, err := m.newQuery()
+	if err != nil {
+		return &ModelQueryBuilder{err: err, model: m}
+	}
+
+	return &ModelQueryBuilder{
+		query: query.LeftJoin(table, first, operator, second),
+		model: m,
+	}
+}
+
+// RightJoin 右连接
+func (m *BaseModel) RightJoin(table string, first string, operator string, second string) *ModelQueryBuilder {
+	query, err := m.newQuery()
+	if err != nil {
+		return &ModelQueryBuilder{err: err, model: m}
+	}
+
+	return &ModelQueryBuilder{
+		query: query.RightJoin(table, first, operator, second),
+		model: m,
+	}
+}
+
+// InnerJoin 内连接
+func (m *BaseModel) InnerJoin(table string, first string, operator string, second string) *ModelQueryBuilder {
+	query, err := m.newQuery()
+	if err != nil {
+		return &ModelQueryBuilder{err: err, model: m}
+	}
+
+	return &ModelQueryBuilder{
+		query: query.InnerJoin(table, first, operator, second),
+		model: m,
+	}
 }
 
 // Save 保存模型
@@ -407,4 +710,68 @@ func toSnakeCase(str string) string {
 		result.WriteRune(r - 'A' + 'a')
 	}
 	return result.String()
+}
+
+// 更多BaseModel的查询构建器接口
+
+// Cache 启用查询缓存
+func (m *BaseModel) Cache(ttl time.Duration) *ModelQueryBuilder {
+	query, err := m.newQuery()
+	if err != nil {
+		return &ModelQueryBuilder{err: err, model: m}
+	}
+
+	return &ModelQueryBuilder{
+		query: query.Cache(ttl),
+		model: m,
+	}
+}
+
+// CacheWithTags 启用带标签的查询缓存
+func (m *BaseModel) CacheWithTags(ttl time.Duration, tags ...string) *ModelQueryBuilder {
+	query, err := m.newQuery()
+	if err != nil {
+		return &ModelQueryBuilder{err: err, model: m}
+	}
+
+	return &ModelQueryBuilder{
+		query: query.CacheWithTags(ttl, tags...),
+		model: m,
+	}
+}
+
+// CacheKey 设置自定义缓存键
+func (m *BaseModel) CacheKey(key string) *ModelQueryBuilder {
+	query, err := m.newQuery()
+	if err != nil {
+		return &ModelQueryBuilder{err: err, model: m}
+	}
+
+	return &ModelQueryBuilder{
+		query: query.CacheKey(key),
+		model: m,
+	}
+}
+
+// Page 分页查询
+func (m *BaseModel) Page(page, pageSize int) *ModelQueryBuilder {
+	query, err := m.newQuery()
+	if err != nil {
+		return &ModelQueryBuilder{err: err, model: m}
+	}
+
+	return &ModelQueryBuilder{
+		query: query.Page(page, pageSize),
+		model: m,
+	}
+}
+
+// Paginate 分页查询
+func (m *BaseModel) Paginate(page, perPage int) (interface{}, error) {
+	query, err := m.newQuery()
+	if err != nil {
+		return nil, err
+	}
+
+	return query.Paginate(page, perPage)
 }
