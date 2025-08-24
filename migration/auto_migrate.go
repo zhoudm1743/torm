@@ -11,16 +11,43 @@ import (
 
 // AutoMigrator 自动迁移器
 type AutoMigrator struct {
-	connection db.ConnectionInterface
-	analyzer   *ModelAnalyzer
+	connection     db.ConnectionInterface
+	analyzer       *ModelAnalyzer
+	tableCache     map[string]bool // 表存在性缓存
+	cacheEnabled   bool            // 是否启用缓存
+	skipIfExists   bool            // 如果表存在则跳过检查（快速模式）
+	structureCache map[string]bool // 表结构检查缓存
 }
 
 // NewAutoMigrator 创建自动迁移器
 func NewAutoMigrator(conn db.ConnectionInterface) *AutoMigrator {
 	return &AutoMigrator{
-		connection: conn,
-		analyzer:   NewModelAnalyzer(),
+		connection:     conn,
+		analyzer:       NewModelAnalyzer(),
+		tableCache:     make(map[string]bool),
+		cacheEnabled:   true,  // 默认启用缓存
+		skipIfExists:   false, // 默认不跳过结构检查
+		structureCache: make(map[string]bool),
 	}
+}
+
+// SetCacheEnabled 设置是否启用表存在性缓存
+func (am *AutoMigrator) SetCacheEnabled(enabled bool) {
+	am.cacheEnabled = enabled
+	if !enabled {
+		am.tableCache = make(map[string]bool) // 清空缓存
+	}
+}
+
+// ClearCache 清空表存在性缓存
+func (am *AutoMigrator) ClearCache() {
+	am.tableCache = make(map[string]bool)
+	am.structureCache = make(map[string]bool)
+}
+
+// SetSkipIfExists 设置快速模式（如果表存在则跳过结构检查）
+func (am *AutoMigrator) SetSkipIfExists(skip bool) {
+	am.skipIfExists = skip
 }
 
 // MigrateModel 迁移模型到数据库
@@ -52,12 +79,41 @@ func (am *AutoMigrator) MigrateModel(modelInstance interface{}, tableName string
 		return am.createTable(tableName, columns)
 	}
 
-	// 表已存在，检查和更新表结构
-	return am.updateTableStructure(tableName, columns)
+	// 表已存在
+	if am.skipIfExists {
+		// 快速模式：如果表存在则跳过结构检查
+
+		return nil
+	}
+
+	// 检查结构缓存
+	if am.cacheEnabled {
+		if checked, found := am.structureCache[tableName]; found && checked {
+
+			return nil
+		}
+	}
+
+	// 检查和更新表结构
+	err = am.updateTableStructure(tableName, columns)
+
+	// 缓存结构检查结果
+	if am.cacheEnabled && err == nil {
+		am.structureCache[tableName] = true
+	}
+
+	return err
 }
 
 // tableExists 检查表是否存在
 func (am *AutoMigrator) tableExists(tableName string) (bool, error) {
+	// 检查缓存
+	if am.cacheEnabled {
+		if exists, found := am.tableCache[tableName]; found {
+			return exists, nil
+		}
+	}
+
 	// 获取数据库驱动类型
 	driver := am.getDriverType()
 
@@ -85,7 +141,14 @@ func (am *AutoMigrator) tableExists(tableName string) (bool, error) {
 		return false, err
 	}
 
-	return count > 0, nil
+	exists := count > 0
+
+	// 缓存结果
+	if am.cacheEnabled {
+		am.tableCache[tableName] = exists
+	}
+
+	return exists, nil
 }
 
 // createTable 创建表
@@ -94,15 +157,15 @@ func (am *AutoMigrator) createTable(tableName string, columns []ModelColumn) err
 
 	sql := am.buildCreateTableSQL(tableName, columns, driver)
 
-	fmt.Printf("创建表: %s\n", tableName)
-	fmt.Printf("SQL: %s\n", sql)
-
 	_, err := am.connection.Exec(sql)
 	if err != nil {
 		return fmt.Errorf("创建表失败: %w", err)
 	}
 
-	fmt.Printf("✅ 表 %s 创建成功\n", tableName)
+	// 更新缓存：表已存在
+	if am.cacheEnabled {
+		am.tableCache[tableName] = true
+	}
 
 	// 创建索引
 	err = am.createIndexes(tableName, columns, driver)
@@ -380,10 +443,10 @@ func (am *AutoMigrator) formatDefaultValue(value interface{}, driver string) str
 			lowerValue == "now()" ||
 			lowerValue == "null" ||
 			strings.Contains(lowerValue, "current_timestamp") {
-			// PostgreSQL不支持 ON UPDATE CURRENT_TIMESTAMP
-			if driver == "postgres" || driver == "postgresql" {
+			// PostgreSQL和SQLite不支持 ON UPDATE CURRENT_TIMESTAMP
+			if driver == "postgres" || driver == "postgresql" || driver == "sqlite" || driver == "sqlite3" {
 				if strings.Contains(lowerValue, "on update") {
-					return "CURRENT_TIMESTAMP" // 只返回CURRENT_TIMESTAMP
+					return "CURRENT_TIMESTAMP" // 只返回CURRENT_TIMESTAMP，去掉ON UPDATE部分
 				}
 			}
 			return v // 不加引号
@@ -567,7 +630,6 @@ func (am *AutoMigrator) quoteIdentifier(identifier, driver string) string {
 
 // updateTableStructure 更新表结构
 func (am *AutoMigrator) updateTableStructure(tableName string, modelColumns []ModelColumn) error {
-	fmt.Printf("正在检查表 %s 的结构更新...\n", tableName)
 
 	// 获取当前表的列信息
 	existingColumns, err := am.getTableColumns(tableName)
@@ -590,7 +652,6 @@ func (am *AutoMigrator) updateTableStructure(tableName string, modelColumns []Mo
 			return fmt.Errorf("添加列 %s 失败: %w", column.Name, err)
 		}
 		alterCount++
-		fmt.Printf("  ✅ 添加列: %s (%s)\n", column.Name, column.Type)
 	}
 
 	// 修改现有列
@@ -599,18 +660,11 @@ func (am *AutoMigrator) updateTableStructure(tableName string, modelColumns []Mo
 			return fmt.Errorf("修改列 %s 失败: %w", column.Name, err)
 		}
 		alterCount++
-		fmt.Printf("  ✅ 修改列: %s (%s)\n", column.Name, column.Type)
 	}
 
 	// 添加索引和约束
 	if err := am.addIndexesAndConstraints(tableName, modelColumns); err != nil {
 		return fmt.Errorf("添加索引和约束失败: %w", err)
-	}
-
-	if alterCount > 0 {
-		fmt.Printf("✅ 表 %s 结构更新完成，共 %d 个变更\n", tableName, alterCount)
-	} else {
-		fmt.Printf("✅ 表 %s 结构无需更新\n", tableName)
 	}
 
 	return nil
@@ -978,18 +1032,82 @@ func (am *AutoMigrator) parseSQLiteColumn(name, colType string, notNull, pk int,
 	return column
 }
 
-// addIndexesAndConstraints 添加索引和约束（简化版本）
+// addIndexesAndConstraints 添加索引和约束
 func (am *AutoMigrator) addIndexesAndConstraints(tableName string, columns []ModelColumn) error {
-	// 暂时简化实现，后续可以扩展
-	// 这个方法会在添加列时处理索引和约束
-	// 目前只打印日志，避免复杂的索引管理
 	for _, column := range columns {
-		if column.Index {
-			fmt.Printf("  📝 列 %s 需要创建索引\n", column.Name)
+		// 创建普通索引
+		if column.Index && !column.Unique && !column.PrimaryKey {
+			indexName := fmt.Sprintf("idx_%s_%s", tableName, column.Name)
+			if err := am.createIndex(tableName, indexName, column.Name, false); err != nil {
+				fmt.Printf("  ⚠️ 创建索引 %s 失败: %v\n", indexName, err)
+			}
 		}
+
+		// 创建唯一约束/唯一索引
 		if column.Unique && !column.PrimaryKey {
-			fmt.Printf("  📝 列 %s 需要创建唯一约束\n", column.Name)
+			indexName := fmt.Sprintf("idx_%s_%s_unique", tableName, column.Name)
+			if err := am.createIndex(tableName, indexName, column.Name, true); err != nil {
+				fmt.Printf("  ⚠️ 创建唯一约束 %s 失败: %v\n", indexName, err)
+			}
 		}
 	}
 	return nil
+}
+
+// createIndex 创建索引
+func (am *AutoMigrator) createIndex(tableName, indexName, columnName string, unique bool) error {
+	var sql string
+
+	// 检查索引是否已存在
+	if am.indexExists(tableName, indexName) {
+		return nil // 索引已存在，跳过
+	}
+
+	driver := am.connection.GetDriver()
+	switch driver {
+	case "mysql":
+		if unique {
+			sql = fmt.Sprintf("CREATE UNIQUE INDEX %s ON %s (%s)", indexName, tableName, columnName)
+		} else {
+			sql = fmt.Sprintf("CREATE INDEX %s ON %s (%s)", indexName, tableName, columnName)
+		}
+	case "postgres":
+		if unique {
+			sql = fmt.Sprintf("CREATE UNIQUE INDEX %s ON %s (%s)", indexName, tableName, columnName)
+		} else {
+			sql = fmt.Sprintf("CREATE INDEX %s ON %s (%s)", indexName, tableName, columnName)
+		}
+	case "sqlite":
+		if unique {
+			sql = fmt.Sprintf("CREATE UNIQUE INDEX %s ON %s (%s)", indexName, tableName, columnName)
+		} else {
+			sql = fmt.Sprintf("CREATE INDEX %s ON %s (%s)", indexName, tableName, columnName)
+		}
+	default:
+		return fmt.Errorf("不支持的数据库类型: %s", driver)
+	}
+
+	_, err := am.connection.Exec(sql)
+	return err
+}
+
+// indexExists 检查索引是否存在
+func (am *AutoMigrator) indexExists(tableName, indexName string) bool {
+	var count int
+	var sql string
+
+	driver := am.connection.GetDriver()
+	switch driver {
+	case "mysql":
+		sql = "SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?"
+		am.connection.QueryRow(sql, tableName, indexName).Scan(&count)
+	case "postgres":
+		sql = "SELECT COUNT(*) FROM pg_indexes WHERE tablename = $1 AND indexname = $2"
+		am.connection.QueryRow(sql, tableName, indexName).Scan(&count)
+	case "sqlite":
+		sql = "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name = ? AND tbl_name = ?"
+		am.connection.QueryRow(sql, indexName, tableName).Scan(&count)
+	}
+
+	return count > 0
 }

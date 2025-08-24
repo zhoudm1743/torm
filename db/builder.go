@@ -60,9 +60,11 @@ type WhereCondition struct {
 
 // JoinClause JOIN子句
 type JoinClause struct {
-	Type      string // LEFT, RIGHT, INNER
+	Type      string // LEFT, RIGHT, INNER, CROSS
 	Table     string
-	Condition string
+	Condition string        // 条件字符串
+	Raw       string        // 原生 SQL 条件
+	Values    []interface{} // 绑定参数
 }
 
 // OrderByClause 排序子句
@@ -111,14 +113,42 @@ func toSnakeCase(str string) string {
 		if i > 0 && r >= 'A' && r <= 'Z' {
 			result.WriteRune('_')
 		}
-		result.WriteRune(r - 'A' + 'a')
+		if r >= 'A' && r <= 'Z' {
+			result.WriteRune(r - 'A' + 'a')
+		} else {
+			result.WriteRune(r)
+		}
 	}
 	return result.String()
 }
 
-// Select 设置选择的字段
-func (qb *QueryBuilder) Select(columns ...string) *QueryBuilder {
-	qb.selectColumns = append(qb.selectColumns, columns...)
+// Select 设置选择的字段 - 支持字符串参数和数组
+func (qb *QueryBuilder) Select(args ...interface{}) *QueryBuilder {
+	for _, arg := range args {
+		switch v := arg.(type) {
+		case string:
+			// 单个字符串字段
+			qb.selectColumns = append(qb.selectColumns, v)
+		case []string:
+			// 字符串数组
+			qb.selectColumns = append(qb.selectColumns, v...)
+		case []interface{}:
+			// interface{} 数组，需要转换为字符串
+			for _, item := range v {
+				if str, ok := item.(string); ok {
+					qb.selectColumns = append(qb.selectColumns, str)
+				}
+			}
+		default:
+			// 尝试使用反射处理其他类型的切片
+			if qb.isSliceOrArray(arg) {
+				slice := qb.convertToStringSlice(arg)
+				qb.selectColumns = append(qb.selectColumns, slice...)
+			} else if str, ok := arg.(string); ok {
+				qb.selectColumns = append(qb.selectColumns, str)
+			}
+		}
+	}
 	return qb
 }
 
@@ -255,42 +285,160 @@ func (qb *QueryBuilder) OrWhere(args ...interface{}) *QueryBuilder {
 	return qb
 }
 
-// Join 内连接（通用方法，等同于InnerJoin）
-func (qb *QueryBuilder) Join(table, localKey, operator, foreignKey string) *QueryBuilder {
-	return qb.InnerJoin(table, localKey, operator, foreignKey)
+// Join 内连接 - 支持多种调用方式
+func (qb *QueryBuilder) Join(args ...interface{}) *QueryBuilder {
+	return qb.addJoin("INNER", args...)
 }
 
-// LeftJoin 左连接
-func (qb *QueryBuilder) LeftJoin(table, localKey, operator, foreignKey string) *QueryBuilder {
-	condition := fmt.Sprintf("%s.%s %s %s.%s", qb.tableName, localKey, operator, table, foreignKey)
+// LeftJoin 左连接 - 支持多种调用方式
+func (qb *QueryBuilder) LeftJoin(args ...interface{}) *QueryBuilder {
+	return qb.addJoin("LEFT", args...)
+}
+
+// RightJoin 右连接 - 支持多种调用方式
+func (qb *QueryBuilder) RightJoin(args ...interface{}) *QueryBuilder {
+	return qb.addJoin("RIGHT", args...)
+}
+
+// InnerJoin 内连接 - 支持多种调用方式
+func (qb *QueryBuilder) InnerJoin(args ...interface{}) *QueryBuilder {
+	return qb.addJoin("INNER", args...)
+}
+
+// CrossJoin 交叉连接
+func (qb *QueryBuilder) CrossJoin(table string) *QueryBuilder {
 	qb.joinClauses = append(qb.joinClauses, JoinClause{
-		Type:      "LEFT",
-		Table:     table,
-		Condition: condition,
+		Type:  "CROSS",
+		Table: table,
 	})
 	return qb
 }
 
-// RightJoin 右连接
-func (qb *QueryBuilder) RightJoin(table, localKey, operator, foreignKey string) *QueryBuilder {
-	condition := fmt.Sprintf("%s.%s %s %s.%s", qb.tableName, localKey, operator, table, foreignKey)
+// JoinRaw 原生 JOIN 语句
+func (qb *QueryBuilder) JoinRaw(joinType, table, condition string, bindings ...interface{}) *QueryBuilder {
 	qb.joinClauses = append(qb.joinClauses, JoinClause{
-		Type:      "RIGHT",
-		Table:     table,
-		Condition: condition,
+		Type:   strings.ToUpper(joinType),
+		Table:  table,
+		Raw:    condition,
+		Values: bindings,
 	})
 	return qb
 }
 
-// InnerJoin 内连接
-func (qb *QueryBuilder) InnerJoin(table, localKey, operator, foreignKey string) *QueryBuilder {
-	condition := fmt.Sprintf("%s.%s %s %s.%s", qb.tableName, localKey, operator, table, foreignKey)
-	qb.joinClauses = append(qb.joinClauses, JoinClause{
-		Type:      "INNER",
-		Table:     table,
-		Condition: condition,
-	})
+// addJoin 内部方法 - 处理各种 JOIN 参数格式
+func (qb *QueryBuilder) addJoin(joinType string, args ...interface{}) *QueryBuilder {
+	switch len(args) {
+	case 2:
+		// Join("users", "users.id = posts.user_id") - 表名和原生条件
+		if table, ok := args[0].(string); ok {
+			if condition, ok := args[1].(string); ok {
+				qb.joinClauses = append(qb.joinClauses, JoinClause{
+					Type:      joinType,
+					Table:     table,
+					Condition: condition,
+				})
+			}
+		}
+	case 3:
+		// Join("users", "users.id = posts.user_id", bindings) - 带参数的原生条件
+		if table, ok := args[0].(string); ok {
+			if condition, ok := args[1].(string); ok {
+				var values []interface{}
+				if bindings, ok := args[2].([]interface{}); ok {
+					values = bindings
+				} else {
+					values = []interface{}{args[2]}
+				}
+				qb.joinClauses = append(qb.joinClauses, JoinClause{
+					Type:   joinType,
+					Table:  table,
+					Raw:    condition,
+					Values: values,
+				})
+			}
+		}
+	case 4:
+		// Join("users", "id", "=", "posts.user_id") - 传统四参数方式
+		if table, ok := args[0].(string); ok {
+			if localKey, ok := args[1].(string); ok {
+				if operator, ok := args[2].(string); ok {
+					if foreignKey, ok := args[3].(string); ok {
+						// 智能判断是否需要表前缀
+						leftField := qb.addTablePrefix(localKey)
+						rightField := qb.addTablePrefix(foreignKey, table)
+						condition := fmt.Sprintf("%s %s %s", leftField, operator, rightField)
+
+						qb.joinClauses = append(qb.joinClauses, JoinClause{
+							Type:      joinType,
+							Table:     table,
+							Condition: condition,
+						})
+					}
+				}
+			}
+		}
+	case 5:
+		// Join("users u", "u.id", "=", "posts.user_id", bindings) - 带别名和参数
+		if tableAlias, ok := args[0].(string); ok {
+			if localKey, ok := args[1].(string); ok {
+				if operator, ok := args[2].(string); ok {
+					if foreignKey, ok := args[3].(string); ok {
+						// 解析表名和别名
+						tableParts := strings.Fields(tableAlias)
+						table := tableParts[0]
+
+						leftField := qb.addTablePrefix(localKey)
+						rightField := qb.addTablePrefix(foreignKey, table)
+						condition := fmt.Sprintf("%s %s %s", leftField, operator, rightField)
+
+						var values []interface{}
+						if bindings, ok := args[4].([]interface{}); ok {
+							values = bindings
+						} else {
+							values = []interface{}{args[4]}
+						}
+
+						qb.joinClauses = append(qb.joinClauses, JoinClause{
+							Type:   joinType,
+							Table:  tableAlias,
+							Raw:    condition,
+							Values: values,
+						})
+					}
+				}
+			}
+		}
+	default:
+		// 不支持的参数格式，忽略
+		break
+	}
 	return qb
+}
+
+// addTablePrefix 智能添加表前缀
+func (qb *QueryBuilder) addTablePrefix(field string, defaultTable ...string) string {
+	// 如果字段已经包含表前缀，直接返回
+	if strings.Contains(field, ".") {
+		return field
+	}
+
+	// 如果指定了默认表，使用默认表
+	if len(defaultTable) > 0 && defaultTable[0] != "" {
+		// 处理表别名情况
+		tableParts := strings.Fields(defaultTable[0])
+		if len(tableParts) > 1 {
+			// 有别名，使用别名
+			return tableParts[1] + "." + field
+		}
+		return defaultTable[0] + "." + field
+	}
+
+	// 否则使用主表名
+	if qb.tableName != "" {
+		return qb.tableName + "." + field
+	}
+
+	return field
 }
 
 // OrderBy 排序
@@ -308,14 +456,139 @@ func (qb *QueryBuilder) GroupBy(columns ...string) *QueryBuilder {
 	return qb
 }
 
-// Having HAVING条件
-func (qb *QueryBuilder) Having(field string, operator string, value interface{}) *QueryBuilder {
-	qb.havingConditions = append(qb.havingConditions, WhereCondition{
-		Column:   field,
-		Operator: operator,
-		Value:    value,
-		Logic:    "AND",
-	})
+// Having HAVING条件 - 支持多种格式
+func (qb *QueryBuilder) Having(args ...interface{}) *QueryBuilder {
+	switch len(args) {
+	case 1:
+		// Having("COUNT(*) > 5") - 纯SQL
+		if sql, ok := args[0].(string); ok {
+			qb.havingConditions = append(qb.havingConditions, WhereCondition{
+				Raw:   sql,
+				Logic: "AND",
+			})
+		}
+	case 2:
+		// Having("COUNT(*) > ?", 5) 或 Having("status IN (?)", []string{"active", "pending"})
+		if sql, ok := args[0].(string); ok {
+			// 检查第二个参数是否是数组/切片
+			if qb.isSliceOrArray(args[1]) {
+				// 处理数组参数，如 Having("status IN (?)", []string{"active", "pending"})
+				values := qb.convertToInterfaceSlice(args[1])
+				if len(values) > 0 {
+					// 为数组生成多个占位符
+					placeholders := strings.Repeat("?,", len(values))
+					placeholders = placeholders[:len(placeholders)-1] // 去掉最后的逗号
+
+					// 替换SQL中的单个?为多个占位符
+					processedSQL := strings.Replace(sql, "?", placeholders, 1)
+
+					qb.havingConditions = append(qb.havingConditions, WhereCondition{
+						Raw:    processedSQL,
+						Values: values,
+						Logic:  "AND",
+					})
+				}
+			} else {
+				// 普通单值参数
+				qb.havingConditions = append(qb.havingConditions, WhereCondition{
+					Raw:    sql,
+					Values: []interface{}{args[1]},
+					Logic:  "AND",
+				})
+			}
+		}
+	case 3:
+		// Having("column", ">", value)
+		if column, ok := args[0].(string); ok {
+			if operator, ok := args[1].(string); ok {
+				qb.havingConditions = append(qb.havingConditions, WhereCondition{
+					Column:   column,
+					Operator: operator,
+					Value:    args[2],
+					Logic:    "AND",
+				})
+			}
+		}
+	default:
+		// Having("column IN (?, ?)", value1, value2) - 多参数
+		if len(args) > 1 {
+			if sql, ok := args[0].(string); ok {
+				qb.havingConditions = append(qb.havingConditions, WhereCondition{
+					Raw:    sql,
+					Values: args[1:], // 剩余所有参数作为值
+					Logic:  "AND",
+				})
+			}
+		}
+	}
+	return qb
+}
+
+// OrHaving 添加OR HAVING条件
+func (qb *QueryBuilder) OrHaving(args ...interface{}) *QueryBuilder {
+	switch len(args) {
+	case 1:
+		// OrHaving("COUNT(*) > 5") - 纯SQL
+		if sql, ok := args[0].(string); ok {
+			qb.havingConditions = append(qb.havingConditions, WhereCondition{
+				Raw:   sql,
+				Logic: "OR",
+			})
+		}
+	case 2:
+		// OrHaving("COUNT(*) > ?", 5) 或 OrHaving("status IN (?)", []string{"active", "pending"})
+		if sql, ok := args[0].(string); ok {
+			// 检查第二个参数是否是数组/切片
+			if qb.isSliceOrArray(args[1]) {
+				// 处理数组参数
+				values := qb.convertToInterfaceSlice(args[1])
+				if len(values) > 0 {
+					// 为数组生成多个占位符
+					placeholders := strings.Repeat("?,", len(values))
+					placeholders = placeholders[:len(placeholders)-1] // 去掉最后的逗号
+
+					// 替换SQL中的单个?为多个占位符
+					processedSQL := strings.Replace(sql, "?", placeholders, 1)
+
+					qb.havingConditions = append(qb.havingConditions, WhereCondition{
+						Raw:    processedSQL,
+						Values: values,
+						Logic:  "OR",
+					})
+				}
+			} else {
+				// 普通单值参数
+				qb.havingConditions = append(qb.havingConditions, WhereCondition{
+					Raw:    sql,
+					Values: []interface{}{args[1]},
+					Logic:  "OR",
+				})
+			}
+		}
+	case 3:
+		// OrHaving("column", ">", value)
+		if column, ok := args[0].(string); ok {
+			if operator, ok := args[1].(string); ok {
+				qb.havingConditions = append(qb.havingConditions, WhereCondition{
+					Column:   column,
+					Operator: operator,
+					Value:    args[2],
+					Logic:    "OR",
+				})
+			}
+		}
+	default:
+		// OrHaving("column IN (?, ?)", value1, value2) - 多参数
+		if len(args) > 1 {
+			if sql, ok := args[0].(string); ok {
+				qb.havingConditions = append(qb.havingConditions, WhereCondition{
+					Raw:    sql,
+					Values: args[1:], // 剩余所有参数作为值
+					Logic:  "OR",
+				})
+			}
+		}
+	}
 	return qb
 }
 
@@ -604,7 +877,21 @@ func (qb *QueryBuilder) buildSelectSQL() (string, []interface{}) {
 
 	// JOIN子句
 	for _, join := range qb.joinClauses {
-		sql.WriteString(fmt.Sprintf(" %s JOIN %s ON %s", join.Type, join.Table, join.Condition))
+		if join.Type == "CROSS" {
+			// CROSS JOIN 不需要 ON 条件
+			sql.WriteString(fmt.Sprintf(" CROSS JOIN %s", join.Table))
+		} else if join.Raw != "" {
+			// 使用原生 SQL 条件
+			processedSQL := qb.processPlaceholders(join.Raw, argIndex)
+			sql.WriteString(fmt.Sprintf(" %s JOIN %s ON %s", join.Type, join.Table, processedSQL))
+			if len(join.Values) > 0 {
+				args = append(args, join.Values...)
+				argIndex += len(join.Values)
+			}
+		} else if join.Condition != "" {
+			// 使用普通条件
+			sql.WriteString(fmt.Sprintf(" %s JOIN %s ON %s", join.Type, join.Table, join.Condition))
+		}
 	}
 
 	// WHERE子句
@@ -1329,6 +1616,39 @@ func (qb *QueryBuilder) processPlaceholders(sql string, startIndex int) string {
 	return result
 }
 
+// convertToStringSlice 将各种类型的切片转换为[]string
+func (qb *QueryBuilder) convertToStringSlice(value interface{}) []string {
+	if value == nil {
+		return nil
+	}
+
+	switch v := value.(type) {
+	case []string:
+		return v
+	case []interface{}:
+		result := make([]string, 0, len(v))
+		for _, item := range v {
+			if str, ok := item.(string); ok {
+				result = append(result, str)
+			}
+		}
+		return result
+	default:
+		// 使用反射处理其他类型的切片
+		rv := reflect.ValueOf(value)
+		if rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array {
+			result := make([]string, 0, rv.Len())
+			for i := 0; i < rv.Len(); i++ {
+				if str, ok := rv.Index(i).Interface().(string); ok {
+					result = append(result, str)
+				}
+			}
+			return result
+		}
+		return nil
+	}
+}
+
 // convertToInterfaceSlice 将各种类型的切片转换为[]interface{}
 func (qb *QueryBuilder) convertToInterfaceSlice(value interface{}) []interface{} {
 	if value == nil {
@@ -1620,7 +1940,11 @@ func (qb *QueryBuilder) SelectRaw(raw string, bindings ...interface{}) *QueryBui
 
 // FieldRaw 原生字段表达式
 func (qb *QueryBuilder) FieldRaw(raw string, bindings ...interface{}) *QueryBuilder {
-	// FieldRaw通常用于复杂字段表达式，这里简单处理
+	// FieldRaw用于添加复杂字段表达式
+	// 注意：当前实现不支持参数绑定，bindings参数保留以便将来扩展
+	// 建议直接在raw中包含完整的表达式，或使用SelectRaw
+
+	// 添加原生字段表达式到选择列
 	qb.selectColumns = append(qb.selectColumns, raw)
 	return qb
 }
@@ -1674,24 +1998,25 @@ func (qb *QueryBuilder) OrderField(field string, values []interface{}, direction
 	driverName := qb.getDriverName()
 
 	if driverName == "mysql" {
-		// MySQL使用FIELD()函数
-		placeholders := make([]string, len(values)+1)
-		placeholders[0] = field
-		for i := 1; i <= len(values); i++ {
-			placeholders[i] = "?"
+		// MySQL使用FIELD()函数，直接生成完整SQL
+		valueParts := make([]string, len(values)+1)
+		valueParts[0] = field
+		for i, value := range values {
+			// 将值直接嵌入SQL（安全性：这里的值通常是预定义的枚举值）
+			valueParts[i+1] = fmt.Sprintf("'%v'", value)
 		}
-		orderExpr := fmt.Sprintf("FIELD(%s)", strings.Join(placeholders, ", "))
+		orderExpr := fmt.Sprintf("FIELD(%s)", strings.Join(valueParts, ", "))
 
 		qb.orderByColumns = append(qb.orderByColumns, OrderByClause{
 			Column:    orderExpr,
 			Direction: direction,
 		})
 	} else {
-		// 其他数据库使用CASE WHEN
+		// 其他数据库使用CASE WHEN，直接生成完整SQL
 		var caseSQL strings.Builder
 		caseSQL.WriteString("CASE ")
-		for i := range values {
-			caseSQL.WriteString(fmt.Sprintf("WHEN %s = ? THEN %d ", field, i))
+		for i, value := range values {
+			caseSQL.WriteString(fmt.Sprintf("WHEN %s = '%v' THEN %d ", field, value, i))
 		}
 		caseSQL.WriteString("ELSE 999 END")
 

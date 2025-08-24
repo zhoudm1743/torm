@@ -110,9 +110,9 @@ func (c *PostgreSQLConnection) Query(query string, args ...interface{}) (*sql.Ro
 
 	if c.logger != nil && c.config.LogQueries {
 		if err != nil {
-			c.logger.Error("PostgreSQL query failed", "query", query, "args", args, "error", err, "duration", duration)
+			c.logger.Error("sql", query, "args", args, "error", err, "duration", duration)
 		} else {
-			c.logger.Debug("PostgreSQL query executed", "query", query, "args", args, "duration", duration)
+			c.logger.Debug("sql", query, "args", args, "duration", duration)
 		}
 	}
 
@@ -134,7 +134,7 @@ func (c *PostgreSQLConnection) QueryRow(query string, args ...interface{}) *sql.
 	duration := time.Since(start)
 
 	if c.logger != nil && c.config.LogQueries {
-		c.logger.Debug("PostgreSQL query row executed", "query", query, "args", args, "duration", duration)
+		c.logger.Debug("sql", query, "args", args, "duration", duration)
 	}
 
 	return row
@@ -152,9 +152,9 @@ func (c *PostgreSQLConnection) Exec(query string, args ...interface{}) (sql.Resu
 
 	if c.logger != nil && c.config.LogQueries {
 		if err != nil {
-			c.logger.Error("PostgreSQL exec failed", "query", query, "args", args, "error", err, "duration", duration)
+			c.logger.Error("sql", query, "args", args, "error", err, "duration", duration)
 		} else {
-			c.logger.Debug("PostgreSQL exec executed", "query", query, "args", args, "duration", duration)
+			c.logger.Debug("sql", query, "args", args, "duration", duration)
 		}
 	}
 
@@ -231,9 +231,9 @@ func (t *PostgreSQLTransaction) Query(query string, args ...interface{}) (*sql.R
 
 	if t.logger != nil && t.config.LogQueries {
 		if err != nil {
-			t.logger.Error("PostgreSQL transaction query failed", "query", query, "args", args, "error", err, "duration", duration)
+			t.logger.Error("sql", query, "args", args, "error", err, "duration", duration)
 		} else {
-			t.logger.Debug("PostgreSQL transaction query executed", "query", query, "args", args, "duration", duration)
+			t.logger.Debug("sql", query, "args", args, "duration", duration)
 		}
 	}
 
@@ -255,7 +255,7 @@ func (t *PostgreSQLTransaction) QueryRow(query string, args ...interface{}) *sql
 	duration := time.Since(start)
 
 	if t.logger != nil && t.config.LogQueries {
-		t.logger.Debug("PostgreSQL transaction query row executed", "query", query, "args", args, "duration", duration)
+		t.logger.Debug("sql", query, "args", args, "duration", duration)
 	}
 
 	return row
@@ -273,9 +273,9 @@ func (t *PostgreSQLTransaction) Exec(query string, args ...interface{}) (sql.Res
 
 	if t.logger != nil && t.config.LogQueries {
 		if err != nil {
-			t.logger.Error("PostgreSQL transaction exec failed", "query", query, "args", args, "error", err, "duration", duration)
+			t.logger.Error("sql", query, "args", args, "error", err, "duration", duration)
 		} else {
-			t.logger.Debug("PostgreSQL transaction exec executed", "query", query, "args", args, "duration", duration)
+			t.logger.Debug("sql", query, "args", args, "duration", duration)
 		}
 	}
 

@@ -121,9 +121,9 @@ func (c *MySQLConnection) Query(query string, args ...interface{}) (*sql.Rows, e
 
 	if c.logger != nil {
 		if err != nil {
-			c.logger.Error("Query failed", "sql", query, "args", args, "duration", duration, "error", err)
+			c.logger.Error("sql", query, "args", args, "duration", duration, "error", err)
 		} else if c.config.LogQueries {
-			c.logger.Debug("Query executed", "sql", query, "args", args, "duration", duration)
+			c.logger.Debug("sql", query, "args", args, "duration", duration)
 		}
 	}
 
@@ -144,7 +144,7 @@ func (c *MySQLConnection) QueryRow(query string, args ...interface{}) *sql.Row {
 	duration := time.Since(start)
 
 	if c.logger != nil && c.config.LogQueries {
-		c.logger.Debug("QueryRow executed", "sql", query, "args", args, "duration", duration)
+		c.logger.Debug("sql", query, "args", args, "duration", duration)
 	}
 
 	return row
@@ -165,9 +165,9 @@ func (c *MySQLConnection) Exec(query string, args ...interface{}) (sql.Result, e
 
 	if c.logger != nil {
 		if err != nil {
-			c.logger.Error("Exec failed", "sql", query, "args", args, "duration", duration, "error", err)
+			c.logger.Error("sql", query, "args", args, "duration", duration, "error", err)
 		} else if c.config.LogQueries {
-			c.logger.Debug("Exec executed", "sql", query, "args", args, "duration", duration)
+			c.logger.Debug("sql", query, "args", args, "duration", duration)
 		}
 	}
 
@@ -237,9 +237,9 @@ func (t *MySQLTransaction) Query(query string, args ...interface{}) (*sql.Rows, 
 
 	if t.logger != nil {
 		if err != nil {
-			t.logger.Error("Transaction query failed", "sql", query, "args", args, "duration", duration, "error", err)
+			t.logger.Error("sql", query, "args", args, "duration", duration, "error", err)
 		} else if t.config.LogQueries {
-			t.logger.Debug("Transaction query executed", "sql", query, "args", args, "duration", duration)
+			t.logger.Debug("sql", query, "args", args, "duration", duration)
 		}
 	}
 
@@ -253,7 +253,7 @@ func (t *MySQLTransaction) QueryRow(query string, args ...interface{}) *sql.Row 
 	duration := time.Since(start)
 
 	if t.logger != nil && t.config.LogQueries {
-		t.logger.Debug("Transaction queryRow executed", "sql", query, "args", args, "duration", duration)
+		t.logger.Debug("sql", query, "args", args, "duration", duration)
 	}
 
 	return row
@@ -267,9 +267,9 @@ func (t *MySQLTransaction) Exec(query string, args ...interface{}) (sql.Result, 
 
 	if t.logger != nil {
 		if err != nil {
-			t.logger.Error("Transaction exec failed", "sql", query, "args", args, "duration", duration, "error", err)
+			t.logger.Error("sql", query, "args", args, "duration", duration, "error", err)
 		} else if t.config.LogQueries {
-			t.logger.Debug("Transaction exec executed", "sql", query, "args", args, "duration", duration)
+			t.logger.Debug("sql", query, "args", args, "duration", duration)
 		}
 	}
 
@@ -281,7 +281,7 @@ func (t *MySQLTransaction) Commit() error {
 	err := t.tx.Commit()
 	if t.logger != nil {
 		if err != nil {
-			t.logger.Error("Transaction commit failed", "error", err)
+			t.logger.Error("error", err)
 		} else {
 			t.logger.Debug("Transaction committed")
 		}

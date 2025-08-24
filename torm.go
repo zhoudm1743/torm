@@ -38,11 +38,11 @@ var (
 	Transaction    = db.Transaction
 
 	// 模型相关
-	NewBaseModel = model.NewBaseModel
+	NewModel = model.NewModel
 
 	// 日志相关
-	NewLogger        = logger.NewLogger
-	NewSQLLogger     = logger.NewSQLLogger
+	NewLogger            = logger.NewLogger
+	NewSQLLogger         = logger.NewSQLLogger
 	NewManagerWithLogger = db.NewManagerWithLogger
 
 	// 迁移相关

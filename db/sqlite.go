@@ -110,9 +110,9 @@ func (c *SQLiteConnection) Query(query string, args ...interface{}) (*sql.Rows, 
 
 	if c.logger != nil && c.config.LogQueries {
 		if err != nil {
-			c.logger.Error("SQLite query failed", "query", query, "args", args, "error", err, "duration", duration)
+			c.logger.Error("query", query, "args", args, "error", err, "duration", duration)
 		} else {
-			c.logger.Debug("SQLite query executed", "query", query, "args", args, "duration", duration)
+			c.logger.Debug("sql", query, "args", args, "duration", duration)
 		}
 	}
 
@@ -134,7 +134,7 @@ func (c *SQLiteConnection) QueryRow(query string, args ...interface{}) *sql.Row 
 	duration := time.Since(start)
 
 	if c.logger != nil && c.config.LogQueries {
-		c.logger.Debug("SQLite query row executed", "query", query, "args", args, "duration", duration)
+		c.logger.Debug("sql", query, "args", args, "duration", duration)
 	}
 
 	return row
@@ -152,9 +152,9 @@ func (c *SQLiteConnection) Exec(query string, args ...interface{}) (sql.Result, 
 
 	if c.logger != nil && c.config.LogQueries {
 		if err != nil {
-			c.logger.Error("SQLite exec failed", "query", query, "args", args, "error", err, "duration", duration)
+			c.logger.Error("sql", query, "args", args, "error", err, "duration", duration)
 		} else {
-			c.logger.Debug("SQLite exec executed", "query", query, "args", args, "duration", duration)
+			c.logger.Debug("sql", query, "args", args, "duration", duration)
 		}
 	}
 
@@ -231,9 +231,9 @@ func (t *SQLiteTransaction) Query(query string, args ...interface{}) (*sql.Rows,
 
 	if t.logger != nil && t.config.LogQueries {
 		if err != nil {
-			t.logger.Error("SQLite transaction query failed", "query", query, "args", args, "error", err, "duration", duration)
+			t.logger.Error("sql", query, "args", args, "error", err, "duration", duration)
 		} else {
-			t.logger.Debug("SQLite transaction query executed", "query", query, "args", args, "duration", duration)
+			t.logger.Debug("sql", query, "args", args, "duration", duration)
 		}
 	}
 
@@ -255,7 +255,7 @@ func (t *SQLiteTransaction) QueryRow(query string, args ...interface{}) *sql.Row
 	duration := time.Since(start)
 
 	if t.logger != nil && t.config.LogQueries {
-		t.logger.Debug("SQLite transaction query row executed", "query", query, "args", args, "duration", duration)
+		t.logger.Debug("sql", query, "args", args, "duration", duration)
 	}
 
 	return row
@@ -273,9 +273,9 @@ func (t *SQLiteTransaction) Exec(query string, args ...interface{}) (sql.Result,
 
 	if t.logger != nil && t.config.LogQueries {
 		if err != nil {
-			t.logger.Error("SQLite transaction exec failed", "query", query, "args", args, "error", err, "duration", duration)
+			t.logger.Error("sql", query, "args", args, "error", err, "duration", duration)
 		} else {
-			t.logger.Debug("SQLite transaction exec executed", "query", query, "args", args, "duration", duration)
+			t.logger.Debug("sql", query, "args", args, "duration", duration)
 		}
 	}
 

@@ -57,21 +57,24 @@ type QueryInterface interface {
 	WhereRaw(raw string, bindings ...interface{}) QueryInterface
 	OrWhere(args ...interface{}) QueryInterface // 支持: OrWhere(field, op, val) 或 OrWhere(condition, args...)
 
-	// 连接查询
-	Join(table string, first string, operator string, second string) QueryInterface
-	LeftJoin(table string, first string, operator string, second string) QueryInterface
-	RightJoin(table string, first string, operator string, second string) QueryInterface
-	InnerJoin(table string, first string, operator string, second string) QueryInterface
+	// 连接查询 - 支持多种调用方式
+	Join(args ...interface{}) QueryInterface                                           // 支持: Join(table, condition) 或 Join(table, field, op, field) 等
+	LeftJoin(args ...interface{}) QueryInterface                                       // 支持: LeftJoin(table, condition) 或 LeftJoin(table, field, op, field) 等
+	RightJoin(args ...interface{}) QueryInterface                                      // 支持: RightJoin(table, condition) 或 RightJoin(table, field, op, field) 等
+	InnerJoin(args ...interface{}) QueryInterface                                      // 支持: InnerJoin(table, condition) 或 InnerJoin(table, field, op, field) 等
+	CrossJoin(table string) QueryInterface                                             // 交叉连接
+	JoinRaw(joinType, table, condition string, bindings ...interface{}) QueryInterface // 原生 JOIN
 
 	// 字段选择
-	Select(fields ...string) QueryInterface
+	Select(args ...interface{}) QueryInterface // 支持: Select("field1", "field2") 或 Select([]string{"field1", "field2"})
 	SelectRaw(raw string, bindings ...interface{}) QueryInterface
 	FieldRaw(raw string, bindings ...interface{}) QueryInterface
 	Distinct() QueryInterface
 
 	// 分组和排序
 	GroupBy(fields ...string) QueryInterface
-	Having(field string, operator string, value interface{}) QueryInterface
+	Having(args ...interface{}) QueryInterface   // 支持: Having(field, op, val) 或 Having(condition, args...)
+	OrHaving(args ...interface{}) QueryInterface // 支持: OrHaving(field, op, val) 或 OrHaving(condition, args...)
 	OrderBy(field string, direction string) QueryInterface
 	OrderByRaw(raw string, bindings ...interface{}) QueryInterface
 	OrderRand() QueryInterface

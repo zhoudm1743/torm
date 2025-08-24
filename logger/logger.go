@@ -5,8 +5,6 @@ import (
 	"log"
 	"os"
 	"time"
-
-	"github.com/zhoudm1743/torm/db"
 )
 
 // LogLevel 日志级别
@@ -173,14 +171,15 @@ func (l *SQLLogger) LogTransaction(action string, duration time.Duration) {
 }
 
 // LogConnection 记录连接操作
-func (l *SQLLogger) LogConnection(action string, config *db.Config) {
-	l.Info("数据库连接", map[string]interface{}{
-		"action":   action,
-		"driver":   config.Driver,
-		"host":     config.Host,
-		"port":     config.Port,
-		"database": config.Database,
-	})
+func (l *SQLLogger) LogConnection(action string, configInfo map[string]interface{}) {
+	logData := map[string]interface{}{
+		"action": action,
+	}
+	// 合并配置信息
+	for k, v := range configInfo {
+		logData[k] = v
+	}
+	l.Info("数据库连接", logData)
 }
 
 // EnableQueryLogging 启用查询日志
@@ -198,8 +197,8 @@ func (l *SQLLogger) IsQueryLoggingEnabled() bool {
 	return l.logQueries
 }
 
-// 确保 Logger 实现了 LoggerInterface 接口
-var _ db.LoggerInterface = (*Logger)(nil)
+// 注意：Logger 应该实现 db.LoggerInterface 接口
+// 编译时检查在 db 包中进行，避免循环依赖
 
 // 默认日志记录器
 var defaultLogger = NewLogger(INFO)
