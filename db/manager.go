@@ -35,20 +35,11 @@ type Manager struct {
 }
 
 // defaultManager 默认管理器实例
-var defaultManager *Manager
-
-func init() {
-	defaultManager = NewManager()
-	// 为默认管理器设置默认的SQL日志记录器
-	defaultLogger := logger.NewSQLLogger(logger.INFO, true)
-	defaultManager.SetLogger(defaultLogger)
-	// 启用健康检查，降低频率避免测试时的连接冲突
-	defaultManager.EnableHealthCheck(60 * time.Second)
-}
+var defaultManager = NewManager()
 
 // NewManager 创建新的管理器（无日志）
 func NewManager() *Manager {
-	return &Manager{
+	m := &Manager{
 		configs:             make(map[string]*Config),
 		connections:         make(map[string]ConnectionInterface),
 		connectionStats:     make(map[string]*ConnectionStats),
@@ -57,6 +48,8 @@ func NewManager() *Manager {
 		healthCheckEnabled:  false,
 		stopHealthCheck:     make(chan bool, 1),
 	}
+	m.SetLogger(logger.NewSQLLogger(logger.INFO, true))
+	return m
 }
 
 // NewManagerWithLogger 创建带日志的管理器
@@ -183,10 +176,6 @@ func (m *Manager) checkConnection(name string, conn ConnectionInterface) {
 	}
 	m.mutex.Unlock()
 
-	duration := time.Since(start)
-	if m.logger != nil && duration > 100*time.Millisecond {
-		m.logger.Warn("连接健康检查耗时较长", "connection", name, "duration", duration, "healthy", isHealthy)
-	}
 }
 
 // handleUnhealthyConnection 处理不健康的连接
@@ -238,17 +227,17 @@ func (m *Manager) Connection(name string) (ConnectionInterface, error) {
 		m.mutex.RLock()
 		stats, hasStats := m.connectionStats[name]
 		m.mutex.RUnlock()
-		
+
 		// 如果最近检查过且状态不健康，或者从未检查过，则进行快速ping
 		shouldPing := !hasStats || !stats.IsHealthy || time.Since(stats.LastCheck) > 30*time.Second
-		
+
 		if shouldPing {
 			// 快速健康检查（带超时）
 			done := make(chan error, 1)
 			go func() {
 				done <- conn.Ping()
 			}()
-			
+
 			select {
 			case err := <-done:
 				if err != nil {

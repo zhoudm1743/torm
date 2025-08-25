@@ -56,10 +56,6 @@ func (c *MySQLConnection) Connect() error {
 	c.db = db
 	c.connected = true
 
-	if c.logger != nil {
-		c.logger.Info("MySQL connection established", "dsn", dsn)
-	}
-
 	return nil
 }
 
