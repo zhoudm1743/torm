@@ -620,3 +620,4 @@ func (rc *ResultCollection) Map(fn func(*Result) interface{}) []interface{} {
 	}
 	return result
 }
+
