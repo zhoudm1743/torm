@@ -35,18 +35,26 @@ if err != nil {
 ### 基础查询
 
 ```go
-// 查询所有记录
-users, err := torm.Table("users").Get()
+// 查询所有记录 (Result系统，支持访问器)
+users, err := torm.Table("users").Model(&User{}).Get()          // 返回 *ResultCollection
 
 // 查询指定字段
 users, err := torm.Table("users").
     Select("id", "name", "email").
-    Get()
+    Model(&User{}).
+    Get()                                                       // 返回 *ResultCollection
 
 // 查询单条记录
 user, err := torm.Table("users").
     Where("id", "=", 1).
-    First()
+    Model(&User{}).
+    First()                                                     // 返回 *Result
+
+// 原始数据查询 (向下兼容，高性能)
+rawUsers, err := torm.Table("users").GetRaw()                  // 返回 []map[string]interface{}
+rawUser, err := torm.Table("users").
+    Where("id", "=", 1).
+    FirstRaw()                                                  // 返回 map[string]interface{}
 
 // 检查记录是否存在
 exists, err := torm.Table("users").
@@ -658,5 +666,149 @@ err := torm.Transaction(func(tx torm.TransactionInterface) error {
     // 所有数据库操作
     return performDatabaseOperations(tx)
 })
+```
 
+## 🎨 Result 系统
+
+### 访问器支持
+
+TORM v2.0 引入了强大的 Result 系统，支持 ThinkPHP 风格的访问器/修改器：
+
+```go
+// 定义模型和访问器
+type User struct {
+    model.BaseModel
+    ID       int    `json:"id"`
+    Status   int    `json:"status"`
+    Salary   int    `json:"salary"`  // 以分为单位存储
+}
+
+// 状态访问器
+func (u *User) GetStatusAttr(value interface{}) interface{} {
+    status := value.(int)
+    statusMap := map[int]string{0: "禁用", 1: "正常", 2: "待审核"}
+    return map[string]interface{}{
+        "code": status,
+        "name": statusMap[status],
+        "color": []string{"red", "green", "orange"}[status],
+    }
+}
+
+// 薪资访问器（分转元）
+func (u *User) GetSalaryAttr(value interface{}) interface{} {
+    cents := value.(int)
+    yuan := float64(cents) / 100.0
+    return map[string]interface{}{
+        "cents":     cents,
+        "yuan":      yuan,
+        "formatted": fmt.Sprintf("¥%.2f", yuan),
+    }
+}
+```
+
+### Result 系统查询
+
+```go
+// 启用访问器的查询
+users, err := torm.Table("users").Model(&User{}).Get()    // *ResultCollection
+user, err := torm.Table("users").Model(&User{}).First()   // *Result
+
+// 高性能原始数据查询
+rawUsers, err := torm.Table("users").GetRaw()    // []map[string]interface{}
+rawUser, err := torm.Table("users").FirstRaw()   // map[string]interface{}
+```
+
+### 数据处理
+
+```go
+// 单条记录处理
+user, _ := torm.Table("users").Model(&User{}).Where("id", "=", 1).First()
+
+// 通过访问器获取格式化数据
+fmt.Printf("状态: %v\n", user.Get("status"))      // {"code": 1, "name": "正常", "color": "green"}
+fmt.Printf("薪资: %v\n", user.Get("salary"))      // {"cents": 800000, "yuan": 8000.0, "formatted": "¥8000.00"}
+
+// 获取原始数据（用于计算）
+rawStatus := user.GetRaw("status").(int)          // 1
+rawSalary := user.GetRaw("salary").(int)          // 800000
+
+// JSON 输出
+accessorJSON, _ := user.ToJSON()    // 包含访问器处理的完整JSON
+rawJSON, _ := user.ToRawJSON()      // 原始数据JSON
+```
+
+### 集合操作
+
+```go
+users, _ := torm.Table("users").Model(&User{}).Get()
+
+// 遍历处理
+users.Each(func(index int, user *db.Result) bool {
+    fmt.Printf("用户 %d: %v\n", index+1, user.Get("username"))
+    return true  // 继续遍历
+})
+
+// 函数式过滤
+activeUsers := users.Filter(func(user *db.Result) bool {
+    status := user.Get("status").(map[string]interface{})
+    return status["code"].(int) == 1  // 只要正常状态用户
+})
+
+// 映射操作
+usernames := users.Map(func(user *db.Result) interface{} {
+    return user.Get("username")
+})
+
+// 集合JSON输出
+fmt.Printf("活跃用户数: %d\n", activeUsers.Count())
+json, _ := activeUsers.ToJSON()
+fmt.Printf("JSON: %s\n", json)
+```
+
+### API 选择指南
+
+```go
+// 🎯 显示层：使用 Model().Get()
+func getUsersForDisplay() {
+    users, _ := torm.Table("users").
+        Model(&User{}).                    // 启用访问器
+        Where("status", "=", 1).
+        Get()
+    
+    // 自动格式化的数据，适合前端展示
+    json, _ := users.ToJSON()
+    return json
+}
+
+// ⚡ 计算层：使用 GetRaw()
+func calculateStats() {
+    users, _ := torm.Table("users").
+        Where("status", "=", 1).
+        GetRaw()                          // 高性能原始数据
+    
+    // 直接操作原始数据，性能最优
+    var totalSalary int64
+    for _, user := range users {
+        totalSalary += user["salary"].(int64)
+    }
+    return totalSalary
+}
+
+// 🔄 混合使用
+func processUsers() {
+    users, _ := torm.Table("users").Model(&User{}).Get()
+    
+    users.Each(func(index int, user *db.Result) bool {
+        // 显示数据
+        statusInfo := user.Get("status")
+        fmt.Printf("用户状态: %v\n", statusInfo)
+        
+        // 业务逻辑使用原始值
+        rawStatus := user.GetRaw("status").(int)
+        if rawStatus == 1 {
+            // 执行业务逻辑
+        }
+        return true
+    })
+}
 ```

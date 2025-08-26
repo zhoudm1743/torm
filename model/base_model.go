@@ -230,13 +230,12 @@ func (m *BaseModel) SetDeletedAtField(field string) *BaseModel {
 
 // SetAttribute 设置属性
 func (m *BaseModel) SetAttribute(key string, value interface{}) *BaseModel {
-	m.attributes[key] = value
-	return m
+	return m.SetAttributeWithAccessor(key, value)
 }
 
 // GetAttribute 获取属性
 func (m *BaseModel) GetAttribute(key string) interface{} {
-	return m.attributes[key]
+	return m.GetAttributeWithAccessor(key)
 }
 
 // GetAttributes 获取所有属性
@@ -246,10 +245,7 @@ func (m *BaseModel) GetAttributes() map[string]interface{} {
 
 // SetAttributes 批量设置属性
 func (m *BaseModel) SetAttributes(attributes map[string]interface{}) *BaseModel {
-	for key, value := range attributes {
-		m.attributes[key] = value
-	}
-	return m
+	return m.SetAttributesWithAccessors(attributes)
 }
 
 // ClearAttributes 清空属性
@@ -330,7 +326,7 @@ func (m *BaseModel) FindByPK(key interface{}) error {
 		return err
 	}
 
-	result, err := query.Where(m.primaryKey, "=", key).First()
+	result, err := query.Where(m.primaryKey, "=", key).FirstRaw()
 	if err != nil {
 		return err
 	}
@@ -449,15 +445,23 @@ func (m *BaseModel) newQuery() (*db.QueryBuilder, error) {
 
 // fill 填充模型属性
 func (m *BaseModel) fill(data map[string]interface{}) {
-	m.attributes = data
+	// 创建 Result 包装器来处理数据
+	result := db.NewResult(data, m)
+
+	// 使用修改器处理每个属性
+	for key, value := range data {
+		processedValue := result.CallSetAccessor(key, value)
+		m.attributes[key] = processedValue
+	}
 }
 
 // prepareForInsert 准备插入数据
 func (m *BaseModel) prepareForInsert() map[string]interface{} {
 	data := make(map[string]interface{})
 
-	// 复制所有属性
-	for key, value := range m.attributes {
+	// 获取所有属性（支持访问器）
+	attrs := m.GetAttributesWithAccessors()
+	for key, value := range attrs {
 		data[key] = value
 	}
 
@@ -475,8 +479,9 @@ func (m *BaseModel) prepareForInsert() map[string]interface{} {
 func (m *BaseModel) prepareForUpdate() map[string]interface{} {
 	data := make(map[string]interface{})
 
-	// 复制所有属性（除了主键）
-	for key, value := range m.attributes {
+	// 获取所有属性（支持访问器），除了主键
+	attrs := m.GetAttributesWithAccessors()
+	for key, value := range attrs {
 		if key != m.primaryKey {
 			data[key] = value
 		}
@@ -490,15 +495,27 @@ func (m *BaseModel) prepareForUpdate() map[string]interface{} {
 	return data
 }
 
-// toSnakeCase 转换为蛇形命名
+// toSnakeCase 转换为蛇形命名（增强版，支持连续大写字母）
 func toSnakeCase(str string) string {
+	if str == "" {
+		return ""
+	}
+
 	var result strings.Builder
-	for i, r := range str {
-		if i > 0 && r >= 'A' && r <= 'Z' {
-			result.WriteRune('_')
-		}
+	runes := []rune(str)
+
+	for i, r := range runes {
+		// 当前字符是大写字母
 		if r >= 'A' && r <= 'Z' {
-			result.WriteRune(r - 'A' + 'a')
+			// 需要添加下划线的条件：
+			// 1. 不是第一个字符
+			// 2. 前一个字符是小写字母，或者
+			// 3. 当前字符后面跟着小写字母（处理连续大写的情况，如 HTMLParser -> html_parser）
+			if i > 0 && ((runes[i-1] >= 'a' && runes[i-1] <= 'z') || // 前一个是小写
+				(i+1 < len(runes) && runes[i+1] >= 'a' && runes[i+1] <= 'z')) { // 后一个是小写
+				result.WriteRune('_')
+			}
+			result.WriteRune(r - 'A' + 'a') // 转为小写
 		} else {
 			result.WriteRune(r)
 		}
@@ -607,6 +624,36 @@ func (m *BaseModel) SetKey(key interface{}) *BaseModel {
 // Find 根据主键查找记录（重载版本，返回两个值以兼容测试）
 func (m *BaseModel) Find(pk interface{}) error {
 	return m.FindByPK(pk)
+}
+
+// FindAsResult 根据主键查找记录，返回 Result 类型
+func (m *BaseModel) FindAsResult(pk interface{}) (*db.Result, error) {
+	query, err := m.newQuery()
+	if err != nil {
+		return nil, err
+	}
+
+	return query.Model(m).Where(m.primaryKey, "=", pk).First()
+}
+
+// GetAsResults 查询多条记录，返回 ResultCollection
+func (m *BaseModel) GetAsResults() (*db.ResultCollection, error) {
+	query, err := m.newQuery()
+	if err != nil {
+		return nil, err
+	}
+
+	return query.Model(m).Get()
+}
+
+// FirstAsResult 查询第一条记录，返回 Result 类型
+func (m *BaseModel) FirstAsResult() (*db.Result, error) {
+	query, err := m.newQuery()
+	if err != nil {
+		return nil, err
+	}
+
+	return query.Model(m).First()
 }
 
 // ============================================================================

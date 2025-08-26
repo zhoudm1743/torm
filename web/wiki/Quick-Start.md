@@ -179,12 +179,12 @@ func main() {
     // 第4步：演示查询操作
     fmt.Println("\n🔍 演示查询操作...")
     
-    // 基础查询
+    // 原始数据查询（高性能）
     users, err := torm.Table("users").
         Where("status", "=", "active").
         Where("age", ">=", 18).
         OrderBy("created_at", "desc").
-        Get()
+        GetRaw()
     
     if err != nil {
         fmt.Printf("查询失败: %v\n", err)
@@ -195,7 +195,7 @@ func main() {
     // 参数化查询
     activeUsers, err := torm.Table("users").
         Where("status = ? AND age >= ?", "active", 18).
-        Get()
+        GetRaw()
     
     if err != nil {
         fmt.Printf("参数化查询失败: %v\n", err)
@@ -256,12 +256,60 @@ func main() {
         fmt.Println("✅ 事务执行成功")
     }
     
+    // 第7步：演示Result系统（新特性）
+    fmt.Println("\n🎨 演示Result系统（访问器支持）...")
+    
+    // 如果有用户数据，演示访问器
+    if count > 0 {
+        fmt.Println("Result系统演示：")
+        
+        // 使用Result系统查询（支持访问器）
+        resultUser, err := torm.Table("users").
+            Model(&User{}).                    // 启用访问器
+            Where("username", "=", "zhangsan").
+            First()
+        
+        if err == nil && resultUser != nil {
+            fmt.Printf("✅ Result系统查询成功\n")
+            fmt.Printf("   用户名: %v\n", resultUser.Get("username"))
+            fmt.Printf("   状态: %v\n", resultUser.Get("status"))
+            
+            // 演示JSON输出
+            if jsonStr, err := resultUser.ToJSON(); err == nil {
+                fmt.Printf("   JSON: %s\n", jsonStr[:100] + "...")  // 显示前100字符
+            }
+        }
+        
+        // 演示集合操作
+        resultUsers, err := torm.Table("users").
+            Model(&User{}).
+            Where("status", "=", "promoted").
+            Get()
+        
+        if err == nil && !resultUsers.IsEmpty() {
+            fmt.Printf("✅ 找到 %d 个晋升用户\n", resultUsers.Count())
+            
+            // 演示遍历
+            resultUsers.Each(func(index int, user interface{}) bool {
+                // 由于无法导入 db 包，这里简化演示
+                fmt.Printf("   [%d] 用户记录\n", index+1)
+                return index < 2  // 只显示前3个
+            })
+        }
+    }
+    
     fmt.Println("\n🎉 TORM 快速开始演示完成！")
+    fmt.Println("\n✨ 新特性亮点：")
+    fmt.Println("   🎨 Result系统 - 支持ThinkPHP风格访问器")
+    fmt.Println("   🔗 Model().Get() - 简洁的链式调用API")
+    fmt.Println("   ⚡ GetRaw() - 高性能原始数据查询")
+    fmt.Println("   📊 函数式操作 - Filter, Map, Each等")
     fmt.Println("\n📚 接下来你可以：")
     fmt.Println("   - 查看完整文档：http://torm.site/docs.html")
     fmt.Println("   - 学习TORM标签：http://torm.site/docs.html?doc=migrations")
     fmt.Println("   - 探索查询构建器：http://torm.site/docs.html?doc=query-builder")
     fmt.Println("   - 了解模型系统：http://torm.site/docs.html?doc=model-system")
+    fmt.Println("   - 体验访问器系统：http://torm.site/docs.html?doc=accessor-system")
 }
 ```
 
@@ -357,24 +405,32 @@ type User struct {
 ### 3. 🔗 强大的查询构建器
 
 ```go
-// 基础链式查询
+// Result系统查询（支持访问器）
 users, _ := torm.Table("users").
+    Model(&User{}).                     // 启用访问器
     Where("status", "=", "active").
     Where("age", ">=", 18).
     OrderBy("created_at", "desc").
     Limit(10).
-    Get()
+    Get()                               // 返回 *ResultCollection
 
 // 参数化查询（支持数组参数）
 activeUsers, _ := torm.Table("users").
+    Model(&User{}).
     Where("status IN (?)", []string{"active", "premium"}).
     Where("age BETWEEN ? AND ?", 18, 65).
     Get()
 
 // 复杂条件组合
 results, _ := torm.Table("users").
+    Model(&User{}).
     Where("(status = ? OR vip_level > ?) AND age >= ?", "premium", 3, 25).
     Get()
+
+// 原始数据查询（高性能）
+rawUsers, _ := torm.Table("users").
+    Where("status", "=", "active").
+    GetRaw()                            // 返回 []map[string]interface{}
 
 // 聚合查询
 count, _ := torm.Table("users").Where("status", "=", "active").Count()
@@ -443,6 +499,39 @@ err := torm.Transaction(func(tx torm.TransactionInterface) error {
 - **📦 批量操作**: 原生支持批量插入和数组参数
 - **🏗️ 连接池优化**: 高效的数据库连接管理
 - **📈 索引自动化**: 根据TORM标签自动创建优化索引
+- **🎨 双模式查询**: Result系统(功能丰富) + Raw查询(高性能)
+
+### API 性能对比
+
+```go
+// 🎯 功能丰富：Model().Get() (约2.8x开销，获得访问器支持)
+users, _ := torm.Table("users").Model(&User{}).Get()
+users.Each(func(index int, user *Result) bool {
+    // 自动格式化的数据，适合前端展示
+    status := user.Get("status")  // {"code": 1, "name": "正常", "color": "green"}
+    return true
+})
+
+// ⚡ 高性能：GetRaw() (最佳性能，原始数据)
+rawUsers, _ := torm.Table("users").GetRaw()
+for _, user := range rawUsers {
+    // 直接操作原始map，性能最优
+    status := user["status"].(int)  // 1
+}
+
+// 🔄 混合使用：根据场景选择
+users, _ := torm.Table("users").Model(&User{}).Get()
+totalSalary := 0
+users.Each(func(index int, user *Result) bool {
+    // 显示数据用访问器
+    displayInfo := user.Get("salary")
+    
+    // 计算逻辑用原始值
+    rawSalary := user.GetRaw("salary").(int)
+    totalSalary += rawSalary
+    return true
+})
+```
 
 ## 🛠️ 常见使用场景
 

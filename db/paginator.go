@@ -41,7 +41,7 @@ func (qb *QueryBuilder) Paginate(page, perPage int) (*PaginationResult, error) {
 
 	// 获取分页数据
 	qb.Limit(perPage).Offset(offset)
-	data, err := qb.Get()
+	data, err := qb.GetRaw()
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +69,7 @@ func (qb *QueryBuilder) SimplePaginate(page, perPage int) ([]map[string]interfac
 
 	// 多查询一条记录来判断是否还有更多数据
 	qb.Limit(perPage + 1).Offset(offset)
-	data, err := qb.Get()
+	data, err := qb.GetRaw()
 	if err != nil {
 		return nil, false, err
 	}

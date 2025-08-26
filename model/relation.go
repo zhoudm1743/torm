@@ -130,7 +130,7 @@ func (h *HasOne) First() (map[string]interface{}, error) {
 		return nil, fmt.Errorf("本地键值为空")
 	}
 
-	return h.query.Where(h.foreignKey, "=", localValue).First()
+	return h.query.Where(h.foreignKey, "=", localValue).FirstRaw()
 }
 
 // Get 获取所有关联结果
@@ -188,7 +188,7 @@ func (h *HasMany) First() (map[string]interface{}, error) {
 		return nil, fmt.Errorf("本地键值为空")
 	}
 
-	return h.query.Where(h.foreignKey, "=", localValue).First()
+	return h.query.Where(h.foreignKey, "=", localValue).FirstRaw()
 }
 
 // Get 获取所有关联结果
@@ -198,7 +198,7 @@ func (h *HasMany) Get() ([]map[string]interface{}, error) {
 		return []map[string]interface{}{}, nil
 	}
 
-	return h.query.Where(h.foreignKey, "=", localValue).Get()
+	return h.query.Where(h.foreignKey, "=", localValue).GetRaw()
 }
 
 // BelongsTo 反向一对一/一对多关联
@@ -246,7 +246,7 @@ func (b *BelongsTo) First() (map[string]interface{}, error) {
 		return nil, fmt.Errorf("外键值为空")
 	}
 
-	return b.query.Where(b.localKey, "=", foreignValue).First()
+	return b.query.Where(b.localKey, "=", foreignValue).FirstRaw()
 }
 
 // Get 获取所有关联结果
@@ -357,7 +357,7 @@ func (b *BelongsToMany) Get() ([]map[string]interface{}, error) {
 		Join(b.pivotTable, fmt.Sprintf("%s.%s", b.relatedTable, "id"), "=", fmt.Sprintf("%s.%s", b.pivotTable, b.pivotForeignKey)).
 		Where(fmt.Sprintf("%s.%s", b.pivotTable, b.pivotLocalKey), "=", localValue).
 		Select(fmt.Sprintf("%s.*", b.relatedTable)).
-		Get()
+		GetRaw()
 }
 
 // ============================================================================
@@ -369,7 +369,7 @@ func getTableNameFromType(t reflect.Type) string {
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
-	
+
 	// 尝试创建实例并获取表名
 	if t.Kind() == reflect.Struct {
 		// 创建一个临时实例来获取正确的表名
@@ -381,7 +381,7 @@ func getTableNameFromType(t reflect.Type) string {
 			}
 		}
 	}
-	
+
 	// 回退到类型名推断
 	return toSnakeCase(t.Name())
 }

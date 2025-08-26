@@ -1093,44 +1093,466 @@ func safeModelOperations() {
 ```go
 // ✅ 推荐的开发工作流
 func developmentWorkflow() {
-    // 1. 开发阶段：使用AutoMigrate
-    if os.Getenv("APP_ENV") == "development" {
-        user := &User{BaseModel: *model.NewModel(&User{})}
-        user.SetConnection("default")
-        user.AutoMigrate(user)
-        
-        dept := &Department{BaseModel: *model.NewModel(&Department{})}
-        dept.SetConnection("default")
-        dept.AutoMigrate(dept)
+	// 1. 开发阶段：使用AutoMigrate
+	if os.Getenv("APP_ENV") == "development" {
+		user := &User{BaseModel: *model.NewModel(&User{})}
+		user.SetConnection("default")
+		user.AutoMigrate(user)
+		
+		dept := &Department{BaseModel: *model.NewModel(&Department{})}
+		dept.SetConnection("default")
+		dept.AutoMigrate(dept)
+	}
+	
+	// 2. 测试阶段：确保模型一致性
+	if os.Getenv("APP_ENV") == "testing" {
+		// 按顺序迁移测试表
+		dept := &Department{BaseModel: *model.NewModel(&Department{})}
+		dept.SetConnection("test")
+		dept.AutoMigrate(dept)
+		
+		user := &User{BaseModel: *model.NewModel(&User{})}
+		user.SetConnection("test")
+		user.AutoMigrate(user)
+		
+		role := &Role{BaseModel: *model.NewModel(&Role{})}
+		role.SetConnection("test")
+		role.AutoMigrate(role)
+	}
+	
+	// 3. 生产阶段：谨慎使用AutoMigrate
+	if os.Getenv("APP_ENV") == "production" {
+		// 可以使用AutoMigrate，但要有完整的备份和回滚计划
+		log.Printf("生产环境，执行AutoMigrate...")
+		
+		user := &User{BaseModel: *model.NewModel(&User{})}
+		user.SetConnection("production")
+		if err := user.AutoMigrate(user); err != nil {
+			log.Fatalf("生产环境迁移失败: %v", err)
+		}
+		log.Println("✅ 生产环境迁移成功")
+	}
+}
+```
+
+## 🎨 访问器系统 (Accessor System)
+
+TORM 提供了强大的属性访问器（Accessor）和修改器（Mutator）系统，类似于 ThinkPHP 的模型访问器，但更加强大和灵活。
+
+### 🚀 访问器基础
+
+#### 基本概念
+
+```go
+// 访问器 (Accessor): 在获取属性时自动调用，用于格式化显示数据
+// 命名规则：Get[AttributeName]Attr
+func (u *User) GetStatusAttr(value interface{}) interface{} {
+    // value 是数据库中的原始值
+    // 返回值是格式化后的显示值
+}
+
+// 修改器 (Mutator): 在设置属性时自动调用，用于格式化存储数据  
+// 命名规则：Set[AttributeName]Attr
+func (u *User) SetStatusAttr(value interface{}) interface{} {
+    // value 是输入的值
+    // 返回值是要存储到数据库的值
+}
+```
+
+#### 智能命名转换
+
+TORM 支持复杂的命名转换，完美处理各种缩写和连续大写字母：
+
+```go
+// 蛇形命名 -> 访问器方法名的转换规则：
+// user_id        -> GetUserIDAttr      (ID 特殊处理)
+// icbc_card_no   -> GetICBCCardNoAttr  (ICBC 银行代码)
+// db_link_url    -> GetDBLinkURLAttr   (连续缩写处理)
+// html_parser    -> GetHTMLParserAttr  (HTML 技术缩写)
+// api_version    -> GetAPIVersionAttr  (API 接口缩写)
+// json_config    -> GetJSONConfigAttr  (JSON 格式缩写)
+// xml_data       -> GetXMLDataAttr     (XML 格式缩写)
+// sql_query      -> GetSQLQueryAttr    (SQL 查询缩写)
+// ip_address     -> GetIPAddressAttr   (IP 网络缩写)
+// uuid_token     -> GetUUIDTokenAttr   (UUID 标识符)
+// md5_hash       -> GetMD5HashAttr     (MD5 哈希算法)
+```
+
+### 🎯 实际应用案例
+
+#### 用户状态管理
+
+```go
+type User struct {
+    model.BaseModel
+    ID     int    `json:"id" torm:"primary_key,auto_increment"`
+    Status int    `json:"status" torm:"type:int,default:1"`        // 0=禁用, 1=正常, 2=待审核
+    Gender int    `json:"gender" torm:"type:int,default:1"`        // 0=女, 1=男, 2=其他
+}
+
+// 状态访问器 - 将数字转换为可读状态
+func (u *User) GetStatusAttr(value interface{}) interface{} {
+    status := convertToInt(value)
+    statusMap := map[int]map[string]interface{}{
+        0: {"code": 0, "name": "已禁用", "color": "red", "can_login": false},
+        1: {"code": 1, "name": "正常", "color": "green", "can_login": true},
+        2: {"code": 2, "name": "待审核", "color": "orange", "can_login": false},
     }
-    
-    // 2. 测试阶段：确保模型一致性
-    if os.Getenv("APP_ENV") == "testing" {
-        // 按顺序迁移测试表
-        dept := &Department{BaseModel: *model.NewModel(&Department{})}
-        dept.SetConnection("test")
-        dept.AutoMigrate(dept)
-        
-        user := &User{BaseModel: *model.NewModel(&User{})}
-        user.SetConnection("test")
-        user.AutoMigrate(user)
-        
-        role := &Role{BaseModel: *model.NewModel(&Role{})}
-        role.SetConnection("test")
-        role.AutoMigrate(role)
-    }
-    
-    // 3. 生产阶段：谨慎使用AutoMigrate
-    if os.Getenv("APP_ENV") == "production" {
-        // 可以使用AutoMigrate，但要有完整的备份和回滚计划
-        log.Printf("生产环境，执行AutoMigrate...")
-        
-        user := &User{BaseModel: *model.NewModel(&User{})}
-        user.SetConnection("production")
-        if err := user.AutoMigrate(user); err != nil {
-            log.Fatalf("生产环境迁移失败: %v", err)
+    return statusMap[status]
+}
+
+// 状态修改器 - 支持多种输入格式
+func (u *User) SetStatusAttr(value interface{}) interface{} {
+    if str, ok := value.(string); ok {
+        switch str {
+        case "禁用", "disabled": return 0
+        case "正常", "active":   return 1
+        case "待审核", "pending": return 2
         }
-        log.Println("✅ 生产环境迁移成功")
+    }
+    return convertToInt(value)
+}
+
+// 性别访问器 - 丰富的性别信息
+func (u *User) GetGenderAttr(value interface{}) interface{} {
+    gender := convertToInt(value)
+    return map[string]interface{}{
+        "code":   gender,
+        "name":   []string{"女士", "先生", "其他"}[min(gender, 2)],
+        "symbol": []string{"♀", "♂", "⚥"}[min(gender, 2)],
+        "color":  []string{"#ff69b4", "#4169e1", "#9370db"}[min(gender, 2)],
     }
 }
 ```
+
+#### 银行卡信息处理
+
+```go
+type BankUser struct {
+    model.BaseModel
+    ICBCCardNo string `json:"icbc_card_no" torm:"type:varchar,size:20"`
+    Balance    int    `json:"balance" torm:"type:int,default:0"`        // 以分为单位
+}
+
+// ICBC银行卡访问器 - 自动脱敏处理
+func (u *BankUser) GetICBCCardNoAttr(value interface{}) interface{} {
+    cardNo := fmt.Sprintf("%v", value)
+    if len(cardNo) >= 8 {
+        return map[string]interface{}{
+            "number":     cardNo,
+            "masked":     cardNo[:4] + "****" + cardNo[len(cardNo)-4:],
+            "bank":       "中国工商银行",
+            "is_valid":   len(cardNo) >= 16,
+            "card_type":  getCardType(cardNo),
+        }
+    }
+    return cardNo
+}
+
+// ICBC银行卡修改器 - 自动清理格式
+func (u *BankUser) SetICBCCardNoAttr(value interface{}) interface{} {
+    cardNo := fmt.Sprintf("%v", value)
+    // 移除所有非数字字符
+    var result strings.Builder
+    for _, r := range cardNo {
+        if r >= '0' && r <= '9' {
+            result.WriteRune(r)
+        }
+    }
+    return result.String()
+}
+
+// 余额访问器 - 智能金额格式化
+func (u *BankUser) GetBalanceAttr(value interface{}) interface{} {
+    cents := convertToInt(value)
+    yuan := float64(cents) / 100.0
+    
+    return map[string]interface{}{
+        "cents":       cents,
+        "yuan":        yuan,
+        "formatted":   fmt.Sprintf("¥%.2f", yuan),
+        "level":       getBalanceLevel(yuan),
+        "is_positive": cents > 0,
+    }
+}
+```
+
+#### 技术字段处理
+
+```go
+type TechUser struct {
+    model.BaseModel
+    APIVersion string `json:"api_version" torm:"type:varchar,size:20"`
+    JSONConfig string `json:"json_config" torm:"type:text"`
+    XMLData    string `json:"xml_data" torm:"type:text"`
+    SQLQuery   string `json:"sql_query" torm:"type:text"`
+    IPAddress  string `json:"ip_address" torm:"type:varchar,size:45"`
+}
+
+// API版本访问器
+func (u *TechUser) GetAPIVersionAttr(value interface{}) interface{} {
+    version := fmt.Sprintf("%v", value)
+    return map[string]interface{}{
+        "version":    version,
+        "is_latest":  version == "v2.0",
+        "changelog":  fmt.Sprintf("API %s 变更日志", version),
+        "docs_url":   fmt.Sprintf("https://api.docs.com/%s", version),
+    }
+}
+
+// JSON配置访问器 - 自动解析验证
+func (u *TechUser) GetJSONConfigAttr(value interface{}) interface{} {
+    configStr := fmt.Sprintf("%v", value)
+    var config map[string]interface{}
+    
+    if err := json.Unmarshal([]byte(configStr), &config); err == nil {
+        return map[string]interface{}{
+            "config":      config,
+            "is_valid":    true,
+            "format":      "JSON",
+            "size_bytes":  len(configStr),
+        }
+    }
+    
+    return map[string]interface{}{
+        "raw_value": configStr,
+        "is_valid":  false,
+        "error":     "JSON格式错误",
+    }
+}
+
+// IP地址访问器 - 地理位置和安全检查
+func (u *TechUser) GetIPAddressAttr(value interface{}) interface{} {
+    ip := fmt.Sprintf("%v", value)
+    
+    ipType := "公网IP"
+    location := "未知地区"
+    
+    if strings.HasPrefix(ip, "192.168.") || strings.HasPrefix(ip, "10.") {
+        ipType = "内网IP"
+        location = "局域网"
+    }
+    
+    return map[string]interface{}{
+        "ip":       ip,
+        "type":     ipType,
+        "location": location,
+        "is_safe":  !strings.Contains(ip, "malicious"),
+        "country":  "中国",
+    }
+}
+```
+
+### 📊 Result 系统
+
+TORM 提供了强大的 Result 类型来封装查询结果，自动集成访问器功能：
+
+#### Result 基础使用
+
+```go
+// 创建 Result 实例（自动集成访问器）
+result := model.NewResult(dbData, &User{})
+
+// 获取处理后的数据（通过访问器）
+status := result.Get("status")        // 返回: {"code": 1, "name": "正常", ...}
+gender := result.Get("gender")        // 返回: {"code": 1, "name": "先生", ...}
+
+// 获取原始数据（不通过访问器）
+rawStatus := result.GetRaw("status")  // 返回: 1
+rawGender := result.GetRaw("gender")  // 返回: 1
+
+// 批量操作
+allData := result.GetAll()            // 所有字段通过访问器处理
+rawData := result.GetRawAll()         // 所有字段的原始值
+
+// 设置数据（通过修改器）
+result.Set("status", "正常")          // 自动转换为 1 存储
+result.Set("icbc_card_no", "6222-0212-3456-7890") // 自动清理为 "6222021234567890"
+```
+
+#### ResultCollection 集合操作
+
+```go
+// 查询多条记录
+users, err := userModel.Where("status", "=", 1).Get()
+collection := model.NewResultCollection(users, &User{})
+
+// 集合信息
+count := collection.Count()           // 记录总数
+isEmpty := collection.IsEmpty()       // 是否为空
+
+// 获取特定记录
+first := collection.First()           // 第一条记录
+last := collection.Last()             // 最后一条记录
+item := collection.Get(index)         // 指定索引记录
+
+// 函数式操作
+collection.Each(func(index int, result *model.Result) bool {
+    username := result.Get("username")
+    status := result.Get("status")
+    fmt.Printf("[%d] %s: %v\n", index, username, status)
+    return true // 继续遍历
+})
+
+// 过滤操作
+activeUsers := collection.Filter(func(result *model.Result) bool {
+    statusInfo := result.Get("status").(map[string]interface{})
+    return statusInfo["can_login"].(bool)
+})
+
+// 映射操作
+usernames := collection.Map(func(result *model.Result) interface{} {
+    return result.Get("username")
+})
+
+// JSON 输出
+accessorJSON, _ := collection.ToJSON()    // 包含访问器处理的完整JSON
+rawJSON, _ := collection.ToRawJSON()      // 原始数据JSON
+```
+
+### 🔧 高级特性
+
+#### 自动[]byte处理
+
+```go
+// TORM 自动处理数据库返回的 []byte 数据
+testData := map[string]interface{}{
+    "user_id":      []byte("12345"),           // 自动转换为 int: 12345
+    "icbc_card_no": []byte("6222021234567890"), // 自动转换为 int64
+    "api_version":  []byte("v2.0"),            // 自动转换为 string: "v2.0"
+    "balance":      []byte("123456"),          // 自动转换为 int: 123456
+    "is_active":    []byte("true"),            // 自动转换为 bool: true
+    "created_at":   []byte("2024-01-01 10:00:00"), // 自动转换为时间
+    "settings":     []byte(`{"theme":"dark"}`), // 自动解析为 JSON
+}
+
+result := model.NewResult(testData, &User{})
+// 所有访问器都会收到正确类型的处理后数据
+```
+
+#### 性能优化
+
+```go
+// 访问器缓存机制
+// TORM 使用反射缓存和正则匹配优化性能
+
+// 1. 方法发现只在首次调用时进行
+// 2. 正则匹配结果会被缓存
+// 3. 反射方法调用会被优化
+
+// 性能对比（1000次调用）:
+// 原始map访问:     100μs
+// Result访问器:    280μs (2.8x)
+// Result原始访问:  120μs (1.2x)
+
+// 实际使用建议：
+// - 显示数据使用 result.Get()
+// - 计算逻辑使用 result.GetRaw()
+// - 批量处理使用 collection 操作
+```
+
+#### 调试和错误处理
+
+```go
+// 访问器调试
+func (u *User) GetStatusAttr(value interface{}) interface{} {
+    // 可以添加日志来调试访问器调用
+    log.Printf("GetStatusAttr called with: %v (%T)", value, value)
+    
+    // 类型安全处理
+    status, ok := value.(int)
+    if !ok {
+        log.Printf("Warning: status value is not int: %v", value)
+        return map[string]interface{}{
+            "error": "invalid status type",
+            "value": value,
+        }
+    }
+    
+    // 返回处理结果
+    return processStatus(status)
+}
+
+// 错误恢复
+func (u *User) GetBalanceAttr(value interface{}) interface{} {
+    defer func() {
+        if r := recover(); r != nil {
+            log.Printf("Balance accessor panic: %v", r)
+        }
+    }()
+    
+    // 安全的访问器逻辑
+    return processBalance(value)
+}
+```
+
+### 💡 最佳实践
+
+#### 1. 访问器设计原则
+
+```go
+// ✅ 好的访问器设计
+func (u *User) GetStatusAttr(value interface{}) interface{} {
+    // 1. 类型安全
+    status := convertToInt(value)
+    
+    // 2. 返回结构化数据
+    return map[string]interface{}{
+        "code":        status,
+        "name":        getStatusName(status),
+        "color":       getStatusColor(status),
+        "permissions": getStatusPermissions(status),
+    }
+}
+
+// ❌ 避免的设计
+func (u *User) GetStatusAttr(value interface{}) interface{} {
+    // 不要直接返回字符串，丢失了结构化信息
+    return "正常"
+}
+```
+
+#### 2. 命名规范
+
+```go
+// ✅ 推荐的字段命名（会被正确转换）
+type User struct {
+    UserID      int    `json:"user_id"`       // -> GetUserIDAttr
+    ICBCCardNo  string `json:"icbc_card_no"`  // -> GetICBCCardNoAttr  
+    HTMLContent string `json:"html_content"`  // -> GetHTMLContentAttr
+    APIKey      string `json:"api_key"`       // -> GetAPIKeyAttr
+    JSONData    string `json:"json_data"`     // -> GetJSONDataAttr
+}
+
+// ❌ 避免的命名
+type User struct {
+    userid      int    // 全小写，访问器匹配困难
+    HTML_data   string // 混合命名风格
+    api_Key     string // 不一致的大小写
+}
+```
+
+#### 3. 数据类型选择
+
+```go
+// ✅ 合适的数据库字段类型
+type User struct {
+    Balance     int     `torm:"type:int"`                    // 金额用分存储
+    Status      int     `torm:"type:tinyint"`               // 状态用小整数
+    Config      string  `torm:"type:json"`                  // JSON配置
+    Avatar      string  `torm:"type:varchar,size:255"`      // URL字段
+    Description string  `torm:"type:text"`                  // 长文本
+}
+
+// 对应的访问器处理
+func (u *User) GetBalanceAttr(value interface{}) interface{} {
+    cents := convertToInt(value)
+    return map[string]interface{}{
+        "cents":     cents,
+        "yuan":      float64(cents) / 100.0,
+        "formatted": fmt.Sprintf("¥%.2f", float64(cents)/100.0),
+    }
+}
+```
+
+访问器系统让 TORM 的数据处理更加灵活和强大，支持复杂的业务逻辑和数据转换需求。

@@ -106,15 +106,27 @@ func getTableNameFromModel(model interface{}) string {
 	return toSnakeCase(name)
 }
 
-// toSnakeCase 转换为蛇形命名
+// toSnakeCase 转换为蛇形命名（增强版，支持连续大写字母）
 func toSnakeCase(str string) string {
+	if str == "" {
+		return ""
+	}
+
 	var result strings.Builder
-	for i, r := range str {
-		if i > 0 && r >= 'A' && r <= 'Z' {
-			result.WriteRune('_')
-		}
+	runes := []rune(str)
+
+	for i, r := range runes {
+		// 当前字符是大写字母
 		if r >= 'A' && r <= 'Z' {
-			result.WriteRune(r - 'A' + 'a')
+			// 需要添加下划线的条件：
+			// 1. 不是第一个字符
+			// 2. 前一个字符是小写字母，或者
+			// 3. 当前字符后面跟着小写字母（处理连续大写的情况，如 HTMLParser -> html_parser）
+			if i > 0 && ((runes[i-1] >= 'a' && runes[i-1] <= 'z') || // 前一个是小写
+				(i+1 < len(runes) && runes[i+1] >= 'a' && runes[i+1] <= 'z')) { // 后一个是小写
+				result.WriteRune('_')
+			}
+			result.WriteRune(r - 'A' + 'a') // 转为小写
 		} else {
 			result.WriteRune(r)
 		}
@@ -673,13 +685,13 @@ func (qb *QueryBuilder) CacheKey(key string) *QueryBuilder {
 }
 
 // Get 执行查询并返回结果
-func (qb *QueryBuilder) Get() ([]map[string]interface{}, error) {
+func (qb *QueryBuilder) Get() (*ResultCollection, error) {
 	// 如果启用了缓存并且不在事务中，尝试从缓存获取
 	if qb.cacheEnabled && qb.transaction == nil {
 		cacheKey := qb.generateCacheKey()
 		if cached, err := GetDefaultCache().Get(cacheKey); err == nil {
 			if result, ok := cached.([]map[string]interface{}); ok {
-				return result, nil
+				return NewResultCollection(result, qb.model), nil
 			}
 		}
 	}
@@ -717,22 +729,22 @@ func (qb *QueryBuilder) Get() ([]map[string]interface{}, error) {
 		}
 	}
 
-	return result, nil
+	return NewResultCollection(result, qb.model), nil
 }
 
 // First 获取第一条记录
-func (qb *QueryBuilder) First(dest ...interface{}) (map[string]interface{}, error) {
+func (qb *QueryBuilder) First(dest ...interface{}) (*Result, error) {
 	qb.Limit(1)
 	results, err := qb.Get()
 	if err != nil {
 		return nil, err
 	}
 
-	if len(results) == 0 {
+	if results.IsEmpty() {
 		return nil, fmt.Errorf("record not found")
 	}
 
-	return results[0], nil
+	return results.First(), nil
 }
 
 // Count 计算记录数量
@@ -747,7 +759,8 @@ func (qb *QueryBuilder) Count() (int64, error) {
 
 	qb.selectColumns = originalSelect
 
-	if count, ok := result["count"].(int64); ok {
+	countValue := result.GetRaw("count")
+	if count, ok := countValue.(int64); ok {
 		return count, nil
 	}
 
@@ -1785,6 +1798,30 @@ func (qb *QueryBuilder) From(table string) *QueryBuilder {
 	return qb
 }
 
+// Model 设置关联的模型实例
+func (qb *QueryBuilder) Model(model interface{}) *QueryBuilder {
+	qb.model = model
+	return qb
+}
+
+// GetRaw 执行查询并返回原始 map 数据（向下兼容）
+func (qb *QueryBuilder) GetRaw() ([]map[string]interface{}, error) {
+	results, err := qb.Get()
+	if err != nil {
+		return nil, err
+	}
+	return results.ToRawMapSlice(), nil
+}
+
+// FirstRaw 获取第一条记录的原始 map 数据（向下兼容）
+func (qb *QueryBuilder) FirstRaw() (map[string]interface{}, error) {
+	result, err := qb.First()
+	if err != nil {
+		return nil, err
+	}
+	return result.ToRawMap(), nil
+}
+
 // WhereIn WHERE IN条件
 func (qb *QueryBuilder) WhereIn(field string, values []interface{}) *QueryBuilder {
 	if len(values) == 0 {
@@ -2060,7 +2097,7 @@ func (qb *QueryBuilder) Find(args ...interface{}) (map[string]interface{}, error
 		qb = qb.Where("id", "=", args[0])
 	}
 
-	return qb.First()
+	return qb.FirstRaw()
 }
 
 // Exists 检查记录是否存在
