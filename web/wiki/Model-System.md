@@ -102,8 +102,10 @@ type User struct {
 // - Fill(data map[string]interface{})         // 填充数据
 // - Where(conditions...) QueryBuilder        // 条件查询
 // - OrderBy(column, direction string)         // 排序
-// - Get() ([]map[string]interface{}, error)  // 获取记录
-// - First() (map[string]interface{}, error)  // 获取单条
+// - Get() (*ResultCollection, error)         // 获取记录集合
+// - First() (*Result, error)                  // 获取单条记录
+// - GetRaw() ([]map[string]interface{}, error)  // 获取原始记录  
+// - FirstRaw() (map[string]interface{}, error)  // 获取原始单条
 // - Find(id interface{}) error               // 根据主键查找
 // - IsNew() bool                             // 是否新记录
 // - IsExists() bool                          // 是否已存在
@@ -1373,9 +1375,8 @@ result.Set("icbc_card_no", "6222-0212-3456-7890") // 自动清理为 "6222021234
 #### ResultCollection 集合操作
 
 ```go
-// 查询多条记录
-users, err := userModel.Where("status", "=", 1).Get()
-collection := model.NewResultCollection(users, &User{})
+// 查询多条记录 - 直接使用 Model() 方法，自动获取表名
+collection, err := torm.Model(&User{}).Where("status", "=", 1).Get()
 
 // 集合信息
 count := collection.Count()           // 记录总数
@@ -1387,7 +1388,7 @@ last := collection.Last()             // 最后一条记录
 item := collection.Get(index)         // 指定索引记录
 
 // 函数式操作
-collection.Each(func(index int, result *model.Result) bool {
+collection.Each(func(index int, result *db.Result) bool {
     username := result.Get("username")
     status := result.Get("status")
     fmt.Printf("[%d] %s: %v\n", index, username, status)
@@ -1395,13 +1396,13 @@ collection.Each(func(index int, result *model.Result) bool {
 })
 
 // 过滤操作
-activeUsers := collection.Filter(func(result *model.Result) bool {
+activeUsers := collection.Filter(func(result *db.Result) bool {
     statusInfo := result.Get("status").(map[string]interface{})
     return statusInfo["can_login"].(bool)
 })
 
 // 映射操作
-usernames := collection.Map(func(result *model.Result) interface{} {
+usernames := collection.Map(func(result *db.Result) interface{} {
     return result.Get("username")
 })
 

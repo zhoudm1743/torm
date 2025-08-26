@@ -101,9 +101,63 @@ func getTableNameFromModel(model interface{}) string {
 		modelType = modelType.Elem()
 	}
 
-	// 将结构体名转换为蛇形命名
+	// 将结构体名转换为蛇形命名并复数化
 	name := modelType.Name()
-	return toSnakeCase(name)
+	snakeName := toSnakeCase(name)
+	return pluralize(snakeName)
+}
+
+// pluralize 将单数名词转换为复数形式（简化版英文复数规则）
+func pluralize(word string) string {
+	if word == "" {
+		return ""
+	}
+
+	// 特殊情况
+	specialCases := map[string]string{
+		"person":   "people",
+		"child":    "children",
+		"tooth":    "teeth",
+		"foot":     "feet",
+		"mouse":    "mice",
+		"goose":    "geese",
+		"user":     "users", // 常见情况
+		"product":  "products",
+		"category": "categories",
+		"company":  "companies",
+		"city":     "cities",
+		"country":  "countries",
+	}
+
+	if plural, exists := specialCases[word]; exists {
+		return plural
+	}
+
+	// 一般规则
+	if strings.HasSuffix(word, "s") || strings.HasSuffix(word, "sh") ||
+		strings.HasSuffix(word, "ch") || strings.HasSuffix(word, "x") ||
+		strings.HasSuffix(word, "z") {
+		return word + "es"
+	}
+
+	if strings.HasSuffix(word, "y") && len(word) > 1 {
+		prevChar := word[len(word)-2]
+		// 如果y前面是辅音字母，变y为ies
+		if prevChar != 'a' && prevChar != 'e' && prevChar != 'i' && prevChar != 'o' && prevChar != 'u' {
+			return word[:len(word)-1] + "ies"
+		}
+	}
+
+	if strings.HasSuffix(word, "f") {
+		return word[:len(word)-1] + "ves"
+	}
+
+	if strings.HasSuffix(word, "fe") {
+		return word[:len(word)-2] + "ves"
+	}
+
+	// 默认加s
+	return word + "s"
 }
 
 // toSnakeCase 转换为蛇形命名（增强版，支持连续大写字母）
@@ -1798,9 +1852,15 @@ func (qb *QueryBuilder) From(table string) *QueryBuilder {
 	return qb
 }
 
-// Model 设置关联的模型实例
+// Model 设置关联的模型实例并自动获取表名
 func (qb *QueryBuilder) Model(model interface{}) *QueryBuilder {
 	qb.model = model
+
+	// 自动从模型获取表名（如果尚未设置表名）
+	if qb.tableName == "" {
+		qb.tableName = getTableNameFromModel(model)
+	}
+
 	return qb
 }
 

@@ -36,18 +36,17 @@ if err != nil {
 
 ```go
 // 查询所有记录 (Result系统，支持访问器)
-users, err := torm.Table("users").Model(&User{}).Get()          // 返回 *ResultCollection
+users, err := torm.Model(&User{}).Get()          // 返回 *ResultCollection
 
 // 查询指定字段
-users, err := torm.Table("users").
+users, err := torm.Model(&User{}).
     Select("id", "name", "email").
-    Model(&User{}).
     Get()                                                       // 返回 *ResultCollection
 
 // 查询单条记录
-user, err := torm.Table("users").
+user, err := torm.Model(&User{}).
     Where("id", "=", 1).
-    Model(&User{}).
+
     First()                                                     // 返回 *Result
 
 // 原始数据查询 (向下兼容，高性能)
@@ -710,8 +709,8 @@ func (u *User) GetSalaryAttr(value interface{}) interface{} {
 
 ```go
 // 启用访问器的查询
-users, err := torm.Table("users").Model(&User{}).Get()    // *ResultCollection
-user, err := torm.Table("users").Model(&User{}).First()   // *Result
+users, err := torm.Model(&User{}).Get()    // *ResultCollection
+user, err := torm.Model(&User{}).First()   // *Result
 
 // 高性能原始数据查询
 rawUsers, err := torm.Table("users").GetRaw()    // []map[string]interface{}
@@ -722,7 +721,7 @@ rawUser, err := torm.Table("users").FirstRaw()   // map[string]interface{}
 
 ```go
 // 单条记录处理
-user, _ := torm.Table("users").Model(&User{}).Where("id", "=", 1).First()
+user, _ := torm.Model(&User{}).Where("id", "=", 1).First()
 
 // 通过访问器获取格式化数据
 fmt.Printf("状态: %v\n", user.Get("status"))      // {"code": 1, "name": "正常", "color": "green"}
@@ -740,7 +739,7 @@ rawJSON, _ := user.ToRawJSON()      // 原始数据JSON
 ### 集合操作
 
 ```go
-users, _ := torm.Table("users").Model(&User{}).Get()
+users, _ := torm.Model(&User{}).Get()
 
 // 遍历处理
 users.Each(func(index int, user *db.Result) bool {
@@ -770,7 +769,7 @@ fmt.Printf("JSON: %s\n", json)
 ```go
 // 🎯 显示层：使用 Model().Get()
 func getUsersForDisplay() {
-    users, _ := torm.Table("users").
+    users, _ := torm.
         Model(&User{}).                    // 启用访问器
         Where("status", "=", 1).
         Get()
@@ -782,7 +781,7 @@ func getUsersForDisplay() {
 
 // ⚡ 计算层：使用 GetRaw()
 func calculateStats() {
-    users, _ := torm.Table("users").
+    users, _ := torm.T
         Where("status", "=", 1).
         GetRaw()                          // 高性能原始数据
     
@@ -796,7 +795,7 @@ func calculateStats() {
 
 // 🔄 混合使用
 func processUsers() {
-    users, _ := torm.Table("users").Model(&User{}).Get()
+    users, _ := torm.Model(&User{}).Get()
     
     users.Each(func(index int, user *db.Result) bool {
         // 显示数据

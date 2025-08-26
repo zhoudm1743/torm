@@ -94,15 +94,26 @@ type QueryInterface interface {
 	CacheWithTags(ttl time.Duration, tags ...string) QueryInterface
 	CacheKey(key string) QueryInterface
 
-	// 执行查询
-	Get() ([]map[string]interface{}, error)
-	First(dest ...interface{}) (map[string]interface{}, error)
-	Find(args ...interface{}) (map[string]interface{}, error) // 支持: Find(id, dest...) 或 Find(dest)
+	// 执行查询 - Result系统 (默认API，功能丰富)
+	Get() (*ResultCollection, error)            // 获取多条记录，返回 ResultCollection
+	First(dest ...interface{}) (*Result, error) // 获取第一条记录，返回 Result
+	Find(args ...interface{}) (*Result, error)  // 根据ID查找，返回 Result
+	Last() (*Result, error)                     // 获取最后一条记录
 	Count() (int64, error)
 	Exists() (bool, error)
 
+	// 执行查询 - 原始数据 (高性能，向下兼容)
+	GetRaw() ([]map[string]interface{}, error)                   // 获取原始 map 数据
+	FirstRaw() (map[string]interface{}, error)                   // 获取原始 map 数据
+	FindRaw(args ...interface{}) (map[string]interface{}, error) // 获取原始 map 数据
+
 	// 分页查询
-	Paginate(page, perPage int) (interface{}, error)
+	Paginate(page, perPage int) (*ResultPagination, error)
+	SimplePaginate(page, perPage int) (*ResultSimplePagination, error)
+	PaginateRaw(page, perPage int) (interface{}, error) // 原始分页（向下兼容）
+
+	// 模型绑定 - 启用访问器功能
+	Model(model interface{}) QueryInterface // 绑定模型，启用访问器
 
 	// 数据操作
 	Insert(data map[string]interface{}) (int64, error)
@@ -118,10 +129,48 @@ type QueryInterface interface {
 	Clone() QueryInterface
 
 	// 模型支持 - 新增功能
-	WithModel(model interface{}) QueryInterface        // 绑定模型，启用模型特性
 	InsertModel(model interface{}) (int64, error)      // 插入模型实例
 	UpdateModel(model interface{}) (int64, error)      // 更新模型实例
 	FindModel(id interface{}, model interface{}) error // 查找并填充模型
+}
+
+// ResultPagination Result系统分页结果
+type ResultPagination struct {
+	Data        *ResultCollection `json:"data"`
+	Total       int64             `json:"total"`
+	PerPage     int               `json:"per_page"`
+	CurrentPage int               `json:"current_page"`
+	LastPage    int               `json:"last_page"`
+	From        int               `json:"from"`
+	To          int               `json:"to"`
+}
+
+// ToJSON 转换为JSON字符串（支持访问器）
+func (rp *ResultPagination) ToJSON() (string, error) {
+	return rp.Data.ToJSON()
+}
+
+// ToRawJSON 转换为原始JSON字符串
+func (rp *ResultPagination) ToRawJSON() (string, error) {
+	return rp.Data.ToRawJSON()
+}
+
+// ResultSimplePagination Result系统简单分页结果
+type ResultSimplePagination struct {
+	Data        *ResultCollection `json:"data"`
+	PerPage     int               `json:"per_page"`
+	CurrentPage int               `json:"current_page"`
+	HasMore     bool              `json:"has_more"`
+}
+
+// ToJSON 转换为JSON字符串（支持访问器）
+func (rsp *ResultSimplePagination) ToJSON() (string, error) {
+	return rsp.Data.ToJSON()
+}
+
+// ToRawJSON 转换为原始JSON字符串
+func (rsp *ResultSimplePagination) ToRawJSON() (string, error) {
+	return rsp.Data.ToRawJSON()
 }
 
 // BuilderInterface SQL构建器接口
