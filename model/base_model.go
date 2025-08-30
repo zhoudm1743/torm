@@ -173,12 +173,197 @@ func (m *BaseModel) GetPrimaryKey() string {
 // SetConnection 设置连接
 func (m *BaseModel) SetConnection(connection string) *BaseModel {
 	m.connection = connection
+	// 同时更新嵌入的QueryBuilder的连接
+	if m.QueryBuilder != nil {
+		// 重新创建QueryBuilder以使用新连接
+		query, err := db.NewQueryBuilder(connection)
+		if err == nil && m.GetTableName() != "" {
+			m.QueryBuilder = query.From(m.GetTableName())
+		}
+	}
 	return m
 }
 
 // GetConnection 获取连接
 func (m *BaseModel) GetConnection() string {
 	return m.connection
+}
+
+// Model 创建新的查询实例（重置查询状态并使用正确的连接）
+// 这个方法解决了嵌入QueryBuilder可能使用错误连接的问题
+func (m *BaseModel) Model(model interface{}) *BaseModel {
+	// 创建新的BaseModel实例
+	newModel := &BaseModel{
+		tableName:   m.tableName,
+		primaryKey:  m.primaryKey,
+		connection:  m.connection,
+		attributes:  make(map[string]interface{}),
+		exists:      false,
+		timestamps:  m.timestamps,
+		createdAt:   m.createdAt,
+		updatedAt:   m.updatedAt,
+		softDeletes: m.softDeletes,
+		deletedAt:   m.deletedAt,
+		timeManager: m.timeManager,
+		timeFields:  m.timeFields,
+	}
+
+	// 如果传入了模型实例，解析其配置
+	if model != nil {
+		if modeler, ok := model.(interface{ GetTableName() string }); ok {
+			tableName := modeler.GetTableName()
+			if tableName != "" {
+				newModel.tableName = tableName
+			}
+		}
+		if modeler, ok := model.(interface{ GetConnection() string }); ok {
+			connection := modeler.GetConnection()
+			if connection != "" {
+				newModel.connection = connection
+			}
+		}
+	}
+
+	// 创建新的QueryBuilder实例
+	query, err := db.NewQueryBuilder(newModel.connection)
+	if err != nil {
+		// 如果创建失败，尝试使用默认连接
+		query, _ = db.NewQueryBuilder("default")
+	}
+
+	if newModel.GetTableName() != "" {
+		newModel.QueryBuilder = query.From(newModel.GetTableName())
+	} else {
+		newModel.QueryBuilder = query
+	}
+
+	return newModel
+}
+
+// NewQuery 创建新的查询实例（简化版本，不需要参数）
+// 这是Model()方法的简化版，用于重置查询状态
+func (m *BaseModel) NewQuery() *BaseModel {
+	return m.Model(nil)
+}
+
+// ============================================================================
+// 重写查询方法，自动使用正确的连接（用户透明）
+// ============================================================================
+
+// Where 条件查询（重写以确保使用正确连接）
+func (m *BaseModel) Where(args ...interface{}) *BaseModel {
+	newQuery := m.newQuerySafe()
+	if newQuery == nil {
+		return m // fallback 到原始查询
+	}
+	return m.wrapQueryBuilder(newQuery.Where(args...))
+}
+
+// Count 计数查询（重写以确保使用正确连接）
+func (m *BaseModel) Count() (int64, error) {
+	newQuery := m.newQuerySafe()
+	if newQuery == nil {
+		// fallback 到嵌入的 QueryBuilder
+		return m.QueryBuilder.Count()
+	}
+	return newQuery.Count()
+}
+
+// Get 获取所有记录（重写以确保使用正确连接）
+func (m *BaseModel) Get() ([]map[string]interface{}, error) {
+	newQuery := m.newQuerySafe()
+	if newQuery == nil {
+		return m.QueryBuilder.Get()
+	}
+	return newQuery.Get()
+}
+
+// First 获取第一条记录（重写以确保使用正确连接）
+func (m *BaseModel) First() (map[string]interface{}, error) {
+	newQuery := m.newQuerySafe()
+	if newQuery == nil {
+		return m.QueryBuilder.First()
+	}
+	return newQuery.First()
+}
+
+// Update 更新记录（重写以确保使用正确连接）
+func (m *BaseModel) Update(data map[string]interface{}) (int64, error) {
+	newQuery := m.newQuerySafe()
+	if newQuery == nil {
+		return m.QueryBuilder.Update(data)
+	}
+	return newQuery.Update(data)
+}
+
+// Delete 删除记录（重写以确保使用正确连接）
+func (m *BaseModel) Delete() (int64, error) {
+	newQuery := m.newQuerySafe()
+	if newQuery == nil {
+		return m.QueryBuilder.Delete()
+	}
+	return newQuery.Delete()
+}
+
+// Select 选择字段（重写以确保使用正确连接）
+func (m *BaseModel) Select(args ...interface{}) *BaseModel {
+	newQuery := m.newQuerySafe()
+	if newQuery == nil {
+		return m // fallback
+	}
+	return m.wrapQueryBuilder(newQuery.Select(args...))
+}
+
+// OrderBy 排序（重写以确保使用正确连接）
+func (m *BaseModel) OrderBy(column string, direction string) *BaseModel {
+	newQuery := m.newQuerySafe()
+	if newQuery == nil {
+		return m // fallback
+	}
+	return m.wrapQueryBuilder(newQuery.OrderBy(column, direction))
+}
+
+// Page 分页（重写以确保使用正确连接）
+func (m *BaseModel) Page(page, size int) *BaseModel {
+	newQuery := m.newQuerySafe()
+	if newQuery == nil {
+		return m // fallback
+	}
+	return m.wrapQueryBuilder(newQuery.Page(page, size))
+}
+
+// newQuerySafe 安全地创建新查询（不会 panic）
+func (m *BaseModel) newQuerySafe() *db.QueryBuilder {
+	query, err := db.NewQueryBuilder(m.connection)
+	if err != nil {
+		return nil
+	}
+
+	tableName := m.GetTableName()
+	if tableName == "" {
+		return nil
+	}
+
+	return query.From(tableName)
+}
+
+// wrapQueryBuilder 包装QueryBuilder为BaseModel实例
+func (m *BaseModel) wrapQueryBuilder(qb *db.QueryBuilder) *BaseModel {
+	return &BaseModel{
+		QueryBuilder: qb,
+		tableName:    m.tableName,
+		primaryKey:   m.primaryKey,
+		connection:   m.connection,
+		attributes:   make(map[string]interface{}),
+		exists:       false,
+		timestamps:   m.timestamps,
+		createdAt:    m.createdAt,
+		updatedAt:    m.updatedAt,
+		softDeletes:  m.softDeletes,
+		deletedAt:    m.deletedAt,
+		timeManager:  m.timeManager,
+		timeFields:   m.timeFields,
+	}
 }
 
 // EnableTimestamps 启用时间戳
