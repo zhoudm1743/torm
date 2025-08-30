@@ -32,6 +32,13 @@ type Manager struct {
 	healthCheckInterval time.Duration
 	healthCheckEnabled  bool
 	stopHealthCheck     chan bool
+
+	// 连接池优化配置
+	maxConnections    int           // 最大连接数
+	connectionTimeout time.Duration // 连接超时时间
+	idleTimeout       time.Duration // 空闲超时时间
+	cleanupInterval   time.Duration // 清理间隔
+	stopCleanup       chan bool     // 停止清理信号
 }
 
 // defaultManager 默认管理器实例
@@ -47,9 +54,19 @@ func NewManager() *Manager {
 		healthCheckInterval: 30 * time.Second,
 		healthCheckEnabled:  false,
 		stopHealthCheck:     make(chan bool, 1),
+		// 连接池优化默认配置
+		maxConnections:    50,               // 默认最大50个连接
+		connectionTimeout: 30 * time.Second, // 30秒连接超时
+		idleTimeout:       10 * time.Minute, // 10分钟空闲超时
+		cleanupInterval:   5 * time.Minute,  // 5分钟清理一次
+		stopCleanup:       make(chan bool, 1),
 	}
-	// 设置DEBUG级别以显示所有日志（包括SQL查询）
-	m.SetLogger(logger.NewDebugLogger())
+	// 设置INFO级别减少日志输出
+	m.SetLogger(logger.NewInfoLogger())
+
+	// 启动连接池清理协程
+	go m.startConnectionCleanup()
+
 	return m
 }
 
@@ -211,8 +228,27 @@ func (m *Manager) AddConfig(name string, config *Config) error {
 	return nil
 }
 
-// Connection 获取数据库连接
+// Connection 获取数据库连接 - 优化版本
 func (m *Manager) Connection(name string) (ConnectionInterface, error) {
+	// 先检查连接数量限制
+	m.mutex.RLock()
+	connectionCount := len(m.connections)
+	m.mutex.RUnlock()
+
+	if connectionCount >= m.maxConnections {
+		// 尝试清理空闲连接
+		m.cleanupIdleConnections()
+
+		// 再次检查连接数
+		m.mutex.RLock()
+		connectionCount = len(m.connections)
+		m.mutex.RUnlock()
+
+		if connectionCount >= m.maxConnections {
+			return nil, fmt.Errorf("连接池已满，当前连接数: %d, 最大连接数: %d", connectionCount, m.maxConnections)
+		}
+	}
+
 	// 先检查是否已有连接（读锁）
 	m.mutex.RLock()
 	if conn, exists := m.connections[name]; exists {
@@ -223,16 +259,16 @@ func (m *Manager) Connection(name string) (ConnectionInterface, error) {
 		}
 		m.mutex.RUnlock()
 
-		// 检查统计信息中的健康状态，避免频繁Ping
+		// 简化健康检查，减少Ping频率
 		m.mutex.RLock()
 		stats, hasStats := m.connectionStats[name]
 		m.mutex.RUnlock()
 
-		// 如果最近检查过且状态不健康，或者从未检查过，则进行快速ping
-		shouldPing := !hasStats || !stats.IsHealthy || time.Since(stats.LastCheck) > 30*time.Second
+		// 只有在连接明确不健康或很久没检查时才进行ping
+		shouldPing := !hasStats || (!stats.IsHealthy && time.Since(stats.LastCheck) > 5*time.Second)
 
 		if shouldPing {
-			// 快速健康检查（带超时）
+			// 快速健康检查（更短超时）
 			done := make(chan error, 1)
 			go func() {
 				done <- conn.Ping()
@@ -242,24 +278,26 @@ func (m *Manager) Connection(name string) (ConnectionInterface, error) {
 			case err := <-done:
 				if err != nil {
 					if m.logger != nil {
-						m.logger.Warn("连接可能已断开，尝试重新创建", "connection", name, "error", err)
+						m.logger.Warn("连接不健康，移除连接", "connection", name, "error", err)
 					}
-					// 连接不健康，移除并重新创建
-					m.mutex.Lock()
-					delete(m.connections, name)
-					delete(m.connectionStats, name)
-					m.mutex.Unlock()
+					// 连接不健康，移除
+					m.removeConnection(name)
 					return m.createNewConnection(name)
+				} else {
+					// 更新健康状态
+					m.mutex.Lock()
+					if stats, exists := m.connectionStats[name]; exists {
+						stats.IsHealthy = true
+						stats.LastCheck = time.Now()
+					}
+					m.mutex.Unlock()
 				}
-			case <-time.After(2 * time.Second): // 2秒超时
+			case <-time.After(1 * time.Second): // 减少到1秒超时
 				if m.logger != nil {
-					m.logger.Warn("连接ping超时，重新创建连接", "connection", name)
+					m.logger.Warn("连接ping超时，移除连接", "connection", name)
 				}
-				// Ping超时，移除并重新创建
-				m.mutex.Lock()
-				delete(m.connections, name)
-				delete(m.connectionStats, name)
-				m.mutex.Unlock()
+				// Ping超时，移除
+				m.removeConnection(name)
 				return m.createNewConnection(name)
 			}
 		}
@@ -540,4 +578,85 @@ func (m *Manager) GetHealthyConnections() (healthy, total int) {
 // GetHealthyConnections 获取健康的连接数量（便捷函数）
 func GetHealthyConnections() (healthy, total int) {
 	return defaultManager.GetHealthyConnections()
+}
+
+// removeConnection 安全移除连接
+func (m *Manager) removeConnection(name string) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	if conn, exists := m.connections[name]; exists {
+		// 尝试关闭连接
+		if err := conn.Close(); err != nil && m.logger != nil {
+			m.logger.Warn("关闭连接失败", "connection", name, "error", err)
+		}
+
+		delete(m.connections, name)
+		delete(m.connectionStats, name)
+
+		if m.logger != nil {
+			m.logger.Debug("连接已移除", "connection", name)
+		}
+	}
+}
+
+// cleanupIdleConnections 清理空闲连接
+func (m *Manager) cleanupIdleConnections() {
+	m.mutex.RLock()
+	now := time.Now()
+	idleConnections := make([]string, 0)
+
+	for name, stats := range m.connectionStats {
+		if now.Sub(stats.LastUsed) > m.idleTimeout {
+			idleConnections = append(idleConnections, name)
+		}
+	}
+	m.mutex.RUnlock()
+
+	// 移除空闲连接
+	for _, name := range idleConnections {
+		m.removeConnection(name)
+		if m.logger != nil {
+			m.logger.Debug("清理空闲连接", "connection", name)
+		}
+	}
+}
+
+// startConnectionCleanup 启动连接池清理协程
+func (m *Manager) startConnectionCleanup() {
+	ticker := time.NewTicker(m.cleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			m.cleanupIdleConnections()
+		case <-m.stopCleanup:
+			return
+		}
+	}
+}
+
+// SetConnectionPoolConfig 设置连接池配置
+func (m *Manager) SetConnectionPoolConfig(maxConnections int, connectionTimeout, idleTimeout, cleanupInterval time.Duration) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	m.maxConnections = maxConnections
+	m.connectionTimeout = connectionTimeout
+	m.idleTimeout = idleTimeout
+	m.cleanupInterval = cleanupInterval
+
+	if m.logger != nil {
+		m.logger.Info("连接池配置已更新",
+			"maxConnections", maxConnections,
+			"connectionTimeout", connectionTimeout,
+			"idleTimeout", idleTimeout,
+			"cleanupInterval", cleanupInterval)
+	}
+}
+
+// SetConnectionPoolConfig 设置连接池配置（便捷函数）
+func SetConnectionPoolConfig(maxConnections int, connectionTimeout, idleTimeout, cleanupInterval time.Duration) {
+	defaultManager.SetConnectionPoolConfig(maxConnections, connectionTimeout, idleTimeout, cleanupInterval)
 }

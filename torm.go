@@ -1,6 +1,8 @@
 package torm
 
 import (
+	"time"
+
 	"github.com/zhoudm1743/torm/db"
 	"github.com/zhoudm1743/torm/logger"
 	"github.com/zhoudm1743/torm/migration"
@@ -43,10 +45,10 @@ var (
 
 	// 模型相关
 	NewModel = model.NewModel
-	
+
 	// MongoDB相关
-	MongoTable     = db.MongoTable
-	MongoModel     = db.MongoModel
+	MongoTable        = db.MongoTable
+	MongoModel        = db.MongoModel
 	NewMongoAggregate = db.NewMongoAggregate
 
 	// 日志相关
@@ -61,6 +63,12 @@ var (
 	ClearCacheByTags = db.ClearCacheByTags
 	ClearAllCache    = db.ClearAllCache
 	GetCacheStats    = db.GetCacheStats
+
+	// 连接池相关
+	GetConnectionStats    = db.GetConnectionStats
+	GetHealthyConnections = db.GetHealthyConnections
+	WarmUpConnections     = db.WarmUpConnections
+	CloseAllConnections   = db.CloseAllConnections
 
 	// 错误相关
 	ErrCodeQueryFailed     = db.ErrCodeQueryFailed
@@ -89,7 +97,12 @@ func SetSQLLogging(level logger.LogLevel, enabled bool) {
 	SetLogger(sqlLogger)
 }
 
+// SetConnectionPoolConfig 设置连接池配置
+func SetConnectionPoolConfig(maxConnections int, connectionTimeout, idleTimeout, cleanupInterval time.Duration) {
+	db.SetConnectionPoolConfig(maxConnections, connectionTimeout, idleTimeout, cleanupInterval)
+}
+
 // Version 返回 TORM 版本
 func Version() string {
-	return "2.0.0"
+	return "1.2.12"
 }

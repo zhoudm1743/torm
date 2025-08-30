@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -94,6 +95,7 @@ type TormError struct {
 	Context   map[string]interface{} `json:"context,omitempty"`
 	Timestamp time.Time              `json:"timestamp"`
 	Stack     string                 `json:"stack,omitempty"`
+	mutex     sync.RWMutex           `json:"-"` // 并发安全保护
 }
 
 // Error 实现error接口
@@ -114,22 +116,31 @@ func (e *TormError) Error() string {
 	}
 
 	// 添加重要的上下文信息
+	e.mutex.RLock()
+	contextCopy := make(map[string]interface{})
 	if e.Context != nil {
+		for k, v := range e.Context {
+			contextCopy[k] = v
+		}
+	}
+	e.mutex.RUnlock()
+
+	if len(contextCopy) > 0 {
 		var contextParts []string
 
 		// 优先显示SQL和参数
-		if sql, ok := e.Context["sql"].(string); ok && sql != "" {
+		if sql, ok := contextCopy["sql"].(string); ok && sql != "" {
 			contextParts = append(contextParts, fmt.Sprintf("SQL: %s", sql))
 		}
-		if args, ok := e.Context["args"]; ok && args != nil {
+		if args, ok := contextCopy["args"]; ok && args != nil {
 			contextParts = append(contextParts, fmt.Sprintf("参数: %v", args))
 		}
-		if table, ok := e.Context["table"].(string); ok && table != "" {
+		if table, ok := contextCopy["table"].(string); ok && table != "" {
 			contextParts = append(contextParts, fmt.Sprintf("表: %s", table))
 		}
 
 		// 添加其他重要上下文
-		for key, value := range e.Context {
+		for key, value := range contextCopy {
 			if key != "sql" && key != "args" && key != "table" {
 				if str := fmt.Sprintf("%v", value); len(str) < 100 { // 限制长度
 					contextParts = append(contextParts, fmt.Sprintf("%s: %v", key, value))
@@ -160,6 +171,9 @@ func (e *TormError) Is(target error) bool {
 
 // WithContext 添加上下文信息
 func (e *TormError) WithContext(key string, value interface{}) *TormError {
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+
 	if e.Context == nil {
 		e.Context = make(map[string]interface{})
 	}

@@ -5,13 +5,31 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zhoudm1743/torm/db"
 	"github.com/zhoudm1743/torm/migration"
 )
 
-// BaseModel 基础模型 - 直接嵌入 QueryBuilder，自动获得所有查询方法
+// 性能优化：全局BaseModel对象池
+var (
+	baseModelPool = sync.Pool{
+		New: func() interface{} {
+			return &BaseModel{
+				attributes:  make(map[string]interface{}),
+				timeFields:  make([]db.TimeFieldInfo, 0, 4), // 预分配4个元素
+				timeManager: db.NewTimeFieldManager(),
+			}
+		},
+	}
+
+	// 时间字段缓存，避免重复分析
+	timeFieldsCache      = make(map[reflect.Type][]db.TimeFieldInfo)
+	timeFieldsCacheMutex sync.RWMutex
+)
+
+// BaseModel 基础模型 - 性能优化版本
 type BaseModel struct {
 	*db.QueryBuilder // 直接嵌入查询构建器，自动继承所有查询方法
 
@@ -34,6 +52,10 @@ type BaseModel struct {
 	// 软删除
 	softDeletes bool
 	deletedAt   string
+
+	// 性能优化：缓存访问器处理器
+	accessorProcessor *db.AccessorProcessor
+	accessorMutex     sync.RWMutex
 }
 
 // NewModel 创建模型 - 支持多种调用方式
@@ -189,23 +211,28 @@ func (m *BaseModel) GetConnection() string {
 	return m.connection
 }
 
-// Model 创建新的查询实例（重置查询状态并使用正确的连接）
+// Model 创建新的查询实例（重置查询状态并使用正确的连接） - 优化版本
 // 这个方法解决了嵌入QueryBuilder可能使用错误连接的问题
 func (m *BaseModel) Model(model interface{}) *BaseModel {
-	// 创建新的BaseModel实例
-	newModel := &BaseModel{
-		tableName:   m.tableName,
-		primaryKey:  m.primaryKey,
-		connection:  m.connection,
-		attributes:  make(map[string]interface{}),
-		exists:      false,
-		timestamps:  m.timestamps,
-		createdAt:   m.createdAt,
-		updatedAt:   m.updatedAt,
-		softDeletes: m.softDeletes,
-		deletedAt:   m.deletedAt,
-		timeManager: m.timeManager,
-		timeFields:  m.timeFields,
+	// 使用对象池获取BaseModel实例
+	newModel := baseModelPool.Get().(*BaseModel)
+	
+	// 重置实例状态
+	newModel.tableName = m.tableName
+	newModel.primaryKey = m.primaryKey
+	newModel.connection = m.connection
+	newModel.exists = false
+	newModel.timestamps = m.timestamps
+	newModel.createdAt = m.createdAt
+	newModel.updatedAt = m.updatedAt
+	newModel.softDeletes = m.softDeletes
+	newModel.deletedAt = m.deletedAt
+	newModel.timeManager = m.timeManager
+	newModel.timeFields = m.timeFields
+	
+	// 清空属性映射
+	for k := range newModel.attributes {
+		delete(newModel.attributes, k)
 	}
 
 	// 如果传入了模型实例，解析其配置
@@ -224,17 +251,23 @@ func (m *BaseModel) Model(model interface{}) *BaseModel {
 		}
 	}
 
-	// 创建新的QueryBuilder实例
-	query, err := db.NewQueryBuilder(newModel.connection)
-	if err != nil {
-		// 如果创建失败，尝试使用默认连接
-		query, _ = db.NewQueryBuilder("default")
-	}
-
-	if newModel.GetTableName() != "" {
-		newModel.QueryBuilder = query.From(newModel.GetTableName())
+	// 复用QueryBuilder或创建新的
+	if m.QueryBuilder != nil && m.QueryBuilder.GetConnection() == newModel.connection {
+		// 复用现有QueryBuilder，但重置查询状态
+		newModel.QueryBuilder = m.QueryBuilder.Reset()
 	} else {
-		newModel.QueryBuilder = query
+		// 创建新的QueryBuilder实例
+		query, err := db.NewQueryBuilder(newModel.connection)
+		if err != nil {
+			// 如果创建失败，尝试使用默认连接
+			query, _ = db.NewQueryBuilder("default")
+		}
+		
+		if newModel.GetTableName() != "" {
+			newModel.QueryBuilder = query.From(newModel.GetTableName())
+		} else {
+			newModel.QueryBuilder = query
+		}
 	}
 
 	return newModel
@@ -246,12 +279,56 @@ func (m *BaseModel) NewQuery() *BaseModel {
 	return m.Model(nil)
 }
 
+// Release 释放模型实例到对象池（优化内存使用）
+func (m *BaseModel) Release() {
+	if m == nil {
+		return
+	}
+	
+	// 释放QueryBuilder资源
+	if m.QueryBuilder != nil {
+		m.QueryBuilder.Release()
+		m.QueryBuilder = nil
+	}
+	
+	// 清空属性映射
+	for k := range m.attributes {
+		delete(m.attributes, k)
+	}
+	
+	// 重置字段
+	m.tableName = ""
+	m.primaryKey = "id"
+	m.connection = "default"
+	m.exists = false
+	m.timestamps = true
+	m.createdAt = "created_at"
+	m.updatedAt = "updated_at"
+	m.softDeletes = false
+	m.deletedAt = "deleted_at"
+	
+	// 重置时间字段缓存
+	m.timeFields = m.timeFields[:0]
+	
+	// 释放访问器处理器
+	m.accessorProcessor = nil
+	
+	// 放回对象池
+	baseModelPool.Put(m)
+}
+
 // ============================================================================
 // 重写查询方法，自动使用正确的连接（用户透明）
 // ============================================================================
 
 // Where 条件查询（重写以确保使用正确连接）
 func (m *BaseModel) Where(args ...interface{}) *BaseModel {
+	// 如果已经有QueryBuilder，直接使用它继续链式调用
+	if m.QueryBuilder != nil {
+		return m.wrapQueryBuilder(m.QueryBuilder.Where(args...))
+	}
+
+	// 否则创建新查询
 	newQuery := m.newQuerySafe()
 	if newQuery == nil {
 		return m // fallback 到原始查询
@@ -261,52 +338,87 @@ func (m *BaseModel) Where(args ...interface{}) *BaseModel {
 
 // Count 计数查询（重写以确保使用正确连接）
 func (m *BaseModel) Count() (int64, error) {
+	// 如果已经有QueryBuilder且有条件，直接使用
+	if m.QueryBuilder != nil {
+		return m.QueryBuilder.Count()
+	}
+
+	// 否则创建新查询
 	newQuery := m.newQuerySafe()
 	if newQuery == nil {
-		// fallback 到嵌入的 QueryBuilder
-		return m.QueryBuilder.Count()
+		return 0, fmt.Errorf("无法创建查询构建器")
 	}
 	return newQuery.Count()
 }
 
 // Get 获取所有记录（重写以确保使用正确连接）
 func (m *BaseModel) Get() ([]map[string]interface{}, error) {
+	// 如果已经有QueryBuilder且有条件，直接使用
+	if m.QueryBuilder != nil {
+		return m.QueryBuilder.Get()
+	}
+
+	// 否则创建新查询
 	newQuery := m.newQuerySafe()
 	if newQuery == nil {
-		return m.QueryBuilder.Get()
+		return nil, fmt.Errorf("无法创建查询构建器")
 	}
 	return newQuery.Get()
 }
 
 // First 获取第一条记录（重写以确保使用正确连接）
 func (m *BaseModel) First() (map[string]interface{}, error) {
+	// 如果已经有QueryBuilder且有条件，直接使用
+	if m.QueryBuilder != nil {
+		return m.QueryBuilder.First()
+	}
+
+	// 否则创建新查询
 	newQuery := m.newQuerySafe()
 	if newQuery == nil {
-		return m.QueryBuilder.First()
+		return nil, fmt.Errorf("无法创建查询构建器")
 	}
 	return newQuery.First()
 }
 
 // Update 更新记录（重写以确保使用正确连接）
 func (m *BaseModel) Update(data map[string]interface{}) (int64, error) {
+	// 如果已经有QueryBuilder且有条件，直接使用
+	if m.QueryBuilder != nil {
+		return m.QueryBuilder.Update(data)
+	}
+
+	// 否则创建新查询
 	newQuery := m.newQuerySafe()
 	if newQuery == nil {
-		return m.QueryBuilder.Update(data)
+		return 0, fmt.Errorf("无法创建查询构建器")
 	}
 	return newQuery.Update(data)
 }
 
 // Delete 删除记录（重写以确保使用正确连接）
 func (m *BaseModel) Delete() (int64, error) {
+	// 如果已经有QueryBuilder且有条件，直接使用
+	if m.QueryBuilder != nil {
+		return m.QueryBuilder.Delete()
+	}
+
+	// 否则创建新查询
 	newQuery := m.newQuerySafe()
 	if newQuery == nil {
-		return m.QueryBuilder.Delete()
+		return 0, fmt.Errorf("无法创建查询构建器")
 	}
 	return newQuery.Delete()
 }
 
 // Select 选择字段（重写以确保使用正确连接）
 func (m *BaseModel) Select(args ...interface{}) *BaseModel {
+	// 如果已经有QueryBuilder，直接使用它继续链式调用
+	if m.QueryBuilder != nil {
+		return m.wrapQueryBuilder(m.QueryBuilder.Select(args...))
+	}
+
+	// 否则创建新查询
 	newQuery := m.newQuerySafe()
 	if newQuery == nil {
 		return m // fallback
@@ -316,6 +428,12 @@ func (m *BaseModel) Select(args ...interface{}) *BaseModel {
 
 // OrderBy 排序（重写以确保使用正确连接）
 func (m *BaseModel) OrderBy(column string, direction string) *BaseModel {
+	// 如果已经有QueryBuilder，直接使用它继续链式调用
+	if m.QueryBuilder != nil {
+		return m.wrapQueryBuilder(m.QueryBuilder.OrderBy(column, direction))
+	}
+
+	// 否则创建新查询
 	newQuery := m.newQuerySafe()
 	if newQuery == nil {
 		return m // fallback
@@ -325,6 +443,12 @@ func (m *BaseModel) OrderBy(column string, direction string) *BaseModel {
 
 // Page 分页（重写以确保使用正确连接）
 func (m *BaseModel) Page(page, size int) *BaseModel {
+	// 如果已经有QueryBuilder，直接使用它继续链式调用
+	if m.QueryBuilder != nil {
+		return m.wrapQueryBuilder(m.QueryBuilder.Page(page, size))
+	}
+
+	// 否则创建新查询
 	newQuery := m.newQuerySafe()
 	if newQuery == nil {
 		return m // fallback
@@ -451,20 +575,44 @@ func (m *BaseModel) SetAttributeWithAccessor(modelInstance interface{}, key stri
 	return m
 }
 
-// SetAttributesWithAccessor 批量设置属性并应用设置器（需要传入具体模型实例）
+// SetAttributesWithAccessor 批量设置属性并应用设置器（需要传入具体模型实例）- 性能优化版本
 func (m *BaseModel) SetAttributesWithAccessor(modelInstance interface{}, attributes map[string]interface{}) *BaseModel {
-	// 创建访问器处理器
-	processor := db.NewAccessorProcessor(modelInstance)
+	// 使用缓存的访问器处理器
+	processor := m.getAccessorProcessor(modelInstance)
 
 	// 应用设置器处理
 	processedData := processor.ProcessSetData(attributes)
 
-	// 设置处理后的值
-	for key, value := range processedData {
-		m.attributes[key] = value
+	// 设置处理后的值 - 优化批量设置
+	if len(processedData) > 0 {
+		for key, value := range processedData {
+			m.attributes[key] = value
+		}
 	}
 
 	return m
+}
+
+// getAccessorProcessor 获取缓存的访问器处理器 - 性能优化
+func (m *BaseModel) getAccessorProcessor(modelInstance interface{}) *db.AccessorProcessor {
+	m.accessorMutex.RLock()
+	if m.accessorProcessor != nil {
+		processor := m.accessorProcessor
+		m.accessorMutex.RUnlock()
+		return processor
+	}
+	m.accessorMutex.RUnlock()
+
+	// 创建新的处理器
+	m.accessorMutex.Lock()
+	defer m.accessorMutex.Unlock()
+
+	// 双重检查
+	if m.accessorProcessor == nil {
+		m.accessorProcessor = db.NewAccessorProcessor(modelInstance)
+	}
+
+	return m.accessorProcessor
 }
 
 // GetAttributes 获取所有属性
@@ -906,9 +1054,8 @@ func (m *BaseModel) AutoMigrate(models ...interface{}) error {
 						baseModelPtr := baseModelField.Addr().Interface().(*BaseModel)
 						tableName = baseModelPtr.GetTableName()
 					} else {
-						// 如果无法获取地址，尝试值访问
-						baseModelInstance := baseModelField.Interface().(BaseModel)
-						tableName = baseModelInstance.GetTableName()
+						// 如果无法获取地址，跳过以避免锁复制
+						// 这种情况下使用默认的类型推断
 					}
 				}
 			}

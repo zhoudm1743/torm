@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -20,11 +21,34 @@ import (
 	// MongoDB相关导入在mongodb_connection.go和mongodb_builder.go中
 )
 
+// 性能优化：QueryBuilder对象池
+var (
+	queryBuilderPool = sync.Pool{
+		New: func() interface{} {
+			return &QueryBuilder{
+				selectColumns:    make([]string, 0, 8),         // 预分配8个元素
+				whereConditions:  make([]WhereCondition, 0, 4), // 预分配4个元素
+				joinClauses:      make([]JoinClause, 0, 2),     // 预分配2个元素
+				orderByColumns:   make([]OrderByClause, 0, 2),  // 预分配2个元素
+				groupByColumns:   make([]string, 0, 2),         // 预分配2个元素
+				havingConditions: make([]WhereCondition, 0, 2), // 预分配2个元素
+				timeFields:       make([]TimeFieldInfo, 0, 4),  // 预分配4个元素
+				ctx:              context.Background(),
+			}
+		},
+	}
+
+	// 预编译常用正则表达式
+	placeholderRegex = regexp.MustCompile(`\?`)
+	operatorRegex    = regexp.MustCompile(`^\s*(=|!=|<>|>|>=|<|<=|LIKE|NOT LIKE|IN|NOT IN|BETWEEN|NOT BETWEEN)\s*$`)
+)
+
 // QueryBuilder 查询构建器 - TORM的核心
 type QueryBuilder struct {
-	connection ConnectionInterface
-	tableName  string
-	model      interface{} // 关联的模型实例
+	connection     ConnectionInterface
+	connectionName string // 连接名，延迟获取连接
+	tableName      string
+	model          interface{} // 关联的模型实例
 
 	// 查询组件
 	selectColumns    []string
@@ -80,25 +104,98 @@ type OrderByClause struct {
 	Direction string // ASC, DESC
 }
 
-// NewQueryBuilder 创建新的查询构建器
+// NewQueryBuilder 创建新的查询构建器 - 连接池优化版本
 func NewQueryBuilder(connectionName string) (*QueryBuilder, error) {
+	// 从对象池获取QueryBuilder实例
+	qb := queryBuilderPool.Get().(*QueryBuilder)
+
+	// 重置和初始化
+	qb.resetQueryBuilder()
+	qb.connectionName = connectionName // 只存储连接名，不立即获取连接
+	qb.timeManager = NewTimeFieldManager()
+
+	return qb, nil
+}
+
+// resetQueryBuilder 重置QueryBuilder到初始状态 - 性能优化
+func (qb *QueryBuilder) resetQueryBuilder() {
+	qb.connection = nil    // 清空连接引用
+	qb.connectionName = "" // 清空连接名
+	qb.tableName = ""
+	qb.model = nil
+
+	// 重用切片，只重置长度
+	qb.selectColumns = qb.selectColumns[:0]
+	qb.whereConditions = qb.whereConditions[:0]
+	qb.joinClauses = qb.joinClauses[:0]
+	qb.orderByColumns = qb.orderByColumns[:0]
+	qb.groupByColumns = qb.groupByColumns[:0]
+	qb.havingConditions = qb.havingConditions[:0]
+	qb.timeFields = qb.timeFields[:0]
+
+	// 重置其他字段
+	qb.limitCount = 0
+	qb.offsetCount = 0
+	qb.transaction = nil
+	qb.cacheEnabled = false
+	qb.cacheTTL = 0
+	qb.cacheTags = nil
+	qb.cacheKey = ""
+	qb.ctx = context.Background()
+}
+
+// Release 释放QueryBuilder回对象池 - 新增方法
+func (qb *QueryBuilder) Release() {
+	if qb != nil {
+		qb.resetQueryBuilder()
+		queryBuilderPool.Put(qb)
+	}
+}
+
+// getConnection 延迟获取数据库连接 - 优化连接管理
+func (qb *QueryBuilder) getConnection() (ConnectionInterface, error) {
+	// 如果已经有连接，直接返回
+	if qb.connection != nil {
+		return qb.connection, nil
+	}
+
+	// 使用连接名获取连接
+	connectionName := qb.connectionName
+	if connectionName == "" {
+		connectionName = "default"
+	}
+
 	conn, err := DefaultManager().Connection(connectionName)
 	if err != nil {
 		return nil, fmt.Errorf("获取数据库连接失败: %w", err)
 	}
 
-	return &QueryBuilder{
-		connection:       conn,
-		selectColumns:    []string{},
-		whereConditions:  []WhereCondition{},
-		joinClauses:      []JoinClause{},
-		orderByColumns:   []OrderByClause{},
-		groupByColumns:   []string{},
-		havingConditions: []WhereCondition{},
-		timeManager:      NewTimeFieldManager(),
-		timeFields:       make([]TimeFieldInfo, 0),
-		ctx:              context.Background(),
-	}, nil
+	// 缓存连接引用
+	qb.connection = conn
+	return conn, nil
+}
+
+// GetConnection 获取连接名称
+func (qb *QueryBuilder) GetConnection() string {
+	return qb.connectionName
+}
+
+// Reset 重置查询状态但保持连接信息
+func (qb *QueryBuilder) Reset() *QueryBuilder {
+	// 保存连接信息
+	conn := qb.connection
+	connName := qb.connectionName
+	timeManager := qb.timeManager
+
+	// 重置查询状态
+	qb.resetQueryBuilder()
+
+	// 恢复连接信息
+	qb.connection = conn
+	qb.connectionName = connName
+	qb.timeManager = timeManager
+
+	return qb
 }
 
 // 注意：Table和Model函数已移至manager.go
@@ -781,7 +878,11 @@ func (qb *QueryBuilder) Get() ([]map[string]interface{}, error) {
 	if qb.transaction != nil {
 		rows, err = qb.transaction.Query(sqlStr, args...)
 	} else {
-		rows, err = qb.connection.Query(sqlStr, args...)
+		conn, connErr := qb.getConnection()
+		if connErr != nil {
+			return nil, connErr
+		}
+		rows, err = conn.Query(sqlStr, args...)
 	}
 
 	if err != nil {
@@ -869,7 +970,11 @@ func (qb *QueryBuilder) Count() (int64, error) {
 	if qb.transaction != nil {
 		rows, err = qb.transaction.Query(sqlStr, args...)
 	} else {
-		rows, err = qb.connection.Query(sqlStr, args...)
+		conn, connErr := qb.getConnection()
+		if connErr != nil {
+			return 0, connErr
+		}
+		rows, err = conn.Query(sqlStr, args...)
 	}
 
 	// 恢复原始查询配置
@@ -970,7 +1075,11 @@ func (qb *QueryBuilder) Insert(data map[string]interface{}) (int64, error) {
 		if qb.transaction != nil {
 			err = qb.transaction.QueryRow(sqlStr, args...).Scan(&lastID)
 		} else {
-			db := qb.connection.GetDB()
+			conn, connErr := qb.getConnection()
+			if connErr != nil {
+				return 0, connErr
+			}
+			db := conn.GetDB()
 			err = db.QueryRow(sqlStr, args...).Scan(&lastID)
 		}
 
@@ -982,7 +1091,11 @@ func (qb *QueryBuilder) Insert(data map[string]interface{}) (int64, error) {
 			if qb.transaction != nil {
 				result, err = qb.transaction.Exec(originalSQL, args...)
 			} else {
-				result, err = qb.connection.Exec(originalSQL, args...)
+				conn, connErr := qb.getConnection()
+				if connErr != nil {
+					return 0, connErr
+				}
+				result, err = conn.Exec(originalSQL, args...)
 			}
 
 			if err != nil {
@@ -1017,7 +1130,11 @@ func (qb *QueryBuilder) Insert(data map[string]interface{}) (int64, error) {
 		if qb.transaction != nil {
 			result, err = qb.transaction.Exec(sqlStr, args...)
 		} else {
-			result, err = qb.connection.Exec(sqlStr, args...)
+			conn, connErr := qb.getConnection()
+			if connErr != nil {
+				return 0, connErr
+			}
+			result, err = conn.Exec(sqlStr, args...)
 		}
 
 		if err != nil {
@@ -1067,7 +1184,11 @@ func (qb *QueryBuilder) Update(data map[string]interface{}) (int64, error) {
 	if qb.transaction != nil {
 		result, err = qb.transaction.Exec(sqlStr, args...)
 	} else {
-		result, err = qb.connection.Exec(sqlStr, args...)
+		conn, connErr := qb.getConnection()
+		if connErr != nil {
+			return 0, connErr
+		}
+		result, err = conn.Exec(sqlStr, args...)
 	}
 
 	if err != nil {
@@ -1106,7 +1227,11 @@ func (qb *QueryBuilder) Delete() (int64, error) {
 	if qb.transaction != nil {
 		result, err = qb.transaction.Exec(sqlStr, args...)
 	} else {
-		result, err = qb.connection.Exec(sqlStr, args...)
+		conn, connErr := qb.getConnection()
+		if connErr != nil {
+			return 0, connErr
+		}
+		result, err = conn.Exec(sqlStr, args...)
 	}
 
 	if err != nil {
@@ -1925,10 +2050,11 @@ func (qb *QueryBuilder) isSliceOrArray(value interface{}) bool {
 
 // getDriverName 获取数据库驱动名称
 func (qb *QueryBuilder) getDriverName() string {
-	if qb.connection != nil {
-		return qb.connection.GetDriver()
+	conn, err := qb.getConnection()
+	if err != nil {
+		return ""
 	}
-	return ""
+	return conn.GetDriver()
 }
 
 // buildPlaceholder 根据数据库类型构建占位符

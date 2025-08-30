@@ -23,7 +23,7 @@ type CacheTestUser struct {
 // setupCacheTestData 设置缓存测试数据
 func setupCacheTestData(t *testing.T, connectionName string) {
 	// 创建表
-	user := &CacheTestUser{BaseModel: *torm.NewBaseModel()}
+	user := &CacheTestUser{BaseModel: *torm.NewModel()}
 	user.SetTable("cache_test_users").SetPrimaryKey("id").SetConnection(connectionName)
 
 	err := user.AutoMigrate(user)

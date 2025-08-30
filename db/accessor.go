@@ -2,44 +2,90 @@ package db
 
 import (
 	"encoding/json"
-	"fmt"
 	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
-// AccessorProcessor 访问器处理器
+// 全局访问器缓存 - 优化重复创建处理器
+var (
+	globalAccessorCache = make(map[reflect.Type]*AccessorProcessor)
+	accessorCacheMutex  sync.RWMutex
+
+	// 预编译的正则表达式 - 避免重复编译
+	getPatternCache = regexp.MustCompile(`^Get([A-Z][a-zA-Z0-9_]*)Attr$`)
+	setPatternCache = regexp.MustCompile(`^Set([A-Z][a-zA-Z0-9_]*)Attr$`)
+)
+
+// AccessorProcessor 访问器处理器 - 性能优化版本
 type AccessorProcessor struct {
 	modelType    reflect.Type
-	getAccessors map[string]*regexp.Regexp
-	setAccessors map[string]*regexp.Regexp
+	getAccessors map[string]string // 简化存储，只存储属性名->方法名映射
+	setAccessors map[string]string // 简化存储，只存储属性名->方法名映射
 	methodCache  map[string]reflect.Method
 	initialized  bool
+
+	// 性能优化：缓存常用反射结果
+	modelValue reflect.Value
+	isPointer  bool
 }
 
-// NewAccessorProcessor 创建访问器处理器
+// NewAccessorProcessor 创建访问器处理器 - 性能优化版本
 func NewAccessorProcessor(modelInstance interface{}) *AccessorProcessor {
-	processor := &AccessorProcessor{
-		getAccessors: make(map[string]*regexp.Regexp),
-		setAccessors: make(map[string]*regexp.Regexp),
-		methodCache:  make(map[string]reflect.Method),
-		initialized:  false,
+	if modelInstance == nil {
+		return &AccessorProcessor{
+			getAccessors: make(map[string]string),
+			setAccessors: make(map[string]string),
+			methodCache:  make(map[string]reflect.Method),
+			initialized:  false,
+		}
 	}
 
-	if modelInstance != nil {
-		processor.modelType = reflect.TypeOf(modelInstance)
-		if processor.modelType.Kind() == reflect.Ptr {
-			processor.modelType = processor.modelType.Elem()
-		}
-		processor.initializeAccessors(modelInstance)
+	modelType := reflect.TypeOf(modelInstance)
+	if modelType.Kind() == reflect.Ptr {
+		modelType = modelType.Elem()
 	}
+
+	// 尝试从全局缓存获取
+	accessorCacheMutex.RLock()
+	if cached, exists := globalAccessorCache[modelType]; exists {
+		accessorCacheMutex.RUnlock()
+		// 创建一个新实例，共享访问器信息但独立状态
+		return &AccessorProcessor{
+			modelType:    cached.modelType,
+			getAccessors: cached.getAccessors,
+			setAccessors: cached.setAccessors,
+			methodCache:  cached.methodCache,
+			initialized:  true,
+			isPointer:    reflect.TypeOf(modelInstance).Kind() == reflect.Ptr,
+		}
+	}
+	accessorCacheMutex.RUnlock()
+
+	// 不在缓存中，创建新的处理器
+	processor := &AccessorProcessor{
+		modelType:    modelType,
+		getAccessors: make(map[string]string),
+		setAccessors: make(map[string]string),
+		methodCache:  make(map[string]reflect.Method),
+		initialized:  false,
+		isPointer:    reflect.TypeOf(modelInstance).Kind() == reflect.Ptr,
+	}
+
+	processor.initializeAccessors(modelInstance)
+
+	// 加入全局缓存
+	accessorCacheMutex.Lock()
+	globalAccessorCache[modelType] = processor
+	accessorCacheMutex.Unlock()
 
 	return processor
 }
 
-// initializeAccessors 初始化访问器缓存
+// initializeAccessors 初始化访问器缓存 - 性能优化版本
 func (ap *AccessorProcessor) initializeAccessors(modelInstance interface{}) {
 	if ap.initialized {
 		return
@@ -52,27 +98,35 @@ func (ap *AccessorProcessor) initializeAccessors(modelInstance interface{}) {
 		return
 	}
 
-	// 编译正则表达式
-	getPattern := regexp.MustCompile(`^Get([A-Z][a-zA-Z0-9_]*)Attr$`)
-	setPattern := regexp.MustCompile(`^Set([A-Z][a-zA-Z0-9_]*)Attr$`)
+	// 使用预编译的正则表达式
+	getPattern := getPatternCache
+	setPattern := setPatternCache
 
 	// 扫描所有方法（包括指针接收者方法）
-	for i := 0; i < modelType.NumMethod(); i++ {
+	methodCount := modelType.NumMethod()
+	for i := 0; i < methodCount; i++ {
 		method := modelType.Method(i)
 		methodName := method.Name
 
-		// 检查获取器 Get[Name]Attr
-		if matches := getPattern.FindStringSubmatch(methodName); len(matches) > 1 {
-			attrName := camelToSnake(matches[1])
-			ap.getAccessors[attrName] = getPattern
-			ap.methodCache[methodName] = method
-		}
+		// 性能优化：先检查方法名模式，避免不必要的正则匹配
+		if len(methodName) > 4 && strings.HasSuffix(methodName, "Attr") {
+			// 检查获取器 Get[Name]Attr
+			if strings.HasPrefix(methodName, "Get") && len(methodName) > 7 {
+				if matches := getPattern.FindStringSubmatch(methodName); len(matches) > 1 {
+					attrName := camelToSnakeOptimized(matches[1])
+					ap.getAccessors[attrName] = methodName // 直接存储方法名
+					ap.methodCache[methodName] = method
+				}
+			}
 
-		// 检查设置器 Set[Name]Attr
-		if matches := setPattern.FindStringSubmatch(methodName); len(matches) > 1 {
-			attrName := camelToSnake(matches[1])
-			ap.setAccessors[attrName] = setPattern
-			ap.methodCache[methodName] = method
+			// 检查设置器 Set[Name]Attr
+			if strings.HasPrefix(methodName, "Set") && len(methodName) > 7 {
+				if matches := setPattern.FindStringSubmatch(methodName); len(matches) > 1 {
+					attrName := camelToSnakeOptimized(matches[1])
+					ap.setAccessors[attrName] = methodName // 直接存储方法名
+					ap.methodCache[methodName] = method
+				}
+			}
 		}
 	}
 
@@ -113,7 +167,7 @@ func (ap *AccessorProcessor) ProcessDataSlice(dataSlice []map[string]interface{}
 	return result
 }
 
-// hasGetAccessor 检查是否有获取器
+// hasGetAccessor 检查是否有获取器 - 性能优化版本
 func (ap *AccessorProcessor) hasGetAccessor(key string) bool {
 	if ap.getAccessors == nil {
 		return false
@@ -122,7 +176,7 @@ func (ap *AccessorProcessor) hasGetAccessor(key string) bool {
 	return exists
 }
 
-// hasSetAccessor 检查是否有设置器
+// hasSetAccessor 检查是否有设置器 - 性能优化版本
 func (ap *AccessorProcessor) hasSetAccessor(key string) bool {
 	if ap.setAccessors == nil {
 		return false
@@ -131,36 +185,24 @@ func (ap *AccessorProcessor) hasSetAccessor(key string) bool {
 	return exists
 }
 
-// callGetAccessor 调用获取器
+// callGetAccessor 调用获取器 - 性能优化版本
 func (ap *AccessorProcessor) callGetAccessor(key string, value interface{}) interface{} {
-	methodName := fmt.Sprintf("Get%sAttr", snakeToCamel(key))
-
-	if method, exists := ap.methodCache[methodName]; exists {
-		return ap.callMethod(method, value)
-	}
-
-	// 如果缓存中没有，尝试动态查找
-	if ap.modelType != nil {
-		if method, exists := ap.modelType.MethodByName(methodName); exists {
-			return ap.callMethod(method, value)
+	// 直接从缓存获取方法名
+	if methodName, exists := ap.getAccessors[key]; exists {
+		if method, methodExists := ap.methodCache[methodName]; methodExists {
+			return ap.callMethodOptimized(method, value)
 		}
 	}
 
 	return value
 }
 
-// callSetAccessor 调用设置器
+// callSetAccessor 调用设置器 - 性能优化版本
 func (ap *AccessorProcessor) callSetAccessor(key string, value interface{}) interface{} {
-	methodName := fmt.Sprintf("Set%sAttr", snakeToCamel(key))
-
-	if method, exists := ap.methodCache[methodName]; exists {
-		return ap.callMethod(method, value)
-	}
-
-	// 如果缓存中没有，尝试动态查找
-	if ap.modelType != nil {
-		if method, exists := ap.modelType.MethodByName(methodName); exists {
-			return ap.callMethod(method, value)
+	// 直接从缓存获取方法名
+	if methodName, exists := ap.setAccessors[key]; exists {
+		if method, methodExists := ap.methodCache[methodName]; methodExists {
+			return ap.callMethodOptimized(method, value)
 		}
 	}
 
@@ -185,45 +227,9 @@ func (ap *AccessorProcessor) ProcessSetData(data map[string]interface{}) map[str
 	return result
 }
 
-// callMethod 调用反射方法
+// callMethod 调用反射方法 - 保持向后兼容
 func (ap *AccessorProcessor) callMethod(method reflect.Method, value interface{}) interface{} {
-	methodType := method.Type
-	if methodType.NumIn() != 2 || methodType.NumOut() != 1 {
-		return value
-	}
-
-	// 创建零值接收者 - 这里只是为了调用方法，不需要真实的实例
-	receiverType := methodType.In(0)
-	var receiver reflect.Value
-
-	if receiverType.Kind() == reflect.Ptr {
-		receiver = reflect.New(receiverType.Elem())
-	} else {
-		receiver = reflect.Zero(receiverType)
-	}
-
-	// 准备参数
-	var param reflect.Value
-	if value == nil {
-		param = reflect.Zero(methodType.In(1))
-	} else {
-		param = reflect.ValueOf(value)
-		if !param.Type().AssignableTo(methodType.In(1)) {
-			if param.Type().ConvertibleTo(methodType.In(1)) {
-				param = param.Convert(methodType.In(1))
-			} else {
-				return value
-			}
-		}
-	}
-
-	// 调用方法
-	results := method.Func.Call([]reflect.Value{receiver, param})
-	if len(results) > 0 {
-		return results[0].Interface()
-	}
-
-	return value
+	return ap.callMethodOptimized(method, value)
 }
 
 // processValue 处理 []byte 和其他类型的值
@@ -288,25 +294,75 @@ func (ap *AccessorProcessor) processBytesValue(bytes []byte) interface{} {
 	return str
 }
 
-// camelToSnake 驼峰转蛇形命名（增强版，支持连续大写字母）
-func camelToSnake(str string) string {
+// callMethodOptimized 优化版本的方法调用
+func (ap *AccessorProcessor) callMethodOptimized(method reflect.Method, value interface{}) interface{} {
+	methodType := method.Type
+	if methodType.NumIn() != 2 || methodType.NumOut() != 1 {
+		return value
+	}
+
+	// 创建零值接收者 - 优化版本
+	receiverType := methodType.In(0)
+	var receiver reflect.Value
+
+	if receiverType.Kind() == reflect.Ptr {
+		receiver = reflect.New(receiverType.Elem())
+	} else {
+		receiver = reflect.Zero(receiverType)
+	}
+
+	// 准备参数 - 优化版本，减少反射调用
+	var param reflect.Value
+	if value == nil {
+		param = reflect.Zero(methodType.In(1))
+	} else {
+		valueType := reflect.TypeOf(value)
+		paramType := methodType.In(1)
+
+		// 性能优化：直接类型匹配，避免转换
+		if valueType == paramType {
+			param = reflect.ValueOf(value)
+		} else if valueType.AssignableTo(paramType) {
+			param = reflect.ValueOf(value)
+		} else if valueType.ConvertibleTo(paramType) {
+			param = reflect.ValueOf(value).Convert(paramType)
+		} else {
+			return value
+		}
+	}
+
+	// 调用方法
+	results := method.Func.Call([]reflect.Value{receiver, param})
+	if len(results) > 0 {
+		return results[0].Interface()
+	}
+
+	return value
+}
+
+// camelToSnakeOptimized 优化版本的驼峰转蛇形命名
+func camelToSnakeOptimized(str string) string {
 	if str == "" {
 		return ""
 	}
 
+	// 预分配适当大小的builder
 	var result strings.Builder
+	result.Grow(len(str) + len(str)/3) // 预估大小
+
 	runes := []rune(str)
+	runeCount := len(runes)
 
 	for i, r := range runes {
 		// 当前字符是大写字母
 		if r >= 'A' && r <= 'Z' {
-			// 需要添加下划线的条件：
-			// 1. 不是第一个字符
-			// 2. 前一个字符是小写字母，或者
-			// 3. 当前字符后面跟着小写字母（处理连续大写的情况，如 HTMLParser -> html_parser）
-			if i > 0 && ((runes[i-1] >= 'a' && runes[i-1] <= 'z') || // 前一个是小写
-				(i+1 < len(runes) && runes[i+1] >= 'a' && runes[i+1] <= 'z')) { // 后一个是小写
-				result.WriteRune('_')
+			// 需要添加下划线的条件（优化判断逻辑）
+			if i > 0 {
+				prevIsLower := runes[i-1] >= 'a' && runes[i-1] <= 'z'
+				nextIsLower := i+1 < runeCount && runes[i+1] >= 'a' && runes[i+1] <= 'z'
+				if prevIsLower || nextIsLower {
+					result.WriteRune('_')
+				}
 			}
 			result.WriteRune(r - 'A' + 'a') // 转为小写
 		} else {
@@ -314,6 +370,11 @@ func camelToSnake(str string) string {
 		}
 	}
 	return result.String()
+}
+
+// camelToSnake 驼峰转蛇形命名（保持向后兼容）
+func camelToSnake(str string) string {
+	return camelToSnakeOptimized(str)
 }
 
 // snakeToCamel 蛇形转驼峰命名（增强版，智能处理缩写）
