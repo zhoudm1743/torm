@@ -6,6 +6,7 @@ import (
 	"time"
 
 	_ "github.com/lib/pq" // PostgreSQL 驱动
+	"github.com/zhoudm1743/torm/logger"
 )
 
 // PostgreSQLConnection PostgreSQL数据库连接
@@ -108,11 +109,17 @@ func (c *PostgreSQLConnection) Query(query string, args ...interface{}) (*sql.Ro
 	rows, err := c.db.Query(query, args...)
 	duration := time.Since(start)
 
-	if c.logger != nil && c.config.LogQueries {
-		if err != nil {
-			c.logger.Error("sql", query, "args", args, "error", err, "duration", duration)
+	// 统一SQL日志记录
+	if c.logger != nil {
+		if sqlLogger, ok := c.logger.(*logger.SQLLogger); ok {
+			sqlLogger.LogSQL(query, args, duration, err)
 		} else {
-			c.logger.Debug("sql", query, "args", args, "duration", duration)
+			// 兼容旧的日志接口
+			if err != nil {
+				c.logger.Error("sql", query, "args", args, "error", err, "duration", duration)
+			} else if c.config.LogQueries {
+				c.logger.Debug("sql", query, "args", args, "duration", duration)
+			}
 		}
 	}
 
@@ -133,8 +140,13 @@ func (c *PostgreSQLConnection) QueryRow(query string, args ...interface{}) *sql.
 	row := c.db.QueryRow(query, args...)
 	duration := time.Since(start)
 
-	if c.logger != nil && c.config.LogQueries {
-		c.logger.Debug("sql", query, "args", args, "duration", duration)
+	// 统一SQL日志记录（QueryRow总是成功，没有error）
+	if c.logger != nil {
+		if sqlLogger, ok := c.logger.(*logger.SQLLogger); ok {
+			sqlLogger.LogSQL(query, args, duration, nil)
+		} else if c.config.LogQueries {
+			c.logger.Debug("sql", query, "args", args, "duration", duration)
+		}
 	}
 
 	return row
@@ -150,11 +162,23 @@ func (c *PostgreSQLConnection) Exec(query string, args ...interface{}) (sql.Resu
 	result, err := c.db.Exec(query, args...)
 	duration := time.Since(start)
 
-	if c.logger != nil && c.config.LogQueries {
-		if err != nil {
-			c.logger.Error("sql", query, "args", args, "error", err, "duration", duration)
+	// 统一SQL日志记录
+	if c.logger != nil {
+		if sqlLogger, ok := c.logger.(*logger.SQLLogger); ok {
+			if err != nil {
+				sqlLogger.LogSQL(query, args, duration, err)
+			} else {
+				// 获取影响的行数
+				rowsAffected, _ := result.RowsAffected()
+				sqlLogger.LogSQLWithRows(query, args, duration, rowsAffected, nil)
+			}
 		} else {
-			c.logger.Debug("sql", query, "args", args, "duration", duration)
+			// 兼容旧的日志接口
+			if err != nil {
+				c.logger.Error("sql", query, "args", args, "error", err, "duration", duration)
+			} else if c.config.LogQueries {
+				c.logger.Debug("sql", query, "args", args, "duration", duration)
+			}
 		}
 	}
 

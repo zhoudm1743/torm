@@ -43,17 +43,35 @@ func NewMigration(version, description string,
 // Up 执行迁移
 func (m *Migration) Up(conn db.ConnectionInterface) error {
 	if m.upFunc == nil {
-		return fmt.Errorf("up function not defined for migration %s", m.version)
+		return db.NewError(db.ErrCodeMigrationFailed, "up function not defined for migration").
+			WithContext("version", m.version)
 	}
-	return m.upFunc(conn)
+
+	err := m.upFunc(conn)
+	if err != nil {
+		wrappedErr := db.WrapError(err, db.ErrCodeMigrationFailed, "迁移执行失败").
+			WithContext("version", m.version).
+			WithContext("description", m.description)
+		db.LogError(wrappedErr)
+		return wrappedErr
+	}
+	return nil
 }
 
 // Down 回滚迁移
 func (m *Migration) Down(conn db.ConnectionInterface) error {
 	if m.downFunc == nil {
-		return fmt.Errorf("down function not defined for migration %s", m.version)
+		return db.NewError(db.ErrCodeMigrationRollbackFailed, "down function not defined for migration").
+			WithContext("version", m.version)
 	}
-	return m.downFunc(conn)
+
+	err := m.downFunc(conn)
+	if err != nil {
+		return db.WrapError(err, db.ErrCodeMigrationRollbackFailed, "迁移回滚失败").
+			WithContext("version", m.version).
+			WithContext("description", m.description)
+	}
+	return nil
 }
 
 // Version 获取迁移版本号
@@ -271,12 +289,12 @@ func (m *Migrator) sortMigrations(migrations []MigrationInterface) {
 // Up 执行所有待执行的迁移
 func (m *Migrator) Up() error {
 	if err := m.ensureMigrationTable(); err != nil {
-		return err
+		return db.WrapError(err, db.ErrCodeMigrationFailed, "确保迁移表存在失败")
 	}
 
 	applied, err := m.getAppliedMigrations()
 	if err != nil {
-		return err
+		return db.WrapError(err, db.ErrCodeMigrationFailed, "获取已应用迁移失败")
 	}
 
 	// 获取待执行的迁移
@@ -298,7 +316,7 @@ func (m *Migrator) Up() error {
 	// 获取下一个批次号
 	batch, err := m.getNextBatch()
 	if err != nil {
-		return err
+		return db.WrapError(err, db.ErrCodeMigrationFailed, "获取下一个批次号失败")
 	}
 
 	m.logInfo("Starting migration batch", "batch", batch, "count", len(pending))
@@ -313,12 +331,17 @@ func (m *Migrator) Up() error {
 
 		if err != nil {
 			m.logError("Migration failed", err, "version", migration.Version())
-			return fmt.Errorf("migration %s failed: %w", migration.Version(), err)
+			return db.WrapError(err, db.ErrCodeMigrationFailed, "迁移执行失败").
+				WithContext("version", migration.Version()).
+				WithContext("description", migration.Description()).
+				WithContext("batch", batch)
 		}
 
 		// 记录迁移
 		if err := m.recordMigration(migration, batch); err != nil {
-			return err
+			return db.WrapError(err, db.ErrCodeMigrationFailed, "记录迁移失败").
+				WithContext("version", migration.Version()).
+				WithContext("batch", batch)
 		}
 
 		m.logInfo("Migration applied successfully", "version", migration.Version(), "duration", duration)
@@ -331,18 +354,19 @@ func (m *Migrator) Up() error {
 // Down 回滚指定数量的迁移
 func (m *Migrator) Down(steps int) error {
 	if err := m.ensureMigrationTable(); err != nil {
-		return err
+		return db.WrapError(err, db.ErrCodeMigrationRollbackFailed, "确保迁移表存在失败")
 	}
 
 	if steps <= 0 {
-		return fmt.Errorf("steps must be greater than 0")
+		return db.ErrInvalidParameter.WithDetails("回滚步数必须大于0").WithContext("steps", steps)
 	}
 
 	// 获取已应用的迁移，按批次倒序
 	query := fmt.Sprintf("SELECT version FROM %s ORDER BY batch DESC, id DESC LIMIT ?", m.tableName)
 	rows, err := m.conn.Query(query, steps)
 	if err != nil {
-		return fmt.Errorf("failed to query migrations to rollback: %w", err)
+		return db.WrapError(err, db.ErrCodeMigrationRollbackFailed, "查询要回滚的迁移失败").
+			WithContext("steps", steps)
 	}
 	defer rows.Close()
 
@@ -350,7 +374,7 @@ func (m *Migrator) Down(steps int) error {
 	for rows.Next() {
 		var version string
 		if err := rows.Scan(&version); err != nil {
-			return fmt.Errorf("failed to scan version: %w", err)
+			return db.WrapError(err, db.ErrCodeMigrationRollbackFailed, "读取迁移版本失败")
 		}
 		versions = append(versions, version)
 	}
@@ -374,8 +398,10 @@ func (m *Migrator) Down(steps int) error {
 		}
 
 		if migration == nil {
-			m.logError("Migration not found for rollback", fmt.Errorf("migration %s not found", version))
-			return fmt.Errorf("migration %s not found", version)
+			err := db.NewError(db.ErrCodeMigrationRollbackFailed, "回滚时找不到迁移定义").
+				WithContext("version", version)
+			m.logError("Migration not found for rollback", err)
+			return err
 		}
 
 		m.logInfo("Rolling back migration", "version", version, "description", migration.Description())
@@ -386,12 +412,15 @@ func (m *Migrator) Down(steps int) error {
 
 		if err != nil {
 			m.logError("Rollback failed", err, "version", version)
-			return fmt.Errorf("rollback %s failed: %w", version, err)
+			return db.WrapError(err, db.ErrCodeMigrationRollbackFailed, "迁移回滚失败").
+				WithContext("version", version).
+				WithContext("description", migration.Description())
 		}
 
 		// 移除迁移记录
 		if err := m.removeMigrationRecord(version); err != nil {
-			return err
+			return db.WrapError(err, db.ErrCodeMigrationRollbackFailed, "移除迁移记录失败").
+				WithContext("version", version)
 		}
 
 		m.logInfo("Migration rolled back successfully", "version", version, "duration", duration)

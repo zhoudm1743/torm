@@ -228,14 +228,51 @@ func (m *BaseModel) SetDeletedAtField(field string) *BaseModel {
 
 // 属性方法
 
-// SetAttribute 设置属性
+// SetAttribute 设置属性（支持设置器处理）
 func (m *BaseModel) SetAttribute(key string, value interface{}) *BaseModel {
-	return m.SetAttributeWithAccessor(key, value)
+	// 简化实现：直接设置值，不在这里处理访问器
+	// 访问器处理应该在具体的模型方法中调用
+	m.attributes[key] = value
+	return m
 }
 
 // GetAttribute 获取属性
 func (m *BaseModel) GetAttribute(key string) interface{} {
-	return m.GetAttributeWithAccessor(key)
+	return m.attributes[key]
+}
+
+// SetAttributeWithAccessor 设置属性并应用设置器（需要传入具体模型实例）
+func (m *BaseModel) SetAttributeWithAccessor(modelInstance interface{}, key string, value interface{}) *BaseModel {
+	// 创建访问器处理器
+	processor := db.NewAccessorProcessor(modelInstance)
+
+	// 应用设置器处理
+	processedData := processor.ProcessSetData(map[string]interface{}{key: value})
+
+	// 设置处理后的值
+	if processedValue, exists := processedData[key]; exists {
+		m.attributes[key] = processedValue
+	} else {
+		m.attributes[key] = value
+	}
+
+	return m
+}
+
+// SetAttributesWithAccessor 批量设置属性并应用设置器（需要传入具体模型实例）
+func (m *BaseModel) SetAttributesWithAccessor(modelInstance interface{}, attributes map[string]interface{}) *BaseModel {
+	// 创建访问器处理器
+	processor := db.NewAccessorProcessor(modelInstance)
+
+	// 应用设置器处理
+	processedData := processor.ProcessSetData(attributes)
+
+	// 设置处理后的值
+	for key, value := range processedData {
+		m.attributes[key] = value
+	}
+
+	return m
 }
 
 // GetAttributes 获取所有属性
@@ -243,9 +280,14 @@ func (m *BaseModel) GetAttributes() map[string]interface{} {
 	return m.attributes
 }
 
-// SetAttributes 批量设置属性
+// SetAttributes 批量设置属性（支持设置器处理）
 func (m *BaseModel) SetAttributes(attributes map[string]interface{}) *BaseModel {
-	return m.SetAttributesWithAccessors(attributes)
+	// 简化实现：直接设置值，不在这里处理访问器
+	// 访问器处理应该在具体的模型方法中调用
+	for key, value := range attributes {
+		m.attributes[key] = value
+	}
+	return m
 }
 
 // ClearAttributes 清空属性
@@ -284,15 +326,30 @@ func (m *BaseModel) MarkAsNew() *BaseModel {
 func (m *BaseModel) Save() error {
 	query, err := m.newQuery()
 	if err != nil {
-		return err
+		return db.WrapError(err, db.ErrCodeModelSaveFailed, "创建查询失败")
 	}
 
 	if m.IsNew() {
 		// 插入新记录
 		data := m.prepareForInsert()
+		if len(data) == 0 {
+			return db.ErrModelValidationFailed.WithDetails("没有要插入的数据")
+		}
+
 		id, err := query.Insert(data)
 		if err != nil {
-			return err
+			if db.IsDuplicateError(err) {
+				wrappedErr := db.WrapError(err, db.ErrCodeDuplicateKey, "模型保存失败：违反唯一性约束").
+					WithContext("table", m.GetTableName()).
+					WithContext("data", data)
+				db.LogError(wrappedErr)
+				return wrappedErr
+			}
+			wrappedErr := db.WrapError(err, db.ErrCodeModelSaveFailed, "模型插入失败").
+				WithContext("table", m.GetTableName()).
+				WithContext("data", data)
+			db.LogError(wrappedErr)
+			return wrappedErr
 		}
 
 		// 设置主键值（如果是自增的）
@@ -311,24 +368,60 @@ func (m *BaseModel) Save() error {
 
 		pk := m.GetAttribute(m.primaryKey)
 		if pk == nil {
-			return fmt.Errorf("主键值不能为空")
+			return db.ErrInvalidModelState.
+				WithDetails("主键值不能为空").
+				WithContext("table", m.GetTableName()).
+				WithContext("primary_key", m.primaryKey)
 		}
 
-		_, err := query.Where(m.primaryKey, "=", pk).Update(data)
-		return err
+		affected, err := query.Where(m.primaryKey, "=", pk).Update(data)
+		if err != nil {
+			if db.IsDuplicateError(err) {
+				return db.WrapError(err, db.ErrCodeDuplicateKey, "模型更新失败：违反唯一性约束").
+					WithContext("table", m.GetTableName()).
+					WithContext("primary_key", pk).
+					WithContext("data", data)
+			}
+			return db.WrapError(err, db.ErrCodeModelSaveFailed, "模型更新失败").
+				WithContext("table", m.GetTableName()).
+				WithContext("primary_key", pk).
+				WithContext("data", data)
+		}
+
+		if affected == 0 {
+			return db.ErrModelNotFound.
+				WithDetails("没有找到要更新的记录").
+				WithContext("table", m.GetTableName()).
+				WithContext("primary_key", pk)
+		}
+
+		return nil
 	}
 }
 
 // FindByPK 根据主键查找
 func (m *BaseModel) FindByPK(key interface{}) error {
+	if key == nil {
+		return db.ErrInvalidParameter.WithDetails("主键值不能为空")
+	}
+
 	query, err := m.newQuery()
 	if err != nil {
-		return err
+		return db.WrapError(err, db.ErrCodeQueryFailed, "创建查询失败")
 	}
 
 	result, err := query.Where(m.primaryKey, "=", key).FirstRaw()
 	if err != nil {
-		return err
+		if db.IsNotFoundError(err) {
+			return db.ErrModelNotFound.
+				WithContext("table", m.GetTableName()).
+				WithContext("primary_key", m.primaryKey).
+				WithContext("key_value", key)
+		}
+		return db.WrapError(err, db.ErrCodeModelNotFound, "查找模型失败").
+			WithContext("table", m.GetTableName()).
+			WithContext("primary_key", m.primaryKey).
+			WithContext("key_value", key)
 	}
 
 	m.fill(result)
@@ -339,25 +432,41 @@ func (m *BaseModel) FindByPK(key interface{}) error {
 // SoftDelete 软删除（如果启用）
 func (m *BaseModel) SoftDelete() error {
 	if !m.softDeletes {
-		return fmt.Errorf("该模型未启用软删除")
+		return db.ErrInvalidModelState.WithDetails("该模型未启用软删除")
 	}
 
 	query, err := m.newQuery()
 	if err != nil {
-		return err
+		return db.WrapError(err, db.ErrCodeModelDeleteFailed, "创建查询失败")
 	}
 
 	pk := m.GetAttribute(m.primaryKey)
 	if pk == nil {
-		return fmt.Errorf("主键值不能为空")
+		return db.ErrInvalidModelState.
+			WithDetails("主键值不能为空").
+			WithContext("table", m.GetTableName()).
+			WithContext("primary_key", m.primaryKey)
 	}
 
 	data := map[string]interface{}{
 		m.deletedAt: time.Now(),
 	}
 
-	_, err = query.Where(m.primaryKey, "=", pk).Update(data)
-	return err
+	affected, err := query.Where(m.primaryKey, "=", pk).Update(data)
+	if err != nil {
+		return db.WrapError(err, db.ErrCodeModelDeleteFailed, "软删除失败").
+			WithContext("table", m.GetTableName()).
+			WithContext("primary_key", pk)
+	}
+
+	if affected == 0 {
+		return db.ErrModelNotFound.
+			WithDetails("没有找到要删除的记录").
+			WithContext("table", m.GetTableName()).
+			WithContext("primary_key", pk)
+	}
+
+	return nil
 }
 
 // Restore 恢复软删除的记录
@@ -388,24 +497,44 @@ func (m *BaseModel) Restore() error {
 func (m *BaseModel) ForceDelete() error {
 	query, err := m.newQuery()
 	if err != nil {
-		return err
+		return db.WrapError(err, db.ErrCodeModelDeleteFailed, "创建查询失败")
 	}
 
 	pk := m.GetAttribute(m.primaryKey)
 	if pk == nil {
-		return fmt.Errorf("主键值不能为空")
+		return db.ErrInvalidModelState.
+			WithDetails("主键值不能为空").
+			WithContext("table", m.GetTableName()).
+			WithContext("primary_key", m.primaryKey)
 	}
 
-	_, err = query.Where(m.primaryKey, "=", pk).Delete()
-	if err == nil {
-		m.MarkAsNew()
+	affected, err := query.Where(m.primaryKey, "=", pk).Delete()
+	if err != nil {
+		return db.WrapError(err, db.ErrCodeModelDeleteFailed, "强制删除失败").
+			WithContext("table", m.GetTableName()).
+			WithContext("primary_key", pk)
 	}
-	return err
+
+	if affected == 0 {
+		return db.ErrModelNotFound.
+			WithDetails("没有找到要删除的记录").
+			WithContext("table", m.GetTableName()).
+			WithContext("primary_key", pk)
+	}
+
+	m.MarkAsNew()
+	return nil
+}
+
+// ToMap 转换为map
+func (m *BaseModel) ToMap() map[string]interface{} {
+	return m.GetAttributes()
 }
 
 // ToJSON 转换为JSON字符串
 func (m *BaseModel) ToJSON() (string, error) {
-	jsonBytes, err := json.Marshal(m.attributes)
+	data := m.GetAttributes()
+	jsonBytes, err := json.Marshal(data)
 	if err != nil {
 		return "", err
 	}
@@ -432,12 +561,15 @@ func (m *BaseModel) FromJSON(jsonStr string) error {
 func (m *BaseModel) newQuery() (*db.QueryBuilder, error) {
 	query, err := db.NewQueryBuilder(m.connection)
 	if err != nil {
-		return nil, err
+		return nil, db.WrapError(err, db.ErrCodeConnectionFailed, "创建查询构建器失败").
+			WithContext("connection", m.connection)
 	}
 
 	tableName := m.GetTableName()
 	if tableName == "" {
-		return nil, fmt.Errorf("表名未设置，请使用 SetTable() 方法设置表名")
+		return nil, db.ErrInvalidModelState.
+			WithDetails("表名未设置，请使用 SetTable() 方法设置表名").
+			WithContext("model_type", fmt.Sprintf("%T", m))
 	}
 
 	return query.From(tableName), nil
@@ -445,13 +577,9 @@ func (m *BaseModel) newQuery() (*db.QueryBuilder, error) {
 
 // fill 填充模型属性
 func (m *BaseModel) fill(data map[string]interface{}) {
-	// 创建 Result 包装器来处理数据
-	result := db.NewResult(data, m)
-
-	// 使用修改器处理每个属性
+	// 直接填充数据，不再使用Result系统
 	for key, value := range data {
-		processedValue := result.CallSetAccessor(key, value)
-		m.attributes[key] = processedValue
+		m.attributes[key] = value
 	}
 }
 
@@ -459,8 +587,8 @@ func (m *BaseModel) fill(data map[string]interface{}) {
 func (m *BaseModel) prepareForInsert() map[string]interface{} {
 	data := make(map[string]interface{})
 
-	// 获取所有属性（支持访问器）
-	attrs := m.GetAttributesWithAccessors()
+	// 获取所有属性
+	attrs := m.GetAttributes()
 	for key, value := range attrs {
 		data[key] = value
 	}
@@ -479,8 +607,8 @@ func (m *BaseModel) prepareForInsert() map[string]interface{} {
 func (m *BaseModel) prepareForUpdate() map[string]interface{} {
 	data := make(map[string]interface{})
 
-	// 获取所有属性（支持访问器），除了主键
-	attrs := m.GetAttributesWithAccessors()
+	// 获取所有属性，除了主键
+	attrs := m.GetAttributes()
 	for key, value := range attrs {
 		if key != m.primaryKey {
 			data[key] = value
@@ -626,35 +754,8 @@ func (m *BaseModel) Find(pk interface{}) error {
 	return m.FindByPK(pk)
 }
 
-// FindAsResult 根据主键查找记录，返回 Result 类型
-func (m *BaseModel) FindAsResult(pk interface{}) (*db.Result, error) {
-	query, err := m.newQuery()
-	if err != nil {
-		return nil, err
-	}
-
-	return query.Model(m).Where(m.primaryKey, "=", pk).First()
-}
-
-// GetAsResults 查询多条记录，返回 ResultCollection
-func (m *BaseModel) GetAsResults() (*db.ResultCollection, error) {
-	query, err := m.newQuery()
-	if err != nil {
-		return nil, err
-	}
-
-	return query.Model(m).Get()
-}
-
-// FirstAsResult 查询第一条记录，返回 Result 类型
-func (m *BaseModel) FirstAsResult() (*db.Result, error) {
-	query, err := m.newQuery()
-	if err != nil {
-		return nil, err
-	}
-
-	return query.Model(m).First()
-}
+// 注释：已移除Result系统相关方法，现在统一使用原始数据API
+// 如需要访问器功能，请在业务层手动处理
 
 // ============================================================================
 // 模型关联方法

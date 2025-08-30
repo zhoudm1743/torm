@@ -240,7 +240,6 @@ go run -m httptest.NewServer
 - ✅ 新增 AutoMigrate 自动迁移功能
 - ✅ 增强的 WHERE 查询方法（NULL、BETWEEN、EXISTS 等）
 - ✅ 高级排序功能（OrderRand、OrderField、FieldRaw）
-- ✅ 完全移除 GORM 依赖
 - ✅ 新增 `NewBaseModelWithAutoDetect` 方法
 - ✅ 精确的类型长度和精度控制
 

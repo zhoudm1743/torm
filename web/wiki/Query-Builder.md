@@ -35,19 +35,18 @@ if err != nil {
 ### 基础查询
 
 ```go
-// 查询所有记录 (Result系统，支持访问器)
-users, err := torm.Model(&User{}).Get()          // 返回 *ResultCollection
+// 查询所有记录 (支持访问器)
+users, err := torm.Model(&User{}).Get()          // 返回 []map[string]interface{}
 
 // 查询指定字段
 users, err := torm.Model(&User{}).
     Select("id", "name", "email").
-    Get()                                                       // 返回 *ResultCollection
+    Get()                                                       // 返回 []map[string]interface{}
 
 // 查询单条记录
 user, err := torm.Model(&User{}).
     Where("id", "=", 1).
-
-    First()                                                     // 返回 *Result
+    First()                                                     // 返回 map[string]interface{}
 
 // 原始数据查询 (向下兼容，高性能)
 rawUsers, err := torm.Table("users").GetRaw()                  // 返回 []map[string]interface{}
@@ -667,11 +666,11 @@ err := torm.Transaction(func(tx torm.TransactionInterface) error {
 })
 ```
 
-## 🎨 Result 系统
+## 🎨 访问器系统
 
 ### 访问器支持
 
-TORM v2.0 引入了强大的 Result 系统，支持 ThinkPHP 风格的访问器/修改器：
+TORM 提供了强大的访问器系统，支持 Get/Set 访问器：
 
 ```go
 // 定义模型和访问器
@@ -705,16 +704,16 @@ func (u *User) GetSalaryAttr(value interface{}) interface{} {
 }
 ```
 
-### Result 系统查询
+### 访问器查询
 
 ```go
 // 启用访问器的查询
-users, err := torm.Model(&User{}).Get()    // *ResultCollection
-user, err := torm.Model(&User{}).First()   // *Result
+users, err := torm.Model(&User{}).Get()    // []map[string]interface{} (应用访问器)
+user, err := torm.Model(&User{}).First()   // map[string]interface{} (应用访问器)
 
 // 高性能原始数据查询
-rawUsers, err := torm.Table("users").GetRaw()    // []map[string]interface{}
-rawUser, err := torm.Table("users").FirstRaw()   // map[string]interface{}
+rawUsers, err := torm.Table("users").GetRaw()    // []map[string]interface{} (原始数据)
+rawUser, err := torm.Table("users").FirstRaw()   // map[string]interface{} (原始数据)
 ```
 
 ### 数据处理
@@ -723,17 +722,18 @@ rawUser, err := torm.Table("users").FirstRaw()   // map[string]interface{}
 // 单条记录处理
 user, _ := torm.Model(&User{}).Where("id", "=", 1).First()
 
-// 通过访问器获取格式化数据
-fmt.Printf("状态: %v\n", user.Get("status"))      // {"code": 1, "name": "正常", "color": "green"}
-fmt.Printf("薪资: %v\n", user.Get("salary"))      // {"cents": 800000, "yuan": 8000.0, "formatted": "¥8000.00"}
+// 访问器处理后的数据
+fmt.Printf("状态: %v\n", user["status"])      // {"code": 1, "name": "正常", "color": "green"}
+fmt.Printf("薪资: %v\n", user["salary"])      // {"cents": 800000, "yuan": 8000.0, "formatted": "¥8000.00"}
 
 // 获取原始数据（用于计算）
-rawStatus := user.GetRaw("status").(int)          // 1
-rawSalary := user.GetRaw("salary").(int)          // 800000
+rawUser, _ := torm.Table("users").Where("id", "=", 1).FirstRaw()
+rawStatus := rawUser["status"].(int)          // 1
+rawSalary := rawUser["salary"].(int)          // 800000
 
 // JSON 输出
-accessorJSON, _ := user.ToJSON()    // 包含访问器处理的完整JSON
-rawJSON, _ := user.ToRawJSON()      // 原始数据JSON
+accessorJSON, _ := json.Marshal(user)    // 包含访问器处理的完整JSON
+rawJSON, _ := json.Marshal(rawUser)      // 原始数据JSON
 ```
 
 ### 集合操作
@@ -742,26 +742,28 @@ rawJSON, _ := user.ToRawJSON()      // 原始数据JSON
 users, _ := torm.Model(&User{}).Get()
 
 // 遍历处理
-users.Each(func(index int, user *db.Result) bool {
-    fmt.Printf("用户 %d: %v\n", index+1, user.Get("username"))
-    return true  // 继续遍历
-})
+for index, user := range users {
+    fmt.Printf("用户 %d: %v\n", index+1, user["username"])
+}
 
-// 函数式过滤
-activeUsers := users.Filter(func(user *db.Result) bool {
-    status := user.Get("status").(map[string]interface{})
-    return status["code"].(int) == 1  // 只要正常状态用户
-})
+// 过滤操作
+var activeUsers []map[string]interface{}
+for _, user := range users {
+    if status := user["status"].(map[string]interface{}); status["code"].(int) == 1 {
+        activeUsers = append(activeUsers, user)
+    }
+}
 
-// 映射操作
-usernames := users.Map(func(user *db.Result) interface{} {
-    return user.Get("username")
-})
+// 提取字段
+var usernames []interface{}
+for _, user := range users {
+    usernames = append(usernames, user["username"])
+}
 
-// 集合JSON输出
-fmt.Printf("活跃用户数: %d\n", activeUsers.Count())
-json, _ := activeUsers.ToJSON()
-fmt.Printf("JSON: %s\n", json)
+// JSON输出
+fmt.Printf("活跃用户数: %d\n", len(activeUsers))
+jsonData, _ := json.Marshal(activeUsers)
+fmt.Printf("JSON: %s\n", string(jsonData))
 ```
 
 ### API 选择指南

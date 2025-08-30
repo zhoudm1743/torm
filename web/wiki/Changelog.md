@@ -36,7 +36,6 @@ query.OrderField("status", []interface{}{"premium", "active", "trial"}, "asc").
 ```
 
 #### ⚡ 性能优化
-- **移除GORM依赖**: 使用纯Go modernc.org/sqlite驱动，减少依赖复杂度
 - **SQL构建优化**: 增强SQL构建器，支持复杂查询条件组合
 - **接口统一**: 查询构建器和模型接口完全统一
 

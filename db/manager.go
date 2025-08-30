@@ -48,7 +48,8 @@ func NewManager() *Manager {
 		healthCheckEnabled:  false,
 		stopHealthCheck:     make(chan bool, 1),
 	}
-	m.SetLogger(logger.NewSQLLogger(logger.INFO, true))
+	// 设置DEBUG级别以显示所有日志（包括SQL查询）
+	m.SetLogger(logger.NewDebugLogger())
 	return m
 }
 
@@ -61,8 +62,7 @@ func NewManagerWithLogger(logger LoggerInterface) *Manager {
 
 // NewManagerWithDefaultLogger 创建带默认日志的管理器
 func NewManagerWithDefaultLogger() *Manager {
-	defaultLogger := logger.NewSQLLogger(logger.INFO, true)
-	return NewManagerWithLogger(defaultLogger)
+	return NewManagerWithLogger(logger.NewInfoLogger())
 }
 
 // SetLogger 设置日志记录器

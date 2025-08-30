@@ -1345,70 +1345,76 @@ func (u *TechUser) GetIPAddressAttr(value interface{}) interface{} {
 }
 ```
 
-### 📊 Result 系统
+### 📊 访问器系统
 
-TORM 提供了强大的 Result 类型来封装查询结果，自动集成访问器功能：
+TORM 提供了强大的访问器系统，支持在查询时自动应用 Get/Set 访问器：
 
-#### Result 基础使用
+#### 访问器查询
 
 ```go
-// 创建 Result 实例（自动集成访问器）
-result := model.NewResult(dbData, &User{})
+// 查询时自动应用访问器（返回原生 []map[string]interface{}）
+users, err := torm.Table("users").Model(&User{}).Where("status", "=", 1).Get()
 
-// 获取处理后的数据（通过访问器）
-status := result.Get("status")        // 返回: {"code": 1, "name": "正常", ...}
-gender := result.Get("gender")        // 返回: {"code": 1, "name": "先生", ...}
+// 数据已经过访问器处理
+for _, user := range users {
+    status := user["status"]          // 返回: {"code": 1, "name": "正常", ...}
+    gender := user["gender"]          // 返回: {"code": 1, "name": "先生", ...}
+}
 
-// 获取原始数据（不通过访问器）
-rawStatus := result.GetRaw("status")  // 返回: 1
-rawGender := result.GetRaw("gender")  // 返回: 1
+// 查询第一条记录
+user, err := torm.Table("users").Model(&User{}).First()
+if err == nil && user != nil {
+    status := user["status"]          // 自动应用访问器
+    gender := user["gender"]          // 自动应用访问器
+}
 
-// 批量操作
-allData := result.GetAll()            // 所有字段通过访问器处理
-rawData := result.GetRawAll()         // 所有字段的原始值
-
-// 设置数据（通过修改器）
-result.Set("status", "正常")          // 自动转换为 1 存储
-result.Set("icbc_card_no", "6222-0212-3456-7890") // 自动清理为 "6222021234567890"
+// 原始数据查询（不应用访问器）
+rawUsers, err := torm.Table("users").Where("status", "=", 1).GetRaw()
+for _, user := range rawUsers {
+    status := user["status"]          // 返回: 1 (原始值)
+    gender := user["gender"]          // 返回: 1 (原始值)
+}
 ```
 
-#### ResultCollection 集合操作
+#### 设置器使用
+
+```go
+// 通过模型设置数据（自动应用设置器）
+user := &User{}
+user.SetAttributeWithAccessor(user, "status", "正常")      // 自动转换为 1 存储
+user.SetAttributeWithAccessor(user, "icbc_card_no", "6222-0212-3456-7890") // 自动清理
+
+// 批量设置
+data := map[string]interface{}{
+    "status": "正常",
+    "icbc_card_no": "6222-0212-3456-7890",
+}
+user.SetAttributesWithAccessor(user, data)
+
+// 查看设置后的值
+storedStatus := user.GetAttribute("status")          // 1
+storedCardNo := user.GetAttribute("icbc_card_no")    // "6222021234567890"
+```
+
+#### 数据操作
 
 ```go
 // 查询多条记录 - 直接使用 Model() 方法，自动获取表名
-collection, err := torm.Model(&User{}).Where("status", "=", 1).Get()
+users, err := torm.Model(&User{}).Where("status", "=", 1).Get()
 
-// 集合信息
-count := collection.Count()           // 记录总数
-isEmpty := collection.IsEmpty()       // 是否为空
+// 基本操作
+count := len(users)                   // 记录总数
+isEmpty := len(users) == 0            // 是否为空
 
-// 获取特定记录
-first := collection.First()           // 第一条记录
-last := collection.Last()             // 最后一条记录
-item := collection.Get(index)         // 指定索引记录
-
-// 函数式操作
-collection.Each(func(index int, result *db.Result) bool {
-    username := result.Get("username")
-    status := result.Get("status")
-    fmt.Printf("[%d] %s: %v\n", index, username, status)
-    return true // 继续遍历
-})
-
-// 过滤操作
-activeUsers := collection.Filter(func(result *db.Result) bool {
-    statusInfo := result.Get("status").(map[string]interface{})
-    return statusInfo["can_login"].(bool)
-})
-
-// 映射操作
-usernames := collection.Map(func(result *db.Result) interface{} {
-    return result.Get("username")
-})
+// 遍历记录
+for i, user := range users {
+    username := user["username"]
+    status := user["status"]
+    fmt.Printf("[%d] %s: %v\n", i, username, status)
+}
 
 // JSON 输出
-accessorJSON, _ := collection.ToJSON()    // 包含访问器处理的完整JSON
-rawJSON, _ := collection.ToRawJSON()      // 原始数据JSON
+accessorJSON, _ := json.Marshal(users)    // 包含访问器处理的完整JSON
 ```
 
 ### 🔧 高级特性
@@ -1427,7 +1433,9 @@ testData := map[string]interface{}{
     "settings":     []byte(`{"theme":"dark"}`), // 自动解析为 JSON
 }
 
-result := model.NewResult(testData, &User{})
+// 访问器处理器会自动处理这些数据类型
+processor := db.NewAccessorProcessor(&User{})
+processedData := processor.ProcessData(testData)
 // 所有访问器都会收到正确类型的处理后数据
 ```
 
@@ -1443,12 +1451,11 @@ result := model.NewResult(testData, &User{})
 
 // 性能对比（1000次调用）:
 // 原始map访问:     100μs
-// Result访问器:    280μs (2.8x)
-// Result原始访问:  120μs (1.2x)
+// 访问器处理:      280μs (2.8x)
 
 // 实际使用建议：
-// - 显示数据使用 result.Get()
-// - 计算逻辑使用 result.GetRaw()
+// - 显示数据使用 Model().Get()（自动应用访问器）
+// - 计算逻辑使用 GetRaw()（原始数据）
 // - 批量处理使用 collection 操作
 ```
 

@@ -128,11 +128,11 @@ type QueryInterface interface {
     Take(limit int) QueryInterface
     Skip(offset int) QueryInterface
     
-    // 执行查询 (Result系统)
+    // 执行查询
     Model(model interface{}) QueryInterface                     // 设置模型实例，启用访问器
-    Get() (*ResultCollection, error)                            // 返回ResultCollection
-    First(dest ...interface{}) (*Result, error)                 // 返回Result
-    Find(id interface{}, dest ...interface{}) (*Result, error)  // 返回Result
+    Get() ([]map[string]interface{}, error)                     // 返回数据（可应用访问器）
+    First(dest ...interface{}) (map[string]interface{}, error)  // 返回第一条记录
+    Find(id interface{}, dest ...interface{}) (map[string]interface{}, error)  // 根据ID查找
     
     // 原始数据查询 (向下兼容)
     GetRaw() ([]map[string]interface{}, error)                  // 返回原始map数据
@@ -165,8 +165,7 @@ type QueryInterface interface {
     Truncate() error
     
     // 分页
-    Paginate(page int, perPage int) (*PaginationResult, error)
-    SimplePaginate(page int, perPage int) (*SimplePaginationResult, error)
+    Paginate(page int, perPage int) (*SimplePagination, error)
     
     // 分块处理
     Chunk(size int, callback func([]map[string]interface{}) bool) error
@@ -187,78 +186,17 @@ type QueryInterface interface {
 }
 ```
 
-### Result 系统
-
-```go
-// Result - 单条记录封装，支持访问器/修改器
-type Result struct {
-    // 获取处理后的数据（通过访问器）
-    Get(key string) interface{}
-    GetAll() map[string]interface{}
-    
-    // 获取原始数据（不通过访问器）
-    GetRaw(key string) interface{}
-    GetRawAll() map[string]interface{}
-    
-    // 设置数据（通过修改器）
-    Set(key string, value interface{}) *Result
-    SetAll(data map[string]interface{}) *Result
-    
-    // 检查和工具方法
-    Has(key string) bool
-    IsEmpty() bool
-    Keys() []string
-    
-    // JSON输出
-    ToJSON() (string, error)      // 包含访问器处理
-    ToRawJSON() (string, error)   // 原始数据
-    ToMap() map[string]interface{}
-    ToRawMap() map[string]interface{}
-}
-
-// ResultCollection - 结果集合，支持函数式操作
-type ResultCollection struct {
-    // 基础操作
-    Get(index int) *Result
-    First() *Result
-    Last() *Result
-    Count() int
-    IsEmpty() bool
-    
-    // 转换操作
-    ToSlice() []*Result
-    ToMapSlice() []map[string]interface{}        // 通过访问器
-    ToRawMapSlice() []map[string]interface{}     // 原始数据
-    
-    // 函数式操作
-    Each(fn func(int, *Result) bool)
-    Filter(fn func(*Result) bool) *ResultCollection
-    Map(fn func(*Result) interface{}) []interface{}
-    
-    // JSON输出
-    ToJSON() (string, error)      // 包含访问器处理
-    ToRawJSON() (string, error)   // 原始数据
-}
-```
-
 ### 分页结果
 
 ```go
-type PaginationResult struct {
-    Data        []map[string]interface{} `json:"data"`     // 原始数据
+type SimplePagination struct {
+    Data        []map[string]interface{} `json:"data"`     // 数据（可包含访问器处理）
     Total       int64                    `json:"total"`
     PerPage     int                      `json:"per_page"`
     CurrentPage int                      `json:"current_page"`
     LastPage    int                      `json:"last_page"`
     From        int                      `json:"from"`
     To          int                      `json:"to"`
-}
-
-type SimplePaginationResult struct {
-    Data        []map[string]interface{} `json:"data"`     // 原始数据
-    PerPage     int                      `json:"per_page"`
-    CurrentPage int                      `json:"current_page"`
-    HasMore     bool                     `json:"has_more"`
 }
 ```
 
@@ -325,12 +263,7 @@ func (m *BaseModel) Exists() bool
 func (m *BaseModel) WasRecentlyCreated() bool
 func (m *BaseModel) IsNew() bool
 
-// 查询方法 (Result系统)
-func (m *BaseModel) FindAsResult(pk interface{}) (*Result, error)           // 根据主键查找，返回Result
-func (m *BaseModel) GetAsResults() (*ResultCollection, error)               // 查询多条，返回ResultCollection
-func (m *BaseModel) FirstAsResult() (*Result, error)                        // 查询第一条，返回Result
-
-// 查询方法 (原始数据，向下兼容)
+// 查询方法
 func (m *BaseModel) All() ([]map[string]interface{}, error)
 func (m *BaseModel) Find(id interface{}, dest ...interface{}) (map[string]interface{}, error)
 func (m *BaseModel) FindOrFail(id interface{}) error

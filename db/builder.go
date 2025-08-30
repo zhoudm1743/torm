@@ -738,14 +738,14 @@ func (qb *QueryBuilder) CacheKey(key string) *QueryBuilder {
 	return qb
 }
 
-// Get 执行查询并返回结果
-func (qb *QueryBuilder) Get() (*ResultCollection, error) {
+// Get 执行查询并返回数据（支持访问器处理）
+func (qb *QueryBuilder) Get() ([]map[string]interface{}, error) {
 	// 如果启用了缓存并且不在事务中，尝试从缓存获取
 	if qb.cacheEnabled && qb.transaction == nil {
 		cacheKey := qb.generateCacheKey()
 		if cached, err := GetDefaultCache().Get(cacheKey); err == nil {
 			if result, ok := cached.([]map[string]interface{}); ok {
-				return NewResultCollection(result, qb.model), nil
+				return qb.applyAccessors(result), nil
 			}
 		}
 	}
@@ -762,16 +762,24 @@ func (qb *QueryBuilder) Get() (*ResultCollection, error) {
 	}
 
 	if err != nil {
-		return nil, err
+		wrappedErr := WrapError(err, ErrCodeQueryFailed, "查询执行失败").
+			WithContext("sql", sqlStr).
+			WithContext("args", args).
+			WithContext("table", qb.tableName)
+		LogError(wrappedErr)
+		return nil, wrappedErr
 	}
 	defer rows.Close()
 
 	result, err := qb.scanRows(rows)
 	if err != nil {
-		return nil, err
+		wrappedErr := WrapError(err, ErrCodeQueryFailed, "扫描查询结果失败").
+			WithContext("table", qb.tableName)
+		LogError(wrappedErr)
+		return nil, wrappedErr
 	}
 
-	// 如果启用了缓存，将结果存入缓存
+	// 如果启用了缓存，将原始结果存入缓存
 	if qb.cacheEnabled && qb.transaction == nil {
 		cacheKey := qb.generateCacheKey()
 		if len(qb.cacheTags) > 0 {
@@ -783,22 +791,23 @@ func (qb *QueryBuilder) Get() (*ResultCollection, error) {
 		}
 	}
 
-	return NewResultCollection(result, qb.model), nil
+	// 应用访问器处理
+	return qb.applyAccessors(result), nil
 }
 
-// First 获取第一条记录
-func (qb *QueryBuilder) First(dest ...interface{}) (*Result, error) {
+// First 获取第一条记录（支持访问器处理）
+func (qb *QueryBuilder) First(dest ...interface{}) (map[string]interface{}, error) {
 	qb.Limit(1)
 	results, err := qb.Get()
 	if err != nil {
 		return nil, err
 	}
 
-	if results.IsEmpty() {
-		return nil, fmt.Errorf("record not found")
+	if len(results) == 0 {
+		return nil, ErrRecordNotFound.WithContext("table", qb.tableName)
 	}
 
-	return results.First(), nil
+	return results[0], nil
 }
 
 // Count 计算记录数量
@@ -808,21 +817,36 @@ func (qb *QueryBuilder) Count() (int64, error) {
 
 	result, err := qb.First()
 	if err != nil {
-		return 0, err
+		// 如果是记录不存在，返回0而不是错误
+		if IsNotFoundError(err) {
+			qb.selectColumns = originalSelect
+			return 0, nil
+		}
+		qb.selectColumns = originalSelect
+		return 0, WrapError(err, ErrCodeQueryFailed, "执行count查询失败")
 	}
 
 	qb.selectColumns = originalSelect
 
-	countValue := result.GetRaw("count")
+	countValue := result["count"]
 	if count, ok := countValue.(int64); ok {
 		return count, nil
 	}
+	if count, ok := countValue.(int); ok {
+		return int64(count), nil
+	}
 
-	return 0, fmt.Errorf("count查询结果类型错误")
+	return 0, NewError(ErrCodeQueryFailed, "count查询结果类型错误").
+		WithContext("result_type", fmt.Sprintf("%T", countValue)).
+		WithContext("result_value", countValue)
 }
 
 // Insert 插入数据
 func (qb *QueryBuilder) Insert(data map[string]interface{}) (int64, error) {
+	if len(data) == 0 {
+		return 0, ErrInvalidParameter.WithDetails("插入数据不能为空")
+	}
+
 	sqlStr, args := qb.buildInsertSQL(data)
 	driverName := qb.getDriverName()
 
@@ -854,11 +878,25 @@ func (qb *QueryBuilder) Insert(data map[string]interface{}) (int64, error) {
 			}
 
 			if err != nil {
-				return 0, fmt.Errorf("failed to execute PostgreSQL statement: %w", err)
+				// 检查是否为重复键错误
+				if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique") {
+					return 0, WrapError(err, ErrCodeDuplicateKey, "违反唯一性约束").
+						WithContext("sql", originalSQL).
+						WithContext("args", args).
+						WithContext("table", qb.tableName)
+				}
+				return 0, WrapError(err, ErrCodeQueryFailed, "PostgreSQL插入失败").
+					WithContext("sql", originalSQL).
+					WithContext("args", args).
+					WithContext("table", qb.tableName)
 			}
 
 			if sqlResult, ok := result.(interface{ RowsAffected() (int64, error) }); ok {
-				return sqlResult.RowsAffected()
+				affected, err := sqlResult.RowsAffected()
+				if err != nil {
+					return 0, WrapError(err, ErrCodeQueryFailed, "获取影响行数失败")
+				}
+				return affected, nil
 			}
 			return 0, nil
 		}
@@ -875,53 +913,106 @@ func (qb *QueryBuilder) Insert(data map[string]interface{}) (int64, error) {
 		}
 
 		if err != nil {
-			return 0, fmt.Errorf("failed to execute %s statement: %w", driverName, err)
+			// 检查是否为重复键错误
+			if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "UNIQUE") {
+				return 0, WrapError(err, ErrCodeDuplicateKey, "违反唯一性约束").
+					WithContext("sql", sqlStr).
+					WithContext("args", args).
+					WithContext("table", qb.tableName)
+			}
+			return 0, WrapErrorf(err, ErrCodeQueryFailed, "%s插入失败", driverName).
+				WithContext("sql", sqlStr).
+				WithContext("args", args).
+				WithContext("table", qb.tableName)
 		}
 
 		// 类型断言
 		if sqlResult, ok := result.(interface{ LastInsertId() (int64, error) }); ok {
-			return sqlResult.LastInsertId()
+			id, err := sqlResult.LastInsertId()
+			if err != nil {
+				return 0, WrapError(err, ErrCodeQueryFailed, "获取插入ID失败")
+			}
+			return id, nil
 		}
-		return 0, fmt.Errorf("无法获取插入ID")
+		return 0, NewError(ErrCodeQueryFailed, "无法获取插入ID").
+			WithContext("driver", driverName).
+			WithContext("table", qb.tableName)
 	}
 }
 
 // Update 更新数据
 func (qb *QueryBuilder) Update(data map[string]interface{}) (int64, error) {
+	if len(data) == 0 {
+		return 0, ErrInvalidParameter.WithDetails("更新数据不能为空")
+	}
+
 	sqlStr, args := qb.buildUpdateSQL(data)
 
+	var result interface{}
+	var err error
+
 	if qb.transaction != nil {
-		result, err := qb.transaction.Exec(sqlStr, args...)
-		if err != nil {
-			return 0, err
-		}
-		return result.RowsAffected()
+		result, err = qb.transaction.Exec(sqlStr, args...)
 	} else {
-		result, err := qb.connection.Exec(sqlStr, args...)
-		if err != nil {
-			return 0, err
-		}
-		return result.RowsAffected()
+		result, err = qb.connection.Exec(sqlStr, args...)
 	}
+
+	if err != nil {
+		// 检查是否为重复键错误
+		if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "UNIQUE") {
+			return 0, WrapError(err, ErrCodeDuplicateKey, "违反唯一性约束").
+				WithContext("sql", sqlStr).
+				WithContext("args", args).
+				WithContext("table", qb.tableName)
+		}
+		return 0, WrapError(err, ErrCodeQueryFailed, "更新数据失败").
+			WithContext("sql", sqlStr).
+			WithContext("args", args).
+			WithContext("table", qb.tableName)
+	}
+
+	if sqlResult, ok := result.(interface{ RowsAffected() (int64, error) }); ok {
+		affected, err := sqlResult.RowsAffected()
+		if err != nil {
+			return 0, WrapError(err, ErrCodeQueryFailed, "获取影响行数失败")
+		}
+		return affected, nil
+	}
+
+	return 0, NewError(ErrCodeQueryFailed, "无法获取影响行数").
+		WithContext("table", qb.tableName)
 }
 
 // Delete 删除数据
 func (qb *QueryBuilder) Delete() (int64, error) {
 	sqlStr, args := qb.buildDeleteSQL()
 
+	var result interface{}
+	var err error
+
 	if qb.transaction != nil {
-		result, err := qb.transaction.Exec(sqlStr, args...)
-		if err != nil {
-			return 0, err
-		}
-		return result.RowsAffected()
+		result, err = qb.transaction.Exec(sqlStr, args...)
 	} else {
-		result, err := qb.connection.Exec(sqlStr, args...)
-		if err != nil {
-			return 0, err
-		}
-		return result.RowsAffected()
+		result, err = qb.connection.Exec(sqlStr, args...)
 	}
+
+	if err != nil {
+		return 0, WrapError(err, ErrCodeQueryFailed, "删除数据失败").
+			WithContext("sql", sqlStr).
+			WithContext("args", args).
+			WithContext("table", qb.tableName)
+	}
+
+	if sqlResult, ok := result.(interface{ RowsAffected() (int64, error) }); ok {
+		affected, err := sqlResult.RowsAffected()
+		if err != nil {
+			return 0, WrapError(err, ErrCodeQueryFailed, "获取影响行数失败")
+		}
+		return affected, nil
+	}
+
+	return 0, NewError(ErrCodeQueryFailed, "无法获取影响行数").
+		WithContext("table", qb.tableName)
 }
 
 // buildSelectSQL 构建SELECT SQL
@@ -1864,22 +1955,14 @@ func (qb *QueryBuilder) Model(model interface{}) *QueryBuilder {
 	return qb
 }
 
-// GetRaw 执行查询并返回原始 map 数据（向下兼容）
+// GetRaw 执行查询并返回原始 map 数据（向下兼容，现在直接调用Get）
 func (qb *QueryBuilder) GetRaw() ([]map[string]interface{}, error) {
-	results, err := qb.Get()
-	if err != nil {
-		return nil, err
-	}
-	return results.ToRawMapSlice(), nil
+	return qb.Get()
 }
 
-// FirstRaw 获取第一条记录的原始 map 数据（向下兼容）
+// FirstRaw 获取第一条记录的原始 map 数据（向下兼容，现在直接调用First）
 func (qb *QueryBuilder) FirstRaw() (map[string]interface{}, error) {
-	result, err := qb.First()
-	if err != nil {
-		return nil, err
-	}
-	return result.ToRawMap(), nil
+	return qb.First()
 }
 
 // WhereIn WHERE IN条件
@@ -2149,7 +2232,7 @@ func (qb *QueryBuilder) WithTimeout(timeout time.Duration) *QueryBuilder {
 	return qb
 }
 
-// Find 根据条件查找
+// Find 根据条件查找（支持访问器处理）
 func (qb *QueryBuilder) Find(args ...interface{}) (map[string]interface{}, error) {
 	// 支持 Find(id) 或 Find(dest) 模式
 	if len(args) == 1 {
@@ -2157,7 +2240,27 @@ func (qb *QueryBuilder) Find(args ...interface{}) (map[string]interface{}, error
 		qb = qb.Where("id", "=", args[0])
 	}
 
-	return qb.FirstRaw()
+	return qb.First()
+}
+
+// Last 获取最后一条记录（支持访问器处理）
+func (qb *QueryBuilder) Last() (map[string]interface{}, error) {
+	// 反转排序以获取最后一条记录
+	if len(qb.orderByColumns) == 0 {
+		// 如果没有排序，默认按id降序
+		qb.OrderBy("id", "DESC")
+	} else {
+		// 反转现有排序
+		for i := range qb.orderByColumns {
+			if qb.orderByColumns[i].Direction == "ASC" {
+				qb.orderByColumns[i].Direction = "DESC"
+			} else {
+				qb.orderByColumns[i].Direction = "ASC"
+			}
+		}
+	}
+
+	return qb.First()
 }
 
 // Exists 检查记录是否存在
@@ -2291,6 +2394,20 @@ func (qb *QueryBuilder) Clone() *QueryBuilder {
 	copy(newBuilder.cacheTags, qb.cacheTags)
 
 	return newBuilder
+}
+
+// applyAccessors 应用访问器处理数据
+func (qb *QueryBuilder) applyAccessors(data []map[string]interface{}) []map[string]interface{} {
+	// 如果没有绑定模型，直接返回原始数据
+	if qb.model == nil {
+		return data
+	}
+
+	// 创建访问器处理器
+	processor := NewAccessorProcessor(qb.model)
+
+	// 应用访问器处理
+	return processor.ProcessDataSlice(data)
 }
 
 // WithModel 绑定模型（用于模型支持）

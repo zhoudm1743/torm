@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/zhoudm1743/torm/logger"
 	_ "modernc.org/sqlite" // SQLite 驱动
 )
 
@@ -26,6 +27,7 @@ func NewSQLiteConnection(config *Config, logger LoggerInterface) (ConnectionInte
 
 // Connect 连接到SQLite数据库
 func (c *SQLiteConnection) Connect() error {
+	start := time.Now()
 	dsn := c.config.DSN()
 	if c.logger != nil {
 		c.logger.Debug("Connecting to SQLite", "dsn", dsn)
@@ -63,8 +65,14 @@ func (c *SQLiteConnection) Connect() error {
 	}
 
 	c.db = db
+	duration := time.Since(start)
 	if c.logger != nil {
-		c.logger.Info("SQLite connection established successfully")
+		// 使用新的LogConnection方法记录连接信息
+		if sqlLogger, ok := c.logger.(*logger.SQLLogger); ok {
+			sqlLogger.LogConnection("connected", "sqlite", c.config.Database, duration)
+		} else {
+			c.logger.Info("SQLite连接建立成功", "database", c.config.Database, "duration", duration)
+		}
 	}
 	return nil
 }
@@ -108,11 +116,18 @@ func (c *SQLiteConnection) Query(query string, args ...interface{}) (*sql.Rows, 
 	rows, err := c.db.Query(query, args...)
 	duration := time.Since(start)
 
-	if c.logger != nil && c.config.LogQueries {
-		if err != nil {
-			c.logger.Error("query", query, "args", args, "error", err, "duration", duration)
+	// 统一SQL日志记录
+	if c.logger != nil {
+		if sqlLogger, ok := c.logger.(*logger.SQLLogger); ok {
+			// Query操作我们不知道确切的行数，使用简单版本
+			sqlLogger.LogSQL(query, args, duration, err)
 		} else {
-			c.logger.Debug("sql", query, "args", args, "duration", duration)
+			// 兼容旧的日志接口
+			if err != nil {
+				c.logger.Error("SQL查询错误", "sql", query, "args", args, "error", err, "duration", duration)
+			} else if c.config.LogQueries {
+				c.logger.Debug("SQL查询", "sql", query, "args", args, "duration", duration)
+			}
 		}
 	}
 
@@ -133,8 +148,13 @@ func (c *SQLiteConnection) QueryRow(query string, args ...interface{}) *sql.Row 
 	row := c.db.QueryRow(query, args...)
 	duration := time.Since(start)
 
-	if c.logger != nil && c.config.LogQueries {
-		c.logger.Debug("sql", query, "args", args, "duration", duration)
+	// 统一SQL日志记录（QueryRow总是成功，没有error）
+	if c.logger != nil {
+		if sqlLogger, ok := c.logger.(*logger.SQLLogger); ok {
+			sqlLogger.LogSQL(query, args, duration, nil)
+		} else if c.config.LogQueries {
+			c.logger.Debug("SQL查询", "sql", query, "args", args, "duration", duration)
+		}
 	}
 
 	return row
@@ -150,11 +170,23 @@ func (c *SQLiteConnection) Exec(query string, args ...interface{}) (sql.Result, 
 	result, err := c.db.Exec(query, args...)
 	duration := time.Since(start)
 
-	if c.logger != nil && c.config.LogQueries {
-		if err != nil {
-			c.logger.Error("sql", query, "args", args, "error", err, "duration", duration)
+	// 统一SQL日志记录
+	if c.logger != nil {
+		if sqlLogger, ok := c.logger.(*logger.SQLLogger); ok {
+			if err != nil {
+				sqlLogger.LogSQL(query, args, duration, err)
+			} else {
+				// 获取影响的行数
+				rowsAffected, _ := result.RowsAffected()
+				sqlLogger.LogSQLWithRows(query, args, duration, rowsAffected, nil)
+			}
 		} else {
-			c.logger.Debug("sql", query, "args", args, "duration", duration)
+			// 兼容旧的日志接口
+			if err != nil {
+				c.logger.Error("SQL执行错误", "sql", query, "args", args, "error", err, "duration", duration)
+			} else if c.config.LogQueries {
+				c.logger.Debug("SQL执行", "sql", query, "args", args, "duration", duration)
+			}
 		}
 	}
 
