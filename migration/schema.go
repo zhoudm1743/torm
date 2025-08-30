@@ -77,6 +77,10 @@ type ModelColumn struct {
 	ForeignKey string // 外键表.字段
 	OnDelete   string // 删除时动作: "cascade", "restrict", "set null", "set default"
 	OnUpdate   string // 更新时动作: "cascade", "restrict", "set null", "set default"
+	
+	// 时间管理
+	AutoCreateTime bool // 自动创建时间字段
+	AutoUpdateTime bool // 自动更新时间字段
 }
 
 // Column 列定义

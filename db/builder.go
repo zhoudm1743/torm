@@ -13,8 +13,11 @@ import (
 	"time"
 	"unicode/utf8"
 
+	_ "github.com/denisenkom/go-mssqldb" // SQL Server
 	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/lib/pq" // PostgreSQL
 	_ "modernc.org/sqlite"
+	// MongoDB相关导入在mongodb_connection.go和mongodb_builder.go中
 )
 
 // QueryBuilder 查询构建器 - TORM的核心
@@ -43,6 +46,10 @@ type QueryBuilder struct {
 	cacheTTL     time.Duration
 	cacheTags    []string
 	cacheKey     string
+
+	// 时间管理
+	timeManager *TimeFieldManager
+	timeFields  []TimeFieldInfo
 
 	// 上下文
 	ctx context.Context
@@ -88,11 +95,27 @@ func NewQueryBuilder(connectionName string) (*QueryBuilder, error) {
 		orderByColumns:   []OrderByClause{},
 		groupByColumns:   []string{},
 		havingConditions: []WhereCondition{},
+		timeManager:      NewTimeFieldManager(),
+		timeFields:       make([]TimeFieldInfo, 0),
 		ctx:              context.Background(),
 	}, nil
 }
 
 // 注意：Table和Model函数已移至manager.go
+
+// SetModel 设置关联的模型实例并分析时间字段
+func (qb *QueryBuilder) SetModel(model interface{}) *QueryBuilder {
+	qb.model = model
+	if qb.timeManager != nil {
+		qb.timeFields = qb.timeManager.AnalyzeModelTimeFields(model)
+	}
+	return qb
+}
+
+// GetModel 获取关联的模型实例
+func (qb *QueryBuilder) GetModel() interface{} {
+	return qb.model
+}
 
 // getTableNameFromModel 从模型获取表名
 func getTableNameFromModel(model interface{}) string {
@@ -765,7 +788,9 @@ func (qb *QueryBuilder) Get() ([]map[string]interface{}, error) {
 		wrappedErr := WrapError(err, ErrCodeQueryFailed, "查询执行失败").
 			WithContext("sql", sqlStr).
 			WithContext("args", args).
-			WithContext("table", qb.tableName)
+			WithContext("table", qb.tableName).
+			WithContext("operation", "SELECT").
+			WithDetails(fmt.Sprintf("数据库查询错误: %v", err))
 		LogError(wrappedErr)
 		return nil, wrappedErr
 	}
@@ -774,7 +799,11 @@ func (qb *QueryBuilder) Get() ([]map[string]interface{}, error) {
 	result, err := qb.scanRows(rows)
 	if err != nil {
 		wrappedErr := WrapError(err, ErrCodeQueryFailed, "扫描查询结果失败").
-			WithContext("table", qb.tableName)
+			WithContext("sql", sqlStr).
+			WithContext("args", args).
+			WithContext("table", qb.tableName).
+			WithContext("operation", "SCAN").
+			WithDetails(fmt.Sprintf("结果扫描错误: %v", err))
 		LogError(wrappedErr)
 		return nil, wrappedErr
 	}
@@ -812,39 +841,118 @@ func (qb *QueryBuilder) First(dest ...interface{}) (map[string]interface{}, erro
 
 // Count 计算记录数量
 func (qb *QueryBuilder) Count() (int64, error) {
+	// 备份原始查询配置
 	originalSelect := qb.selectColumns
+	originalLimit := qb.limitCount
+	originalOffset := qb.offsetCount
+
+	// 设置COUNT查询
 	qb.selectColumns = []string{"COUNT(*) as count"}
+	qb.limitCount = 0  // 移除LIMIT
+	qb.offsetCount = 0 // 移除OFFSET
 
-	result, err := qb.First()
-	if err != nil {
-		// 如果是记录不存在，返回0而不是错误
-		if IsNotFoundError(err) {
-			qb.selectColumns = originalSelect
-			return 0, nil
-		}
-		qb.selectColumns = originalSelect
-		return 0, WrapError(err, ErrCodeQueryFailed, "执行count查询失败")
+	// 构建SQL和参数
+	sqlStr, args := qb.buildSelectSQL()
+
+	// 记录日志用于调试
+	start := time.Now()
+	defer func() {
+		_ = time.Since(start) // 计算执行时间但暂时不使用
+		// 简化日志记录，后续可以通过Manager接口获取logger
+		// 目前先跳过，专注于错误处理
+	}()
+
+	// 执行查询
+	var rows *sql.Rows
+	var err error
+
+	if qb.transaction != nil {
+		rows, err = qb.transaction.Query(sqlStr, args...)
+	} else {
+		rows, err = qb.connection.Query(sqlStr, args...)
 	}
 
+	// 恢复原始查询配置
 	qb.selectColumns = originalSelect
+	qb.limitCount = originalLimit
+	qb.offsetCount = originalOffset
 
-	countValue := result["count"]
-	if count, ok := countValue.(int64); ok {
-		return count, nil
+	if err != nil {
+		wrappedErr := WrapError(err, ErrCodeQueryFailed, "Count查询执行失败").
+			WithContext("sql", sqlStr).
+			WithContext("args", args).
+			WithContext("table", qb.tableName).
+			WithDetails(fmt.Sprintf("数据库错误: %v", err))
+		LogError(wrappedErr)
+		return 0, wrappedErr
 	}
-	if count, ok := countValue.(int); ok {
-		return int64(count), nil
+	defer rows.Close()
+
+	// 扫描结果
+	if !rows.Next() {
+		return 0, NewError(ErrCodeQueryFailed, "Count查询无结果").
+			WithContext("sql", sqlStr).
+			WithContext("args", args).
+			WithContext("table", qb.tableName)
 	}
 
-	return 0, NewError(ErrCodeQueryFailed, "count查询结果类型错误").
-		WithContext("result_type", fmt.Sprintf("%T", countValue)).
-		WithContext("result_value", countValue)
+	var count interface{}
+	err = rows.Scan(&count)
+	if err != nil {
+		wrappedErr := WrapError(err, ErrCodeQueryFailed, "Count结果扫描失败").
+			WithContext("sql", sqlStr).
+			WithContext("args", args).
+			WithContext("table", qb.tableName).
+			WithDetails(fmt.Sprintf("扫描错误: %v", err))
+		LogError(wrappedErr)
+		return 0, wrappedErr
+	}
+
+	// 类型转换
+	switch v := count.(type) {
+	case int64:
+		return v, nil
+	case int:
+		return int64(v), nil
+	case int32:
+		return int64(v), nil
+	case []byte:
+		// 处理某些数据库驱动返回[]byte的情况
+		if str := string(v); str != "" {
+			if parsed, parseErr := strconv.ParseInt(str, 10, 64); parseErr == nil {
+				return parsed, nil
+			}
+		}
+		return 0, NewError(ErrCodeQueryFailed, "Count结果解析失败").
+			WithContext("result_bytes", string(v)).
+			WithContext("sql", sqlStr).
+			WithContext("table", qb.tableName)
+	case string:
+		if parsed, parseErr := strconv.ParseInt(v, 10, 64); parseErr == nil {
+			return parsed, nil
+		}
+		return 0, NewError(ErrCodeQueryFailed, "Count结果解析失败").
+			WithContext("result_string", v).
+			WithContext("sql", sqlStr).
+			WithContext("table", qb.tableName)
+	default:
+		return 0, NewError(ErrCodeQueryFailed, "Count结果类型不支持").
+			WithContext("result_type", fmt.Sprintf("%T", count)).
+			WithContext("result_value", count).
+			WithContext("sql", sqlStr).
+			WithContext("table", qb.tableName)
+	}
 }
 
 // Insert 插入数据
 func (qb *QueryBuilder) Insert(data map[string]interface{}) (int64, error) {
 	if len(data) == 0 {
 		return 0, ErrInvalidParameter.WithDetails("插入数据不能为空")
+	}
+
+	// 处理时间字段
+	if qb.timeManager != nil && len(qb.timeFields) > 0 {
+		data = qb.timeManager.ProcessInsertData(data, qb.timeFields)
 	}
 
 	sqlStr, args := qb.buildInsertSQL(data)
@@ -946,6 +1054,11 @@ func (qb *QueryBuilder) Update(data map[string]interface{}) (int64, error) {
 		return 0, ErrInvalidParameter.WithDetails("更新数据不能为空")
 	}
 
+	// 处理时间字段
+	if qb.timeManager != nil && len(qb.timeFields) > 0 {
+		data = qb.timeManager.ProcessUpdateData(data, qb.timeFields)
+	}
+
 	sqlStr, args := qb.buildUpdateSQL(data)
 
 	var result interface{}
@@ -1021,34 +1134,58 @@ func (qb *QueryBuilder) buildSelectSQL() (string, []interface{}) {
 	var args []interface{}
 	argIndex := 0
 
+	// 验证表名
+	if err := qb.validateTableName(qb.tableName); err != nil {
+		// 如果表名无效，返回安全的错误SQL
+		return "SELECT 1 WHERE 1=0", []interface{}{}
+	}
+
 	// SELECT子句
 	sql.WriteString("SELECT ")
 	if len(qb.selectColumns) > 0 {
-		sql.WriteString(strings.Join(qb.selectColumns, ", "))
+		// 验证和清理选择列
+		validColumns := make([]string, 0, len(qb.selectColumns))
+		for _, col := range qb.selectColumns {
+			if cleanCol := qb.sanitizeColumn(col); cleanCol != "" {
+				validColumns = append(validColumns, cleanCol)
+			}
+		}
+		if len(validColumns) > 0 {
+			sql.WriteString(strings.Join(validColumns, ", "))
+		} else {
+			sql.WriteString("*")
+		}
 	} else {
 		sql.WriteString("*")
 	}
 
 	// FROM子句
 	sql.WriteString(" FROM ")
-	sql.WriteString(qb.tableName)
+	sql.WriteString(qb.sanitizeTableName(qb.tableName))
 
 	// JOIN子句
 	for _, join := range qb.joinClauses {
-		if join.Type == "CROSS" {
+		// 验证JOIN类型
+		cleanJoinType := qb.sanitizeJoinType(join.Type)
+		cleanTable := qb.sanitizeTableName(join.Table)
+
+		if cleanJoinType == "CROSS" {
 			// CROSS JOIN 不需要 ON 条件
-			sql.WriteString(fmt.Sprintf(" CROSS JOIN %s", join.Table))
+			sql.WriteString(fmt.Sprintf(" CROSS JOIN %s", cleanTable))
 		} else if join.Raw != "" {
 			// 使用原生 SQL 条件
 			processedSQL := qb.processPlaceholders(join.Raw, argIndex)
-			sql.WriteString(fmt.Sprintf(" %s JOIN %s ON %s", join.Type, join.Table, processedSQL))
+			sql.WriteString(fmt.Sprintf(" %s JOIN %s ON %s", cleanJoinType, cleanTable, processedSQL))
 			if len(join.Values) > 0 {
 				args = append(args, join.Values...)
 				argIndex += len(join.Values)
 			}
 		} else if join.Condition != "" {
-			// 使用普通条件
-			sql.WriteString(fmt.Sprintf(" %s JOIN %s ON %s", join.Type, join.Table, join.Condition))
+			// 验证和清理条件
+			cleanCondition := qb.sanitizeJoinCondition(join.Condition)
+			if cleanCondition != "" {
+				sql.WriteString(fmt.Sprintf(" %s JOIN %s ON %s", cleanJoinType, cleanTable, cleanCondition))
+			}
 		}
 	}
 
@@ -1079,7 +1216,18 @@ func (qb *QueryBuilder) buildSelectSQL() (string, []interface{}) {
 	// GROUP BY子句
 	if len(qb.groupByColumns) > 0 {
 		sql.WriteString(" GROUP BY ")
-		sql.WriteString(strings.Join(qb.groupByColumns, ", "))
+		validGroupBy := make([]string, 0, len(qb.groupByColumns))
+		for _, col := range qb.groupByColumns {
+			if cleanCol := qb.sanitizeColumn(col); cleanCol != "" {
+				validGroupBy = append(validGroupBy, cleanCol)
+			}
+		}
+		if len(validGroupBy) > 0 {
+			sql.WriteString(strings.Join(validGroupBy, ", "))
+		} else {
+			// 如果没有有效的GROUP BY列，移除GROUP BY子句
+			sql.WriteString("1") // 使用1作为默认分组
+		}
 	}
 
 	// HAVING子句
@@ -1109,17 +1257,49 @@ func (qb *QueryBuilder) buildSelectSQL() (string, []interface{}) {
 	// ORDER BY子句
 	if len(qb.orderByColumns) > 0 {
 		sql.WriteString(" ORDER BY ")
-		orderParts := make([]string, len(qb.orderByColumns))
-		for i, order := range qb.orderByColumns {
-			orderParts[i] = fmt.Sprintf("%s %s", order.Column, order.Direction)
+		validOrderBy := make([]string, 0, len(qb.orderByColumns))
+		for _, order := range qb.orderByColumns {
+			cleanColumn := qb.sanitizeColumn(order.Column)
+			cleanDirection := qb.sanitizeDirection(order.Direction)
+			if cleanColumn != "" && cleanDirection != "" {
+				validOrderBy = append(validOrderBy, fmt.Sprintf("%s %s", cleanColumn, cleanDirection))
+			}
 		}
-		sql.WriteString(strings.Join(orderParts, ", "))
+		if len(validOrderBy) > 0 {
+			sql.WriteString(strings.Join(validOrderBy, ", "))
+		} else {
+			// 如果没有有效的ORDER BY列，使用默认排序
+			sql.WriteString("1 ASC")
+		}
 	}
 
-	// LIMIT和OFFSET子句
+	// LIMIT和OFFSET子句（根据数据库类型调整语法）
 	if qb.limitCount > 0 {
-		sql.WriteString(fmt.Sprintf(" LIMIT %d", qb.limitCount))
-		if qb.offsetCount > 0 {
+		driverName := qb.getDriverName()
+		switch driverName {
+		case "sqlserver", "mssql":
+			// SQL Server使用OFFSET...ROWS FETCH NEXT...ROWS ONLY
+			if qb.offsetCount > 0 {
+				sql.WriteString(fmt.Sprintf(" OFFSET %d ROWS FETCH NEXT %d ROWS ONLY", qb.offsetCount, qb.limitCount))
+			} else {
+				sql.WriteString(fmt.Sprintf(" OFFSET 0 ROWS FETCH NEXT %d ROWS ONLY", qb.limitCount))
+			}
+		default:
+			// MySQL, PostgreSQL, SQLite使用LIMIT...OFFSET...
+			sql.WriteString(fmt.Sprintf(" LIMIT %d", qb.limitCount))
+			if qb.offsetCount > 0 {
+				sql.WriteString(fmt.Sprintf(" OFFSET %d", qb.offsetCount))
+			}
+		}
+	} else if qb.offsetCount > 0 {
+		// 只有OFFSET没有LIMIT的情况
+		driverName := qb.getDriverName()
+		switch driverName {
+		case "sqlserver", "mssql":
+			// SQL Server需要同时有OFFSET和FETCH
+			sql.WriteString(fmt.Sprintf(" OFFSET %d ROWS", qb.offsetCount))
+		default:
+			// MySQL, PostgreSQL, SQLite
 			sql.WriteString(fmt.Sprintf(" OFFSET %d", qb.offsetCount))
 		}
 	}
@@ -1141,9 +1321,12 @@ func (qb *QueryBuilder) buildInsertSQL(data map[string]interface{}) (string, []i
 	// 根据数据库类型生成占位符
 	driverName := qb.getDriverName()
 	for i := range columns {
-		if driverName == "postgres" {
+		switch driverName {
+		case "postgres", "postgresql", "pq":
 			placeholders = append(placeholders, fmt.Sprintf("$%d", i+1))
-		} else {
+		case "sqlserver", "mssql":
+			placeholders = append(placeholders, fmt.Sprintf("@p%d", i+1))
+		default:
 			placeholders = append(placeholders, "?")
 		}
 	}
@@ -1751,27 +1934,48 @@ func (qb *QueryBuilder) getDriverName() string {
 // buildPlaceholder 根据数据库类型构建占位符
 func (qb *QueryBuilder) buildPlaceholder(index int) string {
 	driverName := qb.getDriverName()
-	if driverName == "postgres" {
+	switch driverName {
+	case "postgres", "postgresql", "pq":
+		// PostgreSQL使用$1, $2, $3...
 		return fmt.Sprintf("$%d", index+1)
+	case "sqlserver", "mssql":
+		// SQL Server使用@p1, @p2, @p3...
+		return fmt.Sprintf("@p%d", index+1)
+	default:
+		// MySQL和SQLite使用?
+		return "?"
 	}
-	return "?"
 }
 
 // processPlaceholders 处理原始SQL中的占位符
 func (qb *QueryBuilder) processPlaceholders(sql string, startIndex int) string {
 	driverName := qb.getDriverName()
-	if driverName != "postgres" {
-		return sql // MySQL和SQLite使用?占位符，无需转换
-	}
 
-	// PostgreSQL需要将?转换为$1, $2...
-	result := sql
-	placeholderCount := strings.Count(sql, "?")
-	for i := 0; i < placeholderCount; i++ {
-		placeholder := fmt.Sprintf("$%d", startIndex+i+1)
-		result = strings.Replace(result, "?", placeholder, 1)
+	switch driverName {
+	case "postgres", "postgresql", "pq":
+		// PostgreSQL需要将?转换为$1, $2...
+		result := sql
+		placeholderCount := strings.Count(sql, "?")
+		for i := 0; i < placeholderCount; i++ {
+			placeholder := fmt.Sprintf("$%d", startIndex+i+1)
+			result = strings.Replace(result, "?", placeholder, 1)
+		}
+		return result
+
+	case "sqlserver", "mssql":
+		// SQL Server需要将?转换为@p1, @p2...
+		result := sql
+		placeholderCount := strings.Count(sql, "?")
+		for i := 0; i < placeholderCount; i++ {
+			placeholder := fmt.Sprintf("@p%d", startIndex+i+1)
+			result = strings.Replace(result, "?", placeholder, 1)
+		}
+		return result
+
+	default:
+		// MySQL和SQLite使用?占位符，无需转换
+		return sql
 	}
-	return result
 }
 
 // convertToStringSlice 将各种类型的切片转换为[]string
@@ -2157,12 +2361,14 @@ func (qb *QueryBuilder) OrderRand() *QueryBuilder {
 	switch driverName {
 	case "mysql":
 		randFunc = "RAND()"
-	case "postgres":
+	case "postgres", "postgresql", "pq":
 		randFunc = "RANDOM()"
 	case "sqlite":
 		randFunc = "RANDOM()"
+	case "sqlserver", "mssql":
+		randFunc = "NEWID()"
 	default:
-		randFunc = "RANDOM()"
+		randFunc = "RAND()" // 默认使用MySQL语法
 	}
 
 	qb.orderByColumns = append(qb.orderByColumns, OrderByClause{
@@ -2276,6 +2482,13 @@ func (qb *QueryBuilder) Exists() (bool, error) {
 func (qb *QueryBuilder) InsertBatch(data []map[string]interface{}) (int64, error) {
 	if len(data) == 0 {
 		return 0, nil
+	}
+
+	// 处理时间字段
+	if qb.timeManager != nil && len(qb.timeFields) > 0 {
+		for i, row := range data {
+			data[i] = qb.timeManager.ProcessInsertData(row, qb.timeFields)
+		}
 	}
 
 	// 获取所有列名
@@ -2428,6 +2641,236 @@ func (qb *QueryBuilder) UpdateModel(model interface{}) (int64, error) {
 	// 这里需要将模型转换为map[string]interface{}
 	// 暂时返回错误，需要反射处理
 	return 0, fmt.Errorf("UpdateModel not implemented yet")
+}
+
+// validateTableName 验证表名
+func (qb *QueryBuilder) validateTableName(tableName string) error {
+	if tableName == "" {
+		return NewError(ErrCodeInvalidParameter, "表名不能为空")
+	}
+
+	// 检查表名长度
+	if len(tableName) > 64 {
+		return NewError(ErrCodeInvalidParameter, "表名长度不能超过64个字符")
+	}
+
+	// 检查是否包含危险字符
+	if qb.containsDangerousChars(tableName) {
+		return NewError(ErrCodeInvalidParameter, "表名包含非法字符")
+	}
+
+	return nil
+}
+
+// validateColumnName 验证列名
+func (qb *QueryBuilder) validateColumnName(columnName string) error {
+	if columnName == "" {
+		return NewError(ErrCodeInvalidParameter, "列名不能为空")
+	}
+
+	// 检查列名长度
+	if len(columnName) > 64 {
+		return NewError(ErrCodeInvalidParameter, "列名长度不能超过64个字符")
+	}
+
+	// 检查是否包含危险字符
+	if qb.containsDangerousChars(columnName) {
+		return NewError(ErrCodeInvalidParameter, "列名包含非法字符")
+	}
+
+	return nil
+}
+
+// sanitizeTableName 清理表名
+func (qb *QueryBuilder) sanitizeTableName(tableName string) string {
+	if tableName == "" {
+		return "unknown_table"
+	}
+
+	// 移除危险字符，只保留字母、数字、下划线和点号
+	re := regexp.MustCompile(`[^a-zA-Z0-9_.]`)
+	cleaned := re.ReplaceAllString(tableName, "")
+
+	// 确保不为空
+	if cleaned == "" {
+		return "unknown_table"
+	}
+
+	// 限制长度
+	if len(cleaned) > 64 {
+		cleaned = cleaned[:64]
+	}
+
+	return cleaned
+}
+
+// sanitizeColumn 清理列名或表达式
+func (qb *QueryBuilder) sanitizeColumn(column string) string {
+	if column == "" {
+		return ""
+	}
+
+	// 检查是否包含危险字符
+	if qb.containsDangerousChars(column) {
+		// 如果包含危险字符，返回空字符串
+		return ""
+	}
+
+	// 特殊情况：如果是 *, COUNT(*), SUM(...) 等聚合函数或通配符
+	if qb.isValidSQLExpression(column) {
+		return column
+	}
+
+	// 移除特殊字符，只保留字母、数字、下划线、点号和空格（用于AS语句）
+	re := regexp.MustCompile(`[^a-zA-Z0-9_.\s()]`)
+	cleaned := re.ReplaceAllString(column, "")
+
+	// 确保不为空
+	if cleaned == "" {
+		return ""
+	}
+
+	// 限制长度
+	if len(cleaned) > 128 {
+		cleaned = cleaned[:128]
+	}
+
+	return cleaned
+}
+
+// isValidSQLExpression 检查是否是有效的SQL表达式
+func (qb *QueryBuilder) isValidSQLExpression(expr string) bool {
+	expr = strings.TrimSpace(strings.ToUpper(expr))
+
+	// 常见的安全SQL表达式模式
+	safePatterns := []string{
+		"*",
+		"COUNT(*)",
+		"COUNT(DISTINCT",
+		"SUM(",
+		"AVG(",
+		"MIN(",
+		"MAX(",
+		"DISTINCT",
+	}
+
+	for _, pattern := range safePatterns {
+		if strings.HasPrefix(expr, pattern) {
+			return true
+		}
+	}
+
+	// 检查是否是简单的列名（字母、数字、下划线、点号）
+	re := regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*(\s+AS\s+[a-zA-Z_][a-zA-Z0-9_]*)?$`)
+	return re.MatchString(expr)
+}
+
+// containsDangerousChars 检查是否包含危险字符
+func (qb *QueryBuilder) containsDangerousChars(input string) bool {
+	// 危险字符和SQL关键字
+	dangerousPatterns := []string{
+		";", "--", "/*", "*/", "'", "\"", "\\",
+		"DROP", "DELETE", "UPDATE", "INSERT", "ALTER", "CREATE",
+		"TRUNCATE", "EXEC", "EXECUTE", "SCRIPT", "UNION", "SELECT",
+	}
+
+	upperInput := strings.ToUpper(input)
+	for _, pattern := range dangerousPatterns {
+		if strings.Contains(upperInput, pattern) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// sanitizeOperator 清理操作符
+func (qb *QueryBuilder) sanitizeOperator(operator string) string {
+	if operator == "" {
+		return ""
+	}
+
+	// 允许的操作符列表
+	validOperators := []string{
+		"=", "!=", "<>", "<", ">", "<=", ">=",
+		"LIKE", "NOT LIKE", "ILIKE", "NOT ILIKE",
+		"IN", "NOT IN", "IS", "IS NOT",
+		"BETWEEN", "NOT BETWEEN",
+		"REGEXP", "NOT REGEXP",
+		"RLIKE", "NOT RLIKE",
+	}
+
+	upperOperator := strings.ToUpper(strings.TrimSpace(operator))
+	for _, validOp := range validOperators {
+		if upperOperator == validOp {
+			return validOp
+		}
+	}
+
+	// 如果不是有效操作符，返回安全的默认值
+	return "="
+}
+
+// sanitizeDirection 清理排序方向
+func (qb *QueryBuilder) sanitizeDirection(direction string) string {
+	upperDirection := strings.ToUpper(strings.TrimSpace(direction))
+	switch upperDirection {
+	case "ASC", "DESC":
+		return upperDirection
+	default:
+		return "ASC" // 默认升序
+	}
+}
+
+// sanitizeJoinType 清理JOIN类型
+func (qb *QueryBuilder) sanitizeJoinType(joinType string) string {
+	upperJoinType := strings.ToUpper(strings.TrimSpace(joinType))
+	validJoinTypes := []string{"INNER", "LEFT", "RIGHT", "FULL", "CROSS"}
+
+	for _, validType := range validJoinTypes {
+		if upperJoinType == validType {
+			return validType
+		}
+	}
+
+	return "INNER" // 默认INNER JOIN
+}
+
+// sanitizeJoinCondition 清理JOIN条件
+func (qb *QueryBuilder) sanitizeJoinCondition(condition string) string {
+	if condition == "" {
+		return ""
+	}
+
+	// 简单的JOIN条件验证：确保包含 = 操作符且没有危险字符
+	if qb.containsDangerousChars(condition) {
+		return ""
+	}
+
+	// 检查是否是简单的表.列 = 表.列 格式
+	re := regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*$`)
+	if re.MatchString(condition) {
+		return condition
+	}
+
+	return "" // 如果不符合格式，返回空字符串
+}
+
+// escapeValue 转义值以防SQL注入
+func (qb *QueryBuilder) escapeValue(value interface{}) string {
+	if value == nil {
+		return "NULL"
+	}
+
+	str := fmt.Sprintf("%v", value)
+	// 转义单引号
+	str = strings.ReplaceAll(str, "'", "''")
+	// 移除危险字符
+	if qb.containsDangerousChars(str) {
+		// 如果包含危险字符，使用安全的默认值
+		return "SAFE_VALUE"
+	}
+	return str
 }
 
 // FindModel 查找并填充模型

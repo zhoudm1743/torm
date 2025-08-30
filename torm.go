@@ -16,6 +16,10 @@ type (
 	QueryBuilder         = db.QueryBuilder
 	Manager              = db.Manager
 
+	// 错误相关
+	TormError = db.TormError
+	ErrorCode = db.ErrorCode
+
 	// 模型相关
 	BaseModel = model.BaseModel
 
@@ -39,6 +43,11 @@ var (
 
 	// 模型相关
 	NewModel = model.NewModel
+	
+	// MongoDB相关
+	MongoTable     = db.MongoTable
+	MongoModel     = db.MongoModel
+	NewMongoAggregate = db.NewMongoAggregate
 
 	// 日志相关
 	NewLogger            = logger.NewLogger
@@ -52,6 +61,15 @@ var (
 	ClearCacheByTags = db.ClearCacheByTags
 	ClearAllCache    = db.ClearAllCache
 	GetCacheStats    = db.GetCacheStats
+
+	// 错误相关
+	ErrCodeQueryFailed     = db.ErrCodeQueryFailed
+	ErrCodeModelSaveFailed = db.ErrCodeModelSaveFailed
+	NewError               = db.NewError
+	WrapError              = db.WrapError
+	IsQueryError           = db.IsQueryError
+	IsModelError           = db.IsModelError
+	IsNotFoundError        = db.IsNotFoundError
 )
 
 // SetLogger 设置默认管理器的日志记录器

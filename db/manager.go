@@ -300,6 +300,13 @@ func (m *Manager) createNewConnection(name string) (ConnectionInterface, error) 
 		conn, err = NewSQLiteConnection(config, m.logger)
 	case "postgres", "postgresql":
 		conn, err = NewPostgreSQLConnection(config, m.logger)
+	case "mongodb", "mongo":
+		mongoConn, mongoErr := NewMongoConnection(config)
+		if mongoErr != nil {
+			return nil, mongoErr
+		}
+		mongoConn.SetLogger(m.logger)
+		conn = mongoConn
 	default:
 		return nil, fmt.Errorf("不支持的数据库驱动: %s", config.Driver)
 	}

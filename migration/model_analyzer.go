@@ -270,20 +270,26 @@ func (ma *ModelAnalyzer) ParseTormFlag(flag string, column *ModelColumn) {
 		column.NotNull = true
 	case "nullable", "null":
 		column.NotNull = false
-	case "auto_create_time", "create_time", "created_at", "auto_created_at":
-		// 自动创建时间字段
+	case "auto_create_time", "create_time", "created_at", "auto_created_at",
+		"autocreate_time", "autocreatetime", "auto_create", "autocreate":
+		// 自动创建时间字段 - 支持多种标记格式
 		column.NotNull = true
 		if column.Default == nil {
 			defaultVal := "CURRENT_TIMESTAMP"
 			column.Default = defaultVal
 		}
-	case "auto_update_time", "update_time", "updated_at", "auto_updated_at":
-		// 自动更新时间字段
+		// 标记为自动创建时间字段
+		column.AutoCreateTime = true
+	case "auto_update_time", "update_time", "updated_at", "auto_updated_at",
+		"autoupdate_time", "autoupdatetime", "auto_update", "autoupdate":
+		// 自动更新时间字段 - 支持多种标记格式
 		column.NotNull = true
 		if column.Default == nil {
 			defaultVal := "CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"
 			column.Default = defaultVal
 		}
+		// 标记为自动更新时间字段
+		column.AutoUpdateTime = true
 	case "timestamp", "current_timestamp":
 		// 时间戳字段
 		column.NotNull = true
@@ -547,22 +553,26 @@ func (ma *ModelAnalyzer) parseLegacyTags(field reflect.StructField, column *Mode
 		column.NotNull = false
 	}
 
-	// 自动创建时间
-	if field.Tag.Get("autoCreateTime") != "" {
+	// 自动创建时间 - 支持多种标记格式
+	if field.Tag.Get("autoCreateTime") != "" || field.Tag.Get("AutoCreateTime") != "" ||
+		field.Tag.Get("auto_create_time") != "" {
 		column.NotNull = true
 		if column.Default == nil {
 			defaultVal := "CURRENT_TIMESTAMP"
 			column.Default = defaultVal
 		}
+		column.AutoCreateTime = true
 	}
 
-	// 自动更新时间
-	if field.Tag.Get("autoUpdateTime") != "" {
+	// 自动更新时间 - 支持多种标记格式
+	if field.Tag.Get("autoUpdateTime") != "" || field.Tag.Get("AutoUpdateTime") != "" ||
+		field.Tag.Get("auto_update_time") != "" {
 		column.NotNull = true
 		if column.Default == nil {
 			defaultVal := "CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"
 			column.Default = defaultVal
 		}
+		column.AutoUpdateTime = true
 	}
 
 	return nil

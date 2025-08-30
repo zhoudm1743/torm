@@ -98,10 +98,51 @@ type TormError struct {
 
 // Error 实现error接口
 func (e *TormError) Error() string {
+	var parts []string
+
+	// 基础错误信息
+	parts = append(parts, fmt.Sprintf("[%d] %s", e.Code, e.Message))
+
+	// 添加详细信息
 	if e.Details != "" {
-		return fmt.Sprintf("[%d] %s: %s", e.Code, e.Message, e.Details)
+		parts = append(parts, e.Details)
 	}
-	return fmt.Sprintf("[%d] %s", e.Code, e.Message)
+
+	// 添加原因错误
+	if e.Cause != nil {
+		parts = append(parts, fmt.Sprintf("原因: %v", e.Cause))
+	}
+
+	// 添加重要的上下文信息
+	if e.Context != nil {
+		var contextParts []string
+
+		// 优先显示SQL和参数
+		if sql, ok := e.Context["sql"].(string); ok && sql != "" {
+			contextParts = append(contextParts, fmt.Sprintf("SQL: %s", sql))
+		}
+		if args, ok := e.Context["args"]; ok && args != nil {
+			contextParts = append(contextParts, fmt.Sprintf("参数: %v", args))
+		}
+		if table, ok := e.Context["table"].(string); ok && table != "" {
+			contextParts = append(contextParts, fmt.Sprintf("表: %s", table))
+		}
+
+		// 添加其他重要上下文
+		for key, value := range e.Context {
+			if key != "sql" && key != "args" && key != "table" {
+				if str := fmt.Sprintf("%v", value); len(str) < 100 { // 限制长度
+					contextParts = append(contextParts, fmt.Sprintf("%s: %v", key, value))
+				}
+			}
+		}
+
+		if len(contextParts) > 0 {
+			parts = append(parts, fmt.Sprintf("上下文: {%s}", strings.Join(contextParts, ", ")))
+		}
+	}
+
+	return strings.Join(parts, " | ")
 }
 
 // Unwrap 支持errors.Unwrap
@@ -307,12 +348,44 @@ type DefaultErrorLogger struct{}
 // LogError 记录错误日志
 func (l *DefaultErrorLogger) LogError(err *TormError) {
 	fmt.Printf("[TORM ERROR] %s %s\n", time.Now().Format("2006-01-02 15:04:05"), err.Error())
-	if err.Stack != "" {
-		fmt.Printf("Stack:\n%s\n", err.Stack)
-	}
+
+	// 打印重要的上下文信息
 	if err.Context != nil {
-		fmt.Printf("Context: %+v\n", err.Context)
+		if sql, ok := err.Context["sql"].(string); ok && sql != "" {
+			fmt.Printf("  SQL: %s\n", sql)
+		}
+		if args, ok := err.Context["args"]; ok && args != nil {
+			fmt.Printf("  参数: %v\n", args)
+		}
+		if table, ok := err.Context["table"].(string); ok && table != "" {
+			fmt.Printf("  表: %s\n", table)
+		}
+		if operation, ok := err.Context["operation"].(string); ok && operation != "" {
+			fmt.Printf("  操作: %s\n", operation)
+		}
 	}
+
+	// 打印原因错误
+	if err.Cause != nil {
+		fmt.Printf("  根本原因: %v\n", err.Cause)
+	}
+
+	// 仅在调试模式下打印完整上下文和堆栈
+	if isDebugMode() {
+		if err.Context != nil {
+			fmt.Printf("  完整上下文: %+v\n", err.Context)
+		}
+		if err.Stack != "" {
+			fmt.Printf("  调用栈:\n%s\n", err.Stack)
+		}
+	}
+}
+
+// isDebugMode 检查是否为调试模式
+func isDebugMode() bool {
+	// 可以通过环境变量或其他方式控制
+	// 这里简化处理，可以根据需要扩展
+	return false
 }
 
 // 全局错误日志记录器

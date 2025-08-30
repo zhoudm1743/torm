@@ -25,9 +25,11 @@ type BaseModel struct {
 	exists bool
 
 	// 时间戳
-	timestamps bool
-	createdAt  string
-	updatedAt  string
+	timestamps  bool
+	createdAt   string
+	updatedAt   string
+	timeManager *db.TimeFieldManager // 时间字段管理器
+	timeFields  []db.TimeFieldInfo   // 时间字段信息缓存
 
 	// 软删除
 	softDeletes bool
@@ -50,6 +52,8 @@ func NewModel(args ...interface{}) *BaseModel {
 		updatedAt:   "updated_at",
 		softDeletes: false,
 		deletedAt:   "deleted_at",
+		timeManager: db.NewTimeFieldManager(),
+		timeFields:  make([]db.TimeFieldInfo, 0),
 	}
 
 	var tableName string
@@ -93,6 +97,9 @@ func NewModel(args ...interface{}) *BaseModel {
 
 		// 解析torm标签
 		model.ParseModelTags(structInstance)
+
+		// 分析时间字段
+		model.timeFields = model.timeManager.AnalyzeModelTimeFields(structInstance)
 
 		// 如果还是没有表名，从结构体名称推断（作为最后手段）
 		if model.tableName == "" {
@@ -593,11 +600,16 @@ func (m *BaseModel) prepareForInsert() map[string]interface{} {
 		data[key] = value
 	}
 
-	// 处理时间戳
+	// 处理传统时间戳字段（向后兼容）
 	if m.timestamps {
 		now := time.Now()
 		data[m.createdAt] = now
 		data[m.updatedAt] = now
+	}
+
+	// 处理新的时间字段管理
+	if m.timeManager != nil && len(m.timeFields) > 0 {
+		data = m.timeManager.ProcessInsertData(data, m.timeFields)
 	}
 
 	return data
@@ -615,9 +627,14 @@ func (m *BaseModel) prepareForUpdate() map[string]interface{} {
 		}
 	}
 
-	// 处理时间戳
+	// 处理传统时间戳字段（向后兼容）
 	if m.timestamps {
 		data[m.updatedAt] = time.Now()
+	}
+
+	// 处理新的时间字段管理
+	if m.timeManager != nil && len(m.timeFields) > 0 {
+		data = m.timeManager.ProcessUpdateData(data, m.timeFields)
 	}
 
 	return data
@@ -842,6 +859,24 @@ func (m *BaseModel) ParseModelTags(modelInstance interface{}) *BaseModel {
 	}
 
 	return m
+}
+
+// RefreshTimeFields 重新分析模型的时间字段
+func (m *BaseModel) RefreshTimeFields(modelInstance interface{}) *BaseModel {
+	if m.timeManager != nil {
+		m.timeFields = m.timeManager.AnalyzeModelTimeFields(modelInstance)
+	}
+	return m
+}
+
+// GetTimeFields 获取时间字段信息
+func (m *BaseModel) GetTimeFields() []db.TimeFieldInfo {
+	return m.timeFields
+}
+
+// HasTimeFields 检查是否有时间字段
+func (m *BaseModel) HasTimeFields() bool {
+	return len(m.timeFields) > 0
 }
 
 // parseFieldTag 解析单个字段的标签
