@@ -18,9 +18,11 @@ type RelationInterface interface {
 	First() (map[string]interface{}, error)
 	// Get 获取所有关联结果
 	Get() ([]map[string]interface{}, error)
+	// Where 添加查询条件
+	Where(column, operator string, value interface{}) RelationInterface
 }
 
-// BaseRelation 基础关联结构
+// BaseRelation 基础关联结构 - 重构版本
 type BaseRelation struct {
 	// 父模型
 	parent *BaseModel
@@ -39,25 +41,7 @@ type BaseRelation struct {
 // NewBaseRelation 创建基础关联
 func NewBaseRelation(parent *BaseModel, related reflect.Type, foreignKey, localKey string) *BaseRelation {
 	relatedTable := getTableNameFromType(related)
-
-	query, err := db.NewQueryBuilder(parent.GetConnection())
-	if err != nil {
-		// 如果创建失败，使用默认连接
-		query, _ = db.NewQueryBuilder("default")
-	}
-
-	if query != nil {
-		query = query.From(relatedTable)
-	}
-
-	return &BaseRelation{
-		parent:       parent,
-		related:      related,
-		query:        query,
-		foreignKey:   foreignKey,
-		localKey:     localKey,
-		relatedTable: relatedTable,
-	}
+	return NewBaseRelationWithTable(parent, related, relatedTable, foreignKey, localKey)
 }
 
 // NewBaseRelationWithTable 创建带自定义表名的基础关联
@@ -86,6 +70,10 @@ func NewBaseRelationWithTable(parent *BaseModel, related reflect.Type, tableName
 func (r *BaseRelation) GetQuery() *db.QueryBuilder {
 	return r.query
 }
+
+// ============================================================================
+// HasOne 一对一关联
+// ============================================================================
 
 // HasOne 一对一关联
 type HasOne struct {
@@ -145,6 +133,18 @@ func (h *HasOne) Get() ([]map[string]interface{}, error) {
 	return []map[string]interface{}{result}, nil
 }
 
+// Where 添加查询约束
+func (h *HasOne) Where(column, operator string, value interface{}) RelationInterface {
+	if h.query != nil {
+		h.query = h.query.Where(column, operator, value)
+	}
+	return h
+}
+
+// ============================================================================
+// HasMany 一对多关联
+// ============================================================================
+
 // HasMany 一对多关联
 type HasMany struct {
 	*BaseRelation
@@ -200,6 +200,34 @@ func (h *HasMany) Get() ([]map[string]interface{}, error) {
 
 	return h.query.Where(h.foreignKey, "=", localValue).GetRaw()
 }
+
+// Where 添加查询约束
+func (h *HasMany) Where(column, operator string, value interface{}) RelationInterface {
+	if h.query != nil {
+		h.query = h.query.Where(column, operator, value)
+	}
+	return h
+}
+
+// OrderBy 添加排序
+func (h *HasMany) OrderBy(column, direction string) *HasMany {
+	if h.query != nil {
+		h.query = h.query.OrderBy(column, direction)
+	}
+	return h
+}
+
+// Limit 限制结果数量
+func (h *HasMany) Limit(limit int) *HasMany {
+	if h.query != nil {
+		h.query = h.query.Limit(limit)
+	}
+	return h
+}
+
+// ============================================================================
+// BelongsTo 反向关联
+// ============================================================================
 
 // BelongsTo 反向一对一/一对多关联
 type BelongsTo struct {
@@ -260,6 +288,18 @@ func (b *BelongsTo) Get() ([]map[string]interface{}, error) {
 	}
 	return []map[string]interface{}{result}, nil
 }
+
+// Where 添加查询约束
+func (b *BelongsTo) Where(column, operator string, value interface{}) RelationInterface {
+	if b.query != nil {
+		b.query = b.query.Where(column, operator, value)
+	}
+	return b
+}
+
+// ============================================================================
+// BelongsToMany 多对多关联
+// ============================================================================
 
 // BelongsToMany 多对多关联
 type BelongsToMany struct {
@@ -360,11 +400,109 @@ func (b *BelongsToMany) Get() ([]map[string]interface{}, error) {
 		GetRaw()
 }
 
+// Where 添加查询约束
+func (b *BelongsToMany) Where(column, operator string, value interface{}) RelationInterface {
+	if b.query != nil {
+		b.query = b.query.Where(column, operator, value)
+	}
+	return b
+}
+
+// OrderBy 添加排序
+func (b *BelongsToMany) OrderBy(column, direction string) *BelongsToMany {
+	if b.query != nil {
+		b.query = b.query.OrderBy(column, direction)
+	}
+	return b
+}
+
+// Limit 限制结果数量
+func (b *BelongsToMany) Limit(limit int) *BelongsToMany {
+	if b.query != nil {
+		b.query = b.query.Limit(limit)
+	}
+	return b
+}
+
+// Attach 添加关联关系
+func (b *BelongsToMany) Attach(relatedID interface{}) error {
+	localValue := b.parent.GetAttribute(b.parent.GetPrimaryKey())
+	if localValue == nil {
+		return fmt.Errorf("主键值为空")
+	}
+
+	query, err := db.NewQueryBuilder(b.parent.GetConnection())
+	if err != nil {
+		return fmt.Errorf("创建查询构建器失败: %w", err)
+	}
+
+	_, err = query.From(b.pivotTable).Insert(map[string]interface{}{
+		b.pivotLocalKey:   localValue,
+		b.pivotForeignKey: relatedID,
+	})
+
+	return err
+}
+
+// Detach 移除关联关系
+func (b *BelongsToMany) Detach(relatedID interface{}) error {
+	localValue := b.parent.GetAttribute(b.parent.GetPrimaryKey())
+	if localValue == nil {
+		return fmt.Errorf("主键值为空")
+	}
+
+	query, err := db.NewQueryBuilder(b.parent.GetConnection())
+	if err != nil {
+		return fmt.Errorf("创建查询构建器失败: %w", err)
+	}
+
+	_, err = query.From(b.pivotTable).
+		Where(b.pivotLocalKey, "=", localValue).
+		Where(b.pivotForeignKey, "=", relatedID).
+		Delete()
+
+	return err
+}
+
+// Sync 同步关联关系（替换所有关联）
+func (b *BelongsToMany) Sync(relatedIDs []interface{}) error {
+	localValue := b.parent.GetAttribute(b.parent.GetPrimaryKey())
+	if localValue == nil {
+		return fmt.Errorf("主键值为空")
+	}
+
+	query, err := db.NewQueryBuilder(b.parent.GetConnection())
+	if err != nil {
+		return fmt.Errorf("创建查询构建器失败: %w", err)
+	}
+
+	// 删除现有关联
+	_, err = query.From(b.pivotTable).
+		Where(b.pivotLocalKey, "=", localValue).
+		Delete()
+	if err != nil {
+		return fmt.Errorf("删除现有关联失败: %w", err)
+	}
+
+	// 添加新关联
+	for _, relatedID := range relatedIDs {
+		_, err = query.From(b.pivotTable).Insert(map[string]interface{}{
+			b.pivotLocalKey:   localValue,
+			b.pivotForeignKey: relatedID,
+		})
+		if err != nil {
+			return fmt.Errorf("添加关联失败: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // ============================================================================
 // 辅助函数
 // ============================================================================
 
-// getTableNameFromType 从类型获取表名
+// getTableNameFromType 从类型获取表名 - 改进版本
 func getTableNameFromType(t reflect.Type) string {
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
@@ -386,68 +524,13 @@ func getTableNameFromType(t reflect.Type) string {
 	return toSnakeCase(t.Name())
 }
 
-// getDefaultForeignKey 获取默认外键名
+// getDefaultForeignKey 获取默认外键名 - 改进版本
 func getDefaultForeignKey(tableName string) string {
+	if tableName == "" {
+		return "id"
+	}
+
 	// 去掉表名的复数形式并添加 _id
 	singular := strings.TrimSuffix(tableName, "s")
 	return singular + "_id"
-}
-
-// WithConstraints 添加查询约束（链式调用）
-func (h *HasOne) Where(column string, operator string, value interface{}) *HasOne {
-	if h.query != nil {
-		h.query = h.query.Where(column, operator, value)
-	}
-	return h
-}
-
-func (h *HasMany) Where(column string, operator string, value interface{}) *HasMany {
-	if h.query != nil {
-		h.query = h.query.Where(column, operator, value)
-	}
-	return h
-}
-
-func (b *BelongsTo) Where(column string, operator string, value interface{}) *BelongsTo {
-	if b.query != nil {
-		b.query = b.query.Where(column, operator, value)
-	}
-	return b
-}
-
-func (b *BelongsToMany) Where(column string, operator string, value interface{}) *BelongsToMany {
-	if b.query != nil {
-		b.query = b.query.Where(column, operator, value)
-	}
-	return b
-}
-
-// OrderBy 添加排序（链式调用）
-func (h *HasMany) OrderBy(column, direction string) *HasMany {
-	if h.query != nil {
-		h.query = h.query.OrderBy(column, direction)
-	}
-	return h
-}
-
-func (b *BelongsToMany) OrderBy(column, direction string) *BelongsToMany {
-	if b.query != nil {
-		b.query = b.query.OrderBy(column, direction)
-	}
-	return b
-}
-
-// Limit 限制结果数量
-func (h *HasMany) Limit(limit int) *HasMany {
-	if h.query != nil {
-		h.query = h.query.Limit(limit)
-	}
-	return h
-}
-
-func (b *BelongsToMany) Limit(limit int) *BelongsToMany {
-	if b.query != nil {
-		b.query = b.query.Limit(limit)
-	}
-	return b
 }

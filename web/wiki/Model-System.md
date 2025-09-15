@@ -56,12 +56,12 @@ func main() {
     })
     
     // 自动创建表结构 - 使用 NewModel
-    user := &User{BaseModel: *model.NewModel(&User{})}
-    user.SetConnection("default")
-    user.AutoMigrate(user)
+    userModel := model.NewModel(&User{})
+    userModel.SetConnection("default")
+    userModel.AutoMigrate(&User{})
     
     // 开始使用模型
-    newUser := &User{BaseModel: *model.NewModel("users")}
+    newUser := model.NewModel("users")
     newUser.SetPrimaryKey("id").SetConnection("default")
     newUser.Fill(map[string]interface{}{
         "username":  "zhangsan",
@@ -95,24 +95,25 @@ type User struct {
 // - SetTable(name string) *BaseModel          // 设置表名
 // - SetConnection(name string) *BaseModel     // 设置连接
 // - SetPrimaryKey(key string) *BaseModel      // 设置主键
-// - SetAttribute(key string, value interface{}) // 设置属性
+// - SetAttribute(key string, value interface{}) *BaseModel // 设置属性
 // - GetAttribute(key string) interface{}      // 获取属性
-// - SetAttributes(attrs map[string]interface{}) // 批量设置属性
+// - SetAttributes(attrs map[string]interface{}) *BaseModel // 批量设置属性
 // - GetAttributes() map[string]interface{}    // 获取所有属性
-// - Fill(data map[string]interface{})         // 填充数据
-// - Where(conditions...) QueryBuilder        // 条件查询
-// - OrderBy(column, direction string)         // 排序
-// - Get() (*ResultCollection, error)         // 获取记录集合
-// - First() (*Result, error)                  // 获取单条记录
-// - GetRaw() ([]map[string]interface{}, error)  // 获取原始记录  
-// - FirstRaw() (map[string]interface{}, error)  // 获取原始单条
+// - Fill(data map[string]interface{}) *BaseModel // 填充数据
+// - Where(conditions...) *db.QueryBuilder    // 条件查询
+// - OrderBy(column, direction string) *db.QueryBuilder // 排序
 // - Find(id interface{}) error               // 根据主键查找
+// - FindByPK(pk interface{}) error           // 根据主键查找
 // - IsNew() bool                             // 是否新记录
 // - IsExists() bool                          // 是否已存在
-// - MarkAsNew()                              // 标记为新记录
-// - MarkAsExists()                           // 标记为已存在
+// - MarkAsNew() *BaseModel                   // 标记为新记录
+// - MarkAsExists() *BaseModel                // 标记为已存在
+// - GetKey() interface{}                     // 获取主键值
+// - SetKey(key interface{}) *BaseModel       // 设置主键值
 // - ToJSON() (string, error)                 // 转为JSON
 // - FromJSON(jsonStr string) error           // 从JSON加载
+// - ToMap() map[string]interface{}           // 转为Map
+// - ClearAttributes() *BaseModel             // 清空属性
 ```
 
 ### 模型初始化
@@ -120,15 +121,16 @@ type User struct {
 ```go
 // 创建新的用户实例 - 多种方式
 // 方式1: 直接指定表名
-user := &User{BaseModel: *model.NewModel("users")}
+user := model.NewModel("users")
 user.SetPrimaryKey("id").SetConnection("default")
 
 // 方式2: 从结构体自动解析（推荐）
-user := &User{BaseModel: *model.NewModel(&User{})}
-user.SetConnection("default")
+userModel := model.NewModel(&User{})
+userModel.SetConnection("default")
 
 // 方式3: 指定表名和连接
-user := &User{BaseModel: *model.NewModel("users", "mysql_connection")}
+user := model.NewModel("users")
+user.SetConnection("mysql_connection")
 
 // 使用 Fill 方法填充数据
 user.Fill(map[string]interface{}{
@@ -146,7 +148,7 @@ user.SetAttribute("email", "test@example.com")
 err := user.Save()
 
 // 查询示例
-foundUser := &User{BaseModel: *model.NewModel("users")}
+foundUser := model.NewModel("users")
 foundUser.SetConnection("default")
 err = foundUser.Find(1) // 根据主键查找
 
@@ -161,7 +163,7 @@ email := foundUser.GetAttribute("email")
 
 ```go
 type Example struct {
-    torm.BaseModel
+    model.BaseModel
     
     // 基础语法：`torm:"tag1,tag2:value,tag3"`
     Field string `torm:"type:varchar,size:100,unique,index"`
@@ -278,13 +280,13 @@ type IndexExamples struct {
 
 ```go
 type User struct {
-    torm.BaseModel
+    model.BaseModel
     ID   int    `torm:"primary_key,auto_increment"`
     Name string `torm:"type:varchar,size:100"`
 }
 
 type Post struct {
-    torm.BaseModel
+    model.BaseModel
     ID     int    `torm:"primary_key,auto_increment"`
     Title  string `torm:"type:varchar,size:200"`
     
@@ -304,7 +306,7 @@ type Post struct {
 
 ```go
 type TimestampExamples struct {
-    torm.BaseModel
+    model.BaseModel
     
     // 自动创建时间（INSERT时自动设置）
     CreatedAt time.Time `torm:"auto_create_time"`
@@ -324,7 +326,7 @@ type TimestampExamples struct {
 
 ```go
 type CommentExamples struct {
-    torm.BaseModel
+    model.BaseModel
     
     ID       int     `torm:"primary_key,auto_increment,comment:主键ID"`
     Username string  `torm:"type:varchar,size:50,unique,comment:用户名"`
@@ -406,45 +408,45 @@ type Project struct {
 ```go
 // User 关联方法定义
 func (u *User) Department() *model.BelongsTo {
-    dept := &Department{BaseModel: *model.NewModel("departments")}
+    dept := &Department{}
     return u.BelongsTo(dept, "dept_id", "id")
 }
 
 func (u *User) Projects() *model.HasMany {
-    project := &Project{BaseModel: *model.NewModel("projects")}
+    project := &Project{}
     return u.HasMany(project, "user_id", "id")
 }
 
 func (u *User) Roles() *model.BelongsToMany {
-    role := &Role{BaseModel: *model.NewModel("roles")}
+    role := &Role{}
     return u.BelongsToMany(role, "user_roles", "role_id", "user_id")
 }
 
 // Department 关联方法定义
 func (d *Department) Users() *model.HasMany {
-    user := &User{BaseModel: *model.NewModel("users")}
+    user := &User{}
     return d.HasMany(user, "dept_id", "id")
 }
 
 func (d *Department) Projects() *model.HasMany {
-    project := &Project{BaseModel: *model.NewModel("projects")}
+    project := &Project{}
     return d.HasMany(project, "dept_id", "id")
 }
 
 // Project 关联方法定义
 func (p *Project) User() *model.BelongsTo {
-    user := &User{BaseModel: *model.NewModel("users")}
+    user := &User{}
     return p.BelongsTo(user, "user_id", "id")
 }
 
 func (p *Project) Department() *model.BelongsTo {
-    dept := &Department{BaseModel: *model.NewModel("departments")}
+    dept := &Department{}
     return p.BelongsTo(dept, "dept_id", "id")
 }
 
 // Role 关联方法定义
 func (r *Role) Users() *model.BelongsToMany {
-    user := &User{BaseModel: *model.NewModel("users")}
+    user := &User{}
     return r.BelongsToMany(user, "user_roles", "user_id", "role_id")
 }
 ```
@@ -457,23 +459,23 @@ func (r *Role) Users() *model.BelongsToMany {
 // 基础自动迁移 - 基于实际测试案例
 func basicAutoMigrate() {
     // 单模型迁移 - 使用 NewModel
-    dept := &Department{BaseModel: *model.NewModel(&Department{})}
-    dept.SetConnection("default")
-    err := dept.AutoMigrate(dept)
+    deptModel := model.NewModel(&Department{})
+    deptModel.SetConnection("default")
+    err := deptModel.AutoMigrate(&Department{})
     if err != nil {
         log.Fatal(err)
     }
     
     // 多模型迁移（注意顺序：先创建被引用的表）
-    user := &User{BaseModel: *model.NewModel(&User{})}
-    user.SetConnection("default")
-    err = user.AutoMigrate(user)  // User 模型有外键引用 Department
+    userModel := model.NewModel(&User{})
+    userModel.SetConnection("default")
+    err = userModel.AutoMigrate(&User{})  // User 模型有外键引用 Department
     if err != nil {
         log.Fatal(err)
     }
     
     // 多表一次性迁移
-    err = user.AutoMigrate(user, dept)
+    err = userModel.AutoMigrate(&User{}, &Department{})
     if err != nil {
         log.Fatal(err)
     }
@@ -487,7 +489,7 @@ func basicAutoMigrate() {
 ```go
 // 第一版模型
 type UserV1 struct {
-    torm.BaseModel
+    model.BaseModel
     ID   int    `torm:"primary_key,auto_increment"`
     Name string `torm:"type:varchar,size:50"`
 }
@@ -499,7 +501,7 @@ userV1.AutoMigrate()
 
 // 第二版模型 - 添加字段
 type UserV2 struct {
-    torm.BaseModel
+    model.BaseModel
     ID    int    `torm:"primary_key,auto_increment"`
     Name  string `torm:"type:varchar,size:50"`
     Email string `torm:"type:varchar,size:100,unique"`  // 新增
@@ -515,7 +517,7 @@ userV2.AutoMigrate()
 
 // 第三版模型 - 修改字段
 type UserV3 struct {
-    torm.BaseModel
+    model.BaseModel
     ID    int    `torm:"primary_key,auto_increment"`
     Name  string `torm:"type:varchar,size:100"`        // 长度从50改为100
     Email string `torm:"type:varchar,size:100,unique"`
@@ -533,7 +535,7 @@ userV3.AutoMigrate()
 
 ```go
 type User struct {
-    torm.BaseModel
+    model.BaseModel
     ID       int       `torm:"primary_key,auto_increment"`
     Username string    `torm:"type:varchar,size:50,unique"`
     Balance  float64   `torm:"type:decimal,precision:10,scale:2"`
@@ -544,11 +546,10 @@ type User struct {
 
 // 同一模型，不同数据库自动适配
 func crossDatabaseMigration() {
-    user := &User{}
-    
     // MySQL 环境
-    user.SetConnection("mysql")
-    user.AutoMigrate()
+    mysqlModel := model.NewModel(&User{})
+    mysqlModel.SetConnection("mysql")
+    mysqlModel.AutoMigrate(&User{})
     // 生成: CREATE TABLE users (
     //   id INT AUTO_INCREMENT PRIMARY KEY,
     //   username VARCHAR(50) UNIQUE,
@@ -559,8 +560,9 @@ func crossDatabaseMigration() {
     // )
     
     // PostgreSQL 环境
-    user.SetConnection("postgres")
-    user.AutoMigrate()
+    pgModel := model.NewModel(&User{})
+    pgModel.SetConnection("postgres")
+    pgModel.AutoMigrate(&User{})
     // 生成: CREATE TABLE users (
     //   id SERIAL PRIMARY KEY,
     //   username VARCHAR(50) UNIQUE,
@@ -571,8 +573,9 @@ func crossDatabaseMigration() {
     // )
     
     // SQLite 环境
-    user.SetConnection("sqlite")
-    user.AutoMigrate()
+    sqliteModel := model.NewModel(&User{})
+    sqliteModel.SetConnection("sqlite")
+    sqliteModel.AutoMigrate(&User{})
     // 生成: CREATE TABLE users (
     //   id INTEGER PRIMARY KEY AUTOINCREMENT,
     //   username TEXT UNIQUE,
@@ -617,7 +620,7 @@ func batchAutoMigrate() {
 
 ```go
 // 创建记录 - 基于实际测试案例
-user := &User{BaseModel: *model.NewModel("users")}
+user := model.NewModel("users")
 user.SetPrimaryKey("id").SetConnection("default")
 
 // 使用 Fill 方法批量填充数据
@@ -640,7 +643,7 @@ if err != nil {
 }
 
 // 查询记录
-foundUser := &User{BaseModel: *model.NewModel("users")}
+foundUser := model.NewModel("users")
 foundUser.SetPrimaryKey("id").SetConnection("default")
 
 // 根据主键查找
@@ -674,25 +677,36 @@ err = foundUser.Delete()
 ### 高级查询操作
 
 ```go
-user := &User{}
+// 创建查询模型
+userModel := model.NewModel("users")
+userModel.SetConnection("default")
 
-// 参数化查询
-activeUsers, err := user.Where("status = ? AND age >= ?", "active", 18).Get()
+// 参数化查询 - 通过 Query() 获取查询构建器
+query, err := userModel.Query()
+if err != nil {
+    log.Fatal(err)
+}
+
+activeUsers, err := query.Where("status = ? AND age >= ?", "active", 18).GetRaw()
 
 // 数组参数查询
-premiumUsers, err := user.Where("status IN (?)", []string{"premium", "vip"}).Get()
+query2, _ := userModel.Query()
+premiumUsers, err := query2.Where("status IN (?)", []string{"premium", "vip"}).GetRaw()
 
 // 复杂条件
-complexResults, err := user.
+query3, _ := userModel.Query()
+complexResults, err := query3.
     Where("(status = ? OR vip_level > ?) AND age BETWEEN ? AND ?", 
           "premium", 3, 18, 65).
-    Get()
+    GetRaw()
 
 // 聚合查询
-count, err := user.Where("status", "=", "active").Count()
+query4, _ := userModel.Query()
+count, err := query4.Where("status", "=", "active").Count()
 
 // 分页查询
-pagination, err := user.Where("status", "=", "active").
+query5, _ := userModel.Query()
+pagination, err := query5.Where("status", "=", "active").
     OrderBy("created_at", "desc").
     Paginate(1, 20)
 ```
@@ -703,7 +717,7 @@ pagination, err := user.Where("status", "=", "active").
 // 模型属性功能测试
 func testModelAttributes() {
     // 1. 创建模型实例
-    user := &User{BaseModel: *model.NewModel("users")}
+    user := model.NewModel("users")
     user.SetPrimaryKey("id").SetConnection("default")
     
     // 2. 测试 SetAttribute 和 GetAttribute
@@ -766,7 +780,7 @@ func testModelAttributes() {
     // 8. 测试 ToJSON 和 FromJSON
     jsonStr, err := user.ToJSON()
     if err == nil {
-        newUser := &User{BaseModel: *model.NewModel("users")}
+        newUser := model.NewModel("users")
         newUser.SetPrimaryKey("id").SetConnection("default")
         
         err = newUser.FromJSON(jsonStr)
@@ -798,7 +812,7 @@ func testModelAttributes() {
 // 模型关联功能测试
 func testModelRelationships() {
     // 1. 创建测试数据
-    dept := &Department{BaseModel: *model.NewModel("departments")}
+    dept := model.NewModel("departments")
     dept.SetConnection("default")
     dept.Fill(map[string]interface{}{
         "name":      "技术部",
@@ -808,7 +822,7 @@ func testModelRelationships() {
     })
     dept.Save()
     
-    user := &User{BaseModel: *model.NewModel("users")}
+    user := model.NewModel("users")
     user.SetPrimaryKey("id").SetConnection("default")
     user.Fill(map[string]interface{}{
         "username":  "test_user",
@@ -818,7 +832,7 @@ func testModelRelationships() {
     user.Save()
     
     // 2. 测试 BelongsTo 关联（用户所属部门）
-    testUser := &User{BaseModel: *model.NewModel("users")}
+    testUser := model.NewModel("users")
     testUser.SetPrimaryKey("id").SetConnection("default")
     testUser.SetAttribute("id", user.GetKey())
     testUser.SetAttribute("dept_id", dept.GetKey())
@@ -831,7 +845,7 @@ func testModelRelationships() {
     }
     
     // 3. 测试 HasMany 关联（部门下的用户）
-    testDept := &Department{BaseModel: *model.NewModel("departments")}
+    testDept := model.NewModel("departments")
     testDept.SetPrimaryKey("id").SetConnection("default")
     testDept.SetAttribute("id", dept.GetKey())
     testDept.MarkAsExists()
@@ -894,14 +908,14 @@ type User struct {
 
 // ✅ 推荐的模型初始化方式
 func createUser() {
-    // 使用 NewModelFromStruct 进行迁移
-    user := &User{BaseModel: *model.NewModel(&User{})}
-    user.SetConnection("default")
-    user.AutoMigrate(user)
+    // 使用 NewModel 进行迁移
+    userModel := model.NewModel(&User{})
+    userModel.SetConnection("default")
+    userModel.AutoMigrate(&User{})
     
-    // 使用 NewBaseModel 进行操作
-    newUser := &User{BaseModel: *model.NewBaseModel()}
-    newUser.SetTable("users").SetPrimaryKey("id").SetConnection("default")
+    // 使用 NewModel 进行操作
+    newUser := model.NewModel("users")
+    newUser.SetPrimaryKey("id").SetConnection("default")
     
     // 使用 Fill 填充数据
     newUser.Fill(map[string]interface{}{
@@ -931,36 +945,36 @@ func deploymentMigration() {
     // 1. 按依赖顺序迁移 - 先创建被引用的表
     
     // 创建部门表（被用户表引用）
-    dept := &Department{BaseModel: *model.NewModel(&Department{})}
-    dept.SetConnection("default")
-    if err := dept.AutoMigrate(dept); err != nil {
+    deptModel := model.NewModel(&Department{})
+    deptModel.SetConnection("default")
+    if err := deptModel.AutoMigrate(&Department{}); err != nil {
         log.Fatalf("部门表迁移失败: %v", err)
     }
     log.Println("✅ 部门表迁移成功")
     
     // 创建用户表（引用部门表）
-    user := &User{BaseModel: *model.NewModel(&User{})}
-    user.SetConnection("default")
-    if err := user.AutoMigrate(user); err != nil {
+    userModel := model.NewModel(&User{})
+    userModel.SetConnection("default")
+    if err := userModel.AutoMigrate(&User{}); err != nil {
         log.Fatalf("用户表迁移失败: %v", err)
     }
     log.Println("✅ 用户表迁移成功")
     
     // 创建其他表
-    role := &Role{BaseModel: *model.NewModel(&Role{})}
-    role.SetConnection("default")
-    if err := role.AutoMigrate(role); err != nil {
+    roleModel := model.NewModel(&Role{})
+    roleModel.SetConnection("default")
+    if err := roleModel.AutoMigrate(&Role{}); err != nil {
         log.Fatalf("角色表迁移失败: %v", err)
     }
     
-    project := &Project{BaseModel: *model.NewModel(&Project{})}
-    project.SetConnection("default")
-    if err := project.AutoMigrate(project); err != nil {
+    projectModel := model.NewModel(&Project{})
+    projectModel.SetConnection("default")
+    if err := projectModel.AutoMigrate(&Project{}); err != nil {
         log.Fatalf("项目表迁移失败: %v", err)
     }
     
     // 2. 多表一次性迁移（推荐）
-    if err := user.AutoMigrate(user, dept, role, project); err != nil {
+    if err := userModel.AutoMigrate(&User{}, &Department{}, &Role{}, &Project{}); err != nil {
         log.Fatalf("多表迁移失败: %v", err)
     }
     log.Println("✅ 多表迁移成功")
@@ -978,9 +992,9 @@ func environmentMigration(env string) {
         connectionName = "prod"
     }
     
-    user := &User{BaseModel: *model.NewModel(&User{})}
-    user.SetTable("users").SetConnection(connectionName)
-    user.AutoMigrate(user)
+    userModel := model.NewModel(&User{})
+    userModel.SetConnection(connectionName)
+    userModel.AutoMigrate(&User{})
 }
 ```
 
@@ -988,7 +1002,7 @@ func environmentMigration(env string) {
 
 ```go
 type OptimizedUser struct {
-    torm.BaseModel
+    model.BaseModel
     
     ID int64 `torm:"primary_key,auto_increment"`
     
@@ -1019,13 +1033,13 @@ type OptimizedUser struct {
 // ✅ 安全的模型操作（基于实际测试案例）
 func safeModelOperations() {
     // 1. 初始化模型
-    user := &User{BaseModel: *model.NewModel("users")}
+    user := model.NewModel("users")
     user.SetPrimaryKey("id").SetConnection("default")
     
     // 2. 自动迁移错误处理
-    migrationUser := &User{BaseModel: *model.NewModel(&User{})}
-    migrationUser.SetTable("users").SetConnection("default")
-    if err := migrationUser.AutoMigrate(migrationUser); err != nil {
+    migrationModel := model.NewModel(&User{})
+    migrationModel.SetConnection("default")
+    if err := migrationModel.AutoMigrate(&User{}); err != nil {
         log.Printf("AutoMigrate失败: %v", err)
         return
     }
@@ -1051,7 +1065,7 @@ func safeModelOperations() {
     log.Printf("✅ 用户创建成功, ID: %v", user.GetKey())
     
     // 5. 查询错误处理
-    queryUser := &User{BaseModel: *model.NewModel("users")}
+    queryUser := model.NewModel("users")
     queryUser.SetConnection("default")
     
     results, err := queryUser.Where("status", "=", "active").Get()
@@ -1068,7 +1082,7 @@ func safeModelOperations() {
     log.Printf("查询成功，找到 %d 条记录", len(results))
     
     // 6. 属性获取和验证
-    foundUser := &User{BaseModel: *model.NewModel("users")}
+    foundUser := model.NewModel("users")
     foundUser.SetConnection("default")
     
     if err := foundUser.Find(user.GetKey()); err != nil {
@@ -1097,29 +1111,29 @@ func safeModelOperations() {
 func developmentWorkflow() {
 	// 1. 开发阶段：使用AutoMigrate
 	if os.Getenv("APP_ENV") == "development" {
-		user := &User{BaseModel: *model.NewModel(&User{})}
-		user.SetConnection("default")
-		user.AutoMigrate(user)
+		userModel := model.NewModel(&User{})
+		userModel.SetConnection("default")
+		userModel.AutoMigrate(&User{})
 		
-		dept := &Department{BaseModel: *model.NewModel(&Department{})}
-		dept.SetConnection("default")
-		dept.AutoMigrate(dept)
+		deptModel := model.NewModel(&Department{})
+		deptModel.SetConnection("default")
+		deptModel.AutoMigrate(&Department{})
 	}
 	
 	// 2. 测试阶段：确保模型一致性
 	if os.Getenv("APP_ENV") == "testing" {
 		// 按顺序迁移测试表
-		dept := &Department{BaseModel: *model.NewModel(&Department{})}
-		dept.SetConnection("test")
-		dept.AutoMigrate(dept)
+		deptModel := model.NewModel(&Department{})
+		deptModel.SetConnection("test")
+		deptModel.AutoMigrate(&Department{})
 		
-		user := &User{BaseModel: *model.NewModel(&User{})}
-		user.SetConnection("test")
-		user.AutoMigrate(user)
+		userModel := model.NewModel(&User{})
+		userModel.SetConnection("test")
+		userModel.AutoMigrate(&User{})
 		
-		role := &Role{BaseModel: *model.NewModel(&Role{})}
-		role.SetConnection("test")
-		role.AutoMigrate(role)
+		roleModel := model.NewModel(&Role{})
+		roleModel.SetConnection("test")
+		roleModel.AutoMigrate(&Role{})
 	}
 	
 	// 3. 生产阶段：谨慎使用AutoMigrate
@@ -1127,9 +1141,9 @@ func developmentWorkflow() {
 		// 可以使用AutoMigrate，但要有完整的备份和回滚计划
 		log.Printf("生产环境，执行AutoMigrate...")
 		
-		user := &User{BaseModel: *model.NewModel(&User{})}
-		user.SetConnection("production")
-		if err := user.AutoMigrate(user); err != nil {
+		userModel := model.NewModel(&User{})
+		userModel.SetConnection("production")
+		if err := userModel.AutoMigrate(&User{}); err != nil {
 			log.Fatalf("生产环境迁移失败: %v", err)
 		}
 		log.Println("✅ 生产环境迁移成功")
