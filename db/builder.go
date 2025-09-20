@@ -216,6 +216,65 @@ func (qb *QueryBuilder) GetModel() interface{} {
 
 // getTableNameFromModel 从模型获取表名
 func getTableNameFromModel(model interface{}) string {
+	// 优先检查模型是否实现了TableName方法（静态方法，推荐用法）
+	if tableNameProvider, ok := model.(interface{ TableName() string }); ok {
+		if tableName := tableNameProvider.TableName(); tableName != "" {
+			return tableName
+		}
+	}
+
+	// 其次检查模型是否实现了GetTableName方法（实例方法）
+	if tableNameGetter, ok := model.(interface{ GetTableName() string }); ok {
+		if tableName := tableNameGetter.GetTableName(); tableName != "" {
+			return tableName
+		}
+	}
+
+	// 如果模型是指针，检查指针指向的值是否实现了TableName或GetTableName方法
+	modelValue := reflect.ValueOf(model)
+	if modelValue.Kind() == reflect.Ptr && !modelValue.IsNil() {
+		// 检查TableName方法
+		if tableNameProvider, ok := modelValue.Interface().(interface{ TableName() string }); ok {
+			if tableName := tableNameProvider.TableName(); tableName != "" {
+				return tableName
+			}
+		}
+
+		// 检查GetTableName方法
+		if tableNameGetter, ok := modelValue.Interface().(interface{ GetTableName() string }); ok {
+			if tableName := tableNameGetter.GetTableName(); tableName != "" {
+				return tableName
+			}
+		}
+	}
+
+	// 如果模型是值类型，但包含BaseModel字段，尝试从BaseModel获取表名
+	if modelValue.Kind() == reflect.Struct {
+		// 查找BaseModel字段
+		for i := 0; i < modelValue.NumField(); i++ {
+			field := modelValue.Field(i)
+			fieldType := modelValue.Type().Field(i)
+
+			// 检查是否是BaseModel类型的字段
+			if fieldType.Type.String() == "model.BaseModel" && field.CanInterface() {
+				// 优先尝试TableName方法
+				if tableNameProvider, ok := field.Interface().(interface{ TableName() string }); ok {
+					if tableName := tableNameProvider.TableName(); tableName != "" {
+						return tableName
+					}
+				}
+
+				// 然后尝试GetTableName方法
+				if baseModel, ok := field.Interface().(interface{ GetTableName() string }); ok {
+					if tableName := baseModel.GetTableName(); tableName != "" {
+						return tableName
+					}
+				}
+			}
+		}
+	}
+
+	// 如果没有TableName或GetTableName方法，则从类型名推断
 	modelType := reflect.TypeOf(model)
 	if modelType.Kind() == reflect.Ptr {
 		modelType = modelType.Elem()
@@ -2366,7 +2425,6 @@ func (qb *QueryBuilder) Model(model interface{}) *QueryBuilder {
 
 	return qb
 }
-
 
 // WhereIn WHERE IN条件
 func (qb *QueryBuilder) WhereIn(field string, values []interface{}) *QueryBuilder {

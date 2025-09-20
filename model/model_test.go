@@ -793,3 +793,46 @@ func TestMigrationPackageCompatibility(t *testing.T) {
 		}
 	}
 }
+
+// TestTableNameFunction 测试TableName函数功能
+func TestTableNameFunction(t *testing.T) {
+	// 测试默认TableName方法
+	user := NewModel(&TestUser{})
+	user.SetTable("custom_users")
+
+	if tableName := user.TableName(); tableName != "custom_users" {
+		t.Errorf("Expected table name 'custom_users', got '%s'", tableName)
+	}
+
+	// 测试GetTableName方法
+	if tableName := user.GetTableName(); tableName != "custom_users" {
+		t.Errorf("Expected table name 'custom_users', got '%s'", tableName)
+	}
+}
+
+// TestCustomTableNameModel 测试自定义TableName方法的模型
+type TestCustomTableNameModel struct {
+	BaseModel
+	ID   int    `json:"id" torm:"primary_key,auto_increment"`
+	Name string `json:"name" torm:"type:varchar,size:100"`
+}
+
+// TableName 重写TableName方法
+func (m TestCustomTableNameModel) TableName() string {
+	return "my_custom_table"
+}
+
+func TestCustomTableName(t *testing.T) {
+	model := &TestCustomTableNameModel{}
+
+	// 测试静态TableName方法
+	if tableName := model.TableName(); tableName != "my_custom_table" {
+		t.Errorf("Expected table name 'my_custom_table', got '%s'", tableName)
+	}
+
+	// 测试空结构体的TableName方法
+	emptyModel := TestCustomTableNameModel{}
+	if tableName := emptyModel.TableName(); tableName != "my_custom_table" {
+		t.Errorf("Expected table name 'my_custom_table' from empty struct, got '%s'", tableName)
+	}
+}

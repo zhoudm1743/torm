@@ -121,7 +121,7 @@ func parseModelFromStruct(structInstance interface{}) ModelConfig {
 	config := DefaultModelConfig()
 
 	// 尝试从实例获取表名
-		if modeler, ok := structInstance.(interface{ GetTableName() string }); ok {
+	if modeler, ok := structInstance.(interface{ GetTableName() string }); ok {
 		if tableName := modeler.GetTableName(); tableName != "" {
 			config.TableName = tableName
 		}
@@ -129,10 +129,10 @@ func parseModelFromStruct(structInstance interface{}) ModelConfig {
 
 	// 如果还是没有表名，从类型推断（作为备用）
 	if config.TableName == "" {
-			modelType := reflect.TypeOf(structInstance)
-			if modelType.Kind() == reflect.Ptr {
-				modelType = modelType.Elem()
-			}
+		modelType := reflect.TypeOf(structInstance)
+		if modelType.Kind() == reflect.Ptr {
+			modelType = modelType.Elem()
+		}
 		config.TableName = toSnakeCase(modelType.Name())
 	}
 
@@ -189,6 +189,12 @@ func (m *BaseModel) SetTable(tableName string) *BaseModel {
 
 // GetTableName 获取表名
 func (m *BaseModel) GetTableName() string {
+	return m.config.TableName
+}
+
+// TableName 静态函数，用于查询构建器直接获取表名
+// 这个函数可以被子模型重写来提供自定义表名
+func (m *BaseModel) TableName() string {
 	return m.config.TableName
 }
 
@@ -1089,7 +1095,7 @@ func parseTormKeyValue(part string, field reflect.StructField, config *ModelConf
 // parseTormFlagAdvanced 解析torm标签的标志 - 扩展版本
 func parseTormFlagAdvanced(flag string, field reflect.StructField, config *ModelConfig) {
 	flag = strings.ToLower(flag)
-			columnName := getColumnNameFromField(field)
+	columnName := getColumnNameFromField(field)
 
 	switch flag {
 	case "primary_key", "pk", "primary", "primarykey":
@@ -1113,7 +1119,7 @@ func parseTormFlagAdvanced(flag string, field reflect.StructField, config *Model
 		config.UpdatedAtCol = columnName
 
 	case "soft_delete", "soft_deletes", "deleted_at":
-			// 软删除字段
+		// 软删除字段
 		config.DeletedAtCol = columnName
 		config.SoftDeletes = true
 
