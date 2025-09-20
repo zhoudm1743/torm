@@ -121,7 +121,7 @@ func parseModelFromStruct(structInstance interface{}) ModelConfig {
 	config := DefaultModelConfig()
 
 	// 尝试从实例获取表名
-	if modeler, ok := structInstance.(interface{ GetTableName() string }); ok {
+		if modeler, ok := structInstance.(interface{ GetTableName() string }); ok {
 		if tableName := modeler.GetTableName(); tableName != "" {
 			config.TableName = tableName
 		}
@@ -129,10 +129,10 @@ func parseModelFromStruct(structInstance interface{}) ModelConfig {
 
 	// 如果还是没有表名，从类型推断（作为备用）
 	if config.TableName == "" {
-		modelType := reflect.TypeOf(structInstance)
-		if modelType.Kind() == reflect.Ptr {
-			modelType = modelType.Elem()
-		}
+			modelType := reflect.TypeOf(structInstance)
+			if modelType.Kind() == reflect.Ptr {
+				modelType = modelType.Elem()
+			}
 		config.TableName = toSnakeCase(modelType.Name())
 	}
 
@@ -281,7 +281,8 @@ func (m *BaseModel) Query() (*db.QueryBuilder, error) {
 		return nil, fmt.Errorf("创建查询构建器失败: %w", err)
 	}
 
-	return query.From(m.config.TableName), nil
+	// 绑定模型实例以支持访问器处理
+	return query.From(m.config.TableName).WithModel(m), nil
 }
 
 // Where 支持多种参数式查询格式，返回QueryBuilder以支持链式调用
@@ -536,6 +537,79 @@ func (m *BaseModel) GetKey() interface{} {
 // SetKey 设置主键值
 func (m *BaseModel) SetKey(key interface{}) *BaseModel {
 	m.SetAttribute(m.config.PrimaryKey, key)
+	return m
+}
+
+// ============================================================================
+// 查询执行方法 - 直接在BaseModel上执行查询
+// ============================================================================
+
+// Get 执行查询并返回数据（应用访问器处理）
+func (m *BaseModel) Get() ([]map[string]interface{}, error) {
+	query, err := m.Query()
+	if err != nil {
+		return nil, err
+	}
+	return query.Get()
+}
+
+// GetRaw 执行查询并返回原始数据（不应用访问器处理）
+func (m *BaseModel) GetRaw() ([]map[string]interface{}, error) {
+	query, err := m.Query()
+	if err != nil {
+		return nil, err
+	}
+	return query.GetRaw()
+}
+
+// First 获取第一条记录（应用访问器处理）
+func (m *BaseModel) First() (map[string]interface{}, error) {
+	query, err := m.Query()
+	if err != nil {
+		return nil, err
+	}
+	return query.First()
+}
+
+// FirstRaw 获取第一条记录的原始数据（不应用访问器处理）
+func (m *BaseModel) FirstRaw() (map[string]interface{}, error) {
+	query, err := m.Query()
+	if err != nil {
+		return nil, err
+	}
+	return query.FirstRaw()
+}
+
+// Count 计算记录数量
+func (m *BaseModel) Count() (int64, error) {
+	query, err := m.Query()
+	if err != nil {
+		return 0, err
+	}
+	return query.Count()
+}
+
+// ============================================================================
+// 访问器支持方法
+// ============================================================================
+
+// SetAttributeWithAccessor 设置属性值并应用设置器
+func (m *BaseModel) SetAttributeWithAccessor(model interface{}, key string, value interface{}) *BaseModel {
+	processor := db.NewAccessorProcessor(model)
+	processedData := processor.ProcessSetData(map[string]interface{}{key: value})
+	if processedValue, exists := processedData[key]; exists {
+		m.SetAttribute(key, processedValue)
+	} else {
+		m.SetAttribute(key, value)
+	}
+	return m
+}
+
+// SetAttributesWithAccessor 批量设置属性值并应用设置器
+func (m *BaseModel) SetAttributesWithAccessor(model interface{}, data map[string]interface{}) *BaseModel {
+	processor := db.NewAccessorProcessor(model)
+	processedData := processor.ProcessSetData(data)
+	m.SetAttributes(processedData)
 	return m
 }
 
@@ -1015,7 +1089,7 @@ func parseTormKeyValue(part string, field reflect.StructField, config *ModelConf
 // parseTormFlagAdvanced 解析torm标签的标志 - 扩展版本
 func parseTormFlagAdvanced(flag string, field reflect.StructField, config *ModelConfig) {
 	flag = strings.ToLower(flag)
-	columnName := getColumnNameFromField(field)
+			columnName := getColumnNameFromField(field)
 
 	switch flag {
 	case "primary_key", "pk", "primary", "primarykey":
@@ -1039,7 +1113,7 @@ func parseTormFlagAdvanced(flag string, field reflect.StructField, config *Model
 		config.UpdatedAtCol = columnName
 
 	case "soft_delete", "soft_deletes", "deleted_at":
-		// 软删除字段
+			// 软删除字段
 		config.DeletedAtCol = columnName
 		config.SoftDeletes = true
 

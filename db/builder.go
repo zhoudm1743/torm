@@ -940,6 +940,88 @@ func (qb *QueryBuilder) First(dest ...interface{}) (map[string]interface{}, erro
 	return results[0], nil
 }
 
+// GetRaw 执行查询并返回原始数据（不应用访问器处理）
+func (qb *QueryBuilder) GetRaw() ([]map[string]interface{}, error) {
+	// 如果启用了缓存并且不在事务中，尝试从缓存获取
+	if qb.cacheEnabled && qb.transaction == nil {
+		cacheKey := qb.generateCacheKey() + "_raw"
+		if cached, err := GetDefaultCache().Get(cacheKey); err == nil {
+			if result, ok := cached.([]map[string]interface{}); ok {
+				return result, nil
+			}
+		}
+	}
+
+	sqlStr, args := qb.buildSelectSQL()
+
+	var rows *sql.Rows
+	var err error
+
+	if qb.transaction != nil {
+		rows, err = qb.transaction.Query(sqlStr, args...)
+	} else {
+		conn, connErr := qb.getConnection()
+		if connErr != nil {
+			return nil, connErr
+		}
+		rows, err = conn.Query(sqlStr, args...)
+	}
+
+	if err != nil {
+		wrappedErr := WrapError(err, ErrCodeQueryFailed, "查询执行失败").
+			WithContext("sql", sqlStr).
+			WithContext("args", args).
+			WithContext("table", qb.tableName).
+			WithContext("operation", "SELECT_RAW").
+			WithDetails(fmt.Sprintf("数据库查询错误: %v", err))
+		LogError(wrappedErr)
+		return nil, wrappedErr
+	}
+	defer rows.Close()
+
+	result, err := qb.scanRows(rows)
+	if err != nil {
+		wrappedErr := WrapError(err, ErrCodeQueryFailed, "扫描查询结果失败").
+			WithContext("sql", sqlStr).
+			WithContext("args", args).
+			WithContext("table", qb.tableName).
+			WithContext("operation", "SCAN_RAW").
+			WithDetails(fmt.Sprintf("结果扫描错误: %v", err))
+		LogError(wrappedErr)
+		return nil, wrappedErr
+	}
+
+	// 如果启用了缓存，将原始结果存入缓存
+	if qb.cacheEnabled && qb.transaction == nil {
+		cacheKey := qb.generateCacheKey() + "_raw"
+		if len(qb.cacheTags) > 0 {
+			if memCache, ok := GetDefaultCache().(*MemoryCache); ok {
+				memCache.SetWithTags(cacheKey, result, qb.cacheTTL, qb.cacheTags)
+			}
+		} else {
+			GetDefaultCache().Set(cacheKey, result, qb.cacheTTL)
+		}
+	}
+
+	// 直接返回原始结果，不应用访问器处理
+	return result, nil
+}
+
+// FirstRaw 获取第一条记录的原始数据（不应用访问器处理）
+func (qb *QueryBuilder) FirstRaw() (map[string]interface{}, error) {
+	qb.Limit(1)
+	results, err := qb.GetRaw()
+	if err != nil {
+		return nil, err
+	}
+
+	if len(results) == 0 {
+		return nil, ErrRecordNotFound.WithContext("table", qb.tableName)
+	}
+
+	return results[0], nil
+}
+
 // Count 计算记录数量
 func (qb *QueryBuilder) Count() (int64, error) {
 	// 备份原始查询配置
@@ -2285,15 +2367,6 @@ func (qb *QueryBuilder) Model(model interface{}) *QueryBuilder {
 	return qb
 }
 
-// GetRaw 执行查询并返回原始 map 数据（向下兼容，现在直接调用Get）
-func (qb *QueryBuilder) GetRaw() ([]map[string]interface{}, error) {
-	return qb.Get()
-}
-
-// FirstRaw 获取第一条记录的原始 map 数据（向下兼容，现在直接调用First）
-func (qb *QueryBuilder) FirstRaw() (map[string]interface{}, error) {
-	return qb.First()
-}
 
 // WhereIn WHERE IN条件
 func (qb *QueryBuilder) WhereIn(field string, values []interface{}) *QueryBuilder {
