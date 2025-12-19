@@ -844,3 +844,42 @@ func init() {
 func GetDefaultCache() CacheInterface {
 	return defaultCache
 }
+
+// ClearCacheByTags 根据标签清理缓存（便捷函数）
+func ClearCacheByTags(tags ...string) error {
+	cache := DefaultManager().GetCache()
+	if cache == nil {
+		return nil
+	}
+
+	// 检查是否支持标签操作
+	if tagCache, ok := cache.(CacheWithTagsInterface); ok {
+		return tagCache.DeleteByTags(tags)
+	}
+
+	return nil
+}
+
+// ClearAllCache 清空所有缓存（便捷函数）
+func ClearAllCache() error {
+	cache := DefaultManager().GetCache()
+	if cache == nil {
+		return nil
+	}
+	return cache.Clear()
+}
+
+// GetCacheStats 获取缓存统计信息（便捷函数）
+func GetCacheStats() map[string]interface{} {
+	cache := DefaultManager().GetCache()
+	if cache == nil {
+		return nil
+	}
+
+	// 检查是否支持统计
+	if statsCache, ok := cache.(CacheWithStatsInterface); ok {
+		return statsCache.Stats()
+	}
+
+	return nil
+}

@@ -3,3 +3,4 @@ tests/
 *.db
 *.log
 examples/
+.kiro/*

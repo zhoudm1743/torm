@@ -11,7 +11,7 @@ import (
 
 // AutoMigrator 自动迁移器
 type AutoMigrator struct {
-	connection     db.ConnectionInterface
+	connection     db.Connection
 	analyzer       *ModelAnalyzer
 	tableCache     map[string]bool // 表存在性缓存
 	cacheEnabled   bool            // 是否启用缓存
@@ -20,7 +20,7 @@ type AutoMigrator struct {
 }
 
 // NewAutoMigrator 创建自动迁移器
-func NewAutoMigrator(conn db.ConnectionInterface) *AutoMigrator {
+func NewAutoMigrator(conn db.Connection) *AutoMigrator {
 	return &AutoMigrator{
 		connection:     conn,
 		analyzer:       NewModelAnalyzer(),
@@ -1110,4 +1110,316 @@ func (am *AutoMigrator) indexExists(tableName, indexName string) bool {
 	}
 
 	return count > 0
+}
+
+// RenameColumn 重命名列
+func (am *AutoMigrator) RenameColumn(tableName, oldName, newName string) error {
+	driver := am.getDriverType()
+	var sqlStr string
+
+	switch driver {
+	case "mysql":
+		// MySQL 8.0+ 支持 RENAME COLUMN
+		sqlStr = fmt.Sprintf("ALTER TABLE %s RENAME COLUMN %s TO %s",
+			am.quoteIdentifier(tableName, driver),
+			am.quoteIdentifier(oldName, driver),
+			am.quoteIdentifier(newName, driver))
+	case "postgres", "postgresql":
+		sqlStr = fmt.Sprintf("ALTER TABLE %s RENAME COLUMN %s TO %s",
+			am.quoteIdentifier(tableName, driver),
+			am.quoteIdentifier(oldName, driver),
+			am.quoteIdentifier(newName, driver))
+	case "sqlite", "sqlite3":
+		// SQLite 3.25.0+ 支持 RENAME COLUMN
+		sqlStr = fmt.Sprintf("ALTER TABLE %s RENAME COLUMN %s TO %s",
+			am.quoteIdentifier(tableName, driver),
+			am.quoteIdentifier(oldName, driver),
+			am.quoteIdentifier(newName, driver))
+	default:
+		return fmt.Errorf("不支持的数据库驱动: %s", driver)
+	}
+
+	_, err := am.connection.Exec(sqlStr)
+	if err != nil {
+		return fmt.Errorf("重命名列 %s 到 %s 失败: %w", oldName, newName, err)
+	}
+
+	return nil
+}
+
+// DropColumn 删除列
+func (am *AutoMigrator) DropColumn(tableName, columnName string) error {
+	driver := am.getDriverType()
+
+	// SQLite 不支持直接删除列（需要重建表）
+	if driver == "sqlite" || driver == "sqlite3" {
+		return fmt.Errorf("SQLite 不支持直接删除列，需要重建表")
+	}
+
+	sqlStr := fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s",
+		am.quoteIdentifier(tableName, driver),
+		am.quoteIdentifier(columnName, driver))
+
+	_, err := am.connection.Exec(sqlStr)
+	if err != nil {
+		return fmt.Errorf("删除列 %s 失败: %w", columnName, err)
+	}
+
+	return nil
+}
+
+// DropTable 删除表
+func (am *AutoMigrator) DropTable(tableName string) error {
+	driver := am.getDriverType()
+	sqlStr := fmt.Sprintf("DROP TABLE IF EXISTS %s", am.quoteIdentifier(tableName, driver))
+
+	_, err := am.connection.Exec(sqlStr)
+	if err != nil {
+		return fmt.Errorf("删除表 %s 失败: %w", tableName, err)
+	}
+
+	// 清除缓存
+	if am.cacheEnabled {
+		delete(am.tableCache, tableName)
+		delete(am.structureCache, tableName)
+	}
+
+	return nil
+}
+
+// HasTable 检查表是否存在
+func (am *AutoMigrator) HasTable(tableName string) (bool, error) {
+	return am.tableExists(tableName)
+}
+
+// HasColumn 检查列是否存在
+func (am *AutoMigrator) HasColumn(tableName, columnName string) (bool, error) {
+	driver := am.getDriverType()
+	var query string
+	var args []interface{}
+
+	switch driver {
+	case "mysql":
+		query = "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?"
+		args = []interface{}{tableName, columnName}
+	case "postgres", "postgresql":
+		query = "SELECT COUNT(*) FROM information_schema.columns WHERE table_name = $1 AND column_name = $2"
+		args = []interface{}{tableName, columnName}
+	case "sqlite", "sqlite3":
+		query = fmt.Sprintf("SELECT COUNT(*) FROM pragma_table_info('%s') WHERE name = ?", tableName)
+		args = []interface{}{columnName}
+	default:
+		return false, fmt.Errorf("不支持的数据库驱动: %s", driver)
+	}
+
+	row := am.connection.QueryRow(query, args...)
+	var count int
+	if err := row.Scan(&count); err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
+}
+
+// AutoMigrate 自动迁移多个模型
+func (am *AutoMigrator) AutoMigrate(models ...interface{}) error {
+	for _, model := range models {
+		// 获取表名
+		tableName := am.getTableName(model)
+		if tableName == "" {
+			return fmt.Errorf("无法获取模型的表名")
+		}
+
+		// 迁移模型
+		if err := am.MigrateModel(model, tableName); err != nil {
+			return fmt.Errorf("迁移模型 %s 失败: %w", tableName, err)
+		}
+	}
+
+	return nil
+}
+
+// getTableName 从模型获取表名
+func (am *AutoMigrator) getTableName(model interface{}) string {
+	// 优先检查模型是否实现了TableName方法
+	if tableNameProvider, ok := model.(interface{ TableName() string }); ok {
+		if tableName := tableNameProvider.TableName(); tableName != "" {
+			return tableName
+		}
+	}
+
+	// 其次检查模型是否实现了GetTableName方法
+	if tableNameGetter, ok := model.(interface{ GetTableName() string }); ok {
+		if tableName := tableNameGetter.GetTableName(); tableName != "" {
+			return tableName
+		}
+	}
+
+	// 从类型名推断表名
+	modelType := reflect.TypeOf(model)
+	if modelType.Kind() == reflect.Ptr {
+		modelType = modelType.Elem()
+	}
+
+	// 将结构体名转换为蛇形命名并复数化
+	name := modelType.Name()
+	snakeName := am.toSnakeCase(name)
+	return am.pluralize(snakeName)
+}
+
+// toSnakeCase 将驼峰命名转换为蛇形命名
+func (am *AutoMigrator) toSnakeCase(str string) string {
+	if str == "" {
+		return ""
+	}
+
+	var result strings.Builder
+	runes := []rune(str)
+
+	for i, r := range runes {
+		if r >= 'A' && r <= 'Z' {
+			if i > 0 && ((runes[i-1] >= 'a' && runes[i-1] <= 'z') ||
+				(i+1 < len(runes) && runes[i+1] >= 'a' && runes[i+1] <= 'z')) {
+				result.WriteRune('_')
+			}
+			result.WriteRune(r - 'A' + 'a')
+		} else {
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
+}
+
+// pluralize 将单数名词转换为复数形式
+func (am *AutoMigrator) pluralize(word string) string {
+	if word == "" {
+		return ""
+	}
+
+	// 特殊情况
+	specialCases := map[string]string{
+		"person":   "people",
+		"child":    "children",
+		"user":     "users",
+		"product":  "products",
+		"category": "categories",
+	}
+
+	if plural, exists := specialCases[word]; exists {
+		return plural
+	}
+
+	// 一般规则
+	if strings.HasSuffix(word, "s") || strings.HasSuffix(word, "sh") ||
+		strings.HasSuffix(word, "ch") || strings.HasSuffix(word, "x") ||
+		strings.HasSuffix(word, "z") {
+		return word + "es"
+	}
+
+	if strings.HasSuffix(word, "y") && len(word) > 1 {
+		prevChar := word[len(word)-2]
+		if prevChar != 'a' && prevChar != 'e' && prevChar != 'i' && prevChar != 'o' && prevChar != 'u' {
+			return word[:len(word)-1] + "ies"
+		}
+	}
+
+	return word + "s"
+}
+
+// DropIndex 删除索引
+func (am *AutoMigrator) DropIndex(tableName, indexName string) error {
+	driver := am.getDriverType()
+	var sqlStr string
+
+	switch driver {
+	case "mysql":
+		sqlStr = fmt.Sprintf("DROP INDEX %s ON %s",
+			am.quoteIdentifier(indexName, driver),
+			am.quoteIdentifier(tableName, driver))
+	case "postgres", "postgresql", "sqlite", "sqlite3":
+		sqlStr = fmt.Sprintf("DROP INDEX IF EXISTS %s", am.quoteIdentifier(indexName, driver))
+	default:
+		return fmt.Errorf("不支持的数据库驱动: %s", driver)
+	}
+
+	_, err := am.connection.Exec(sqlStr)
+	if err != nil {
+		return fmt.Errorf("删除索引 %s 失败: %w", indexName, err)
+	}
+
+	return nil
+}
+
+// AddForeignKey 添加外键约束
+func (am *AutoMigrator) AddForeignKey(tableName, columnName, refTable, refColumn string, onDelete, onUpdate string) error {
+	driver := am.getDriverType()
+
+	// SQLite 不支持在表创建后添加外键
+	if driver == "sqlite" || driver == "sqlite3" {
+		return fmt.Errorf("SQLite 不支持在表创建后添加外键约束")
+	}
+
+	fkName := fmt.Sprintf("fk_%s_%s", tableName, columnName)
+
+	var sqlBuilder strings.Builder
+	sqlBuilder.WriteString(fmt.Sprintf("ALTER TABLE %s ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s)",
+		am.quoteIdentifier(tableName, driver), fkName,
+		am.quoteIdentifier(columnName, driver),
+		am.quoteIdentifier(refTable, driver),
+		am.quoteIdentifier(refColumn, driver)))
+
+	if onDelete != "" {
+		action := strings.ToUpper(strings.ReplaceAll(onDelete, "_", " "))
+		sqlBuilder.WriteString(fmt.Sprintf(" ON DELETE %s", action))
+	}
+	if onUpdate != "" {
+		action := strings.ToUpper(strings.ReplaceAll(onUpdate, "_", " "))
+		sqlBuilder.WriteString(fmt.Sprintf(" ON UPDATE %s", action))
+	}
+
+	_, err := am.connection.Exec(sqlBuilder.String())
+	if err != nil {
+		return fmt.Errorf("添加外键约束 %s 失败: %w", fkName, err)
+	}
+
+	return nil
+}
+
+// DropForeignKey 删除外键约束
+func (am *AutoMigrator) DropForeignKey(tableName, fkName string) error {
+	driver := am.getDriverType()
+
+	// SQLite 不支持删除外键
+	if driver == "sqlite" || driver == "sqlite3" {
+		return fmt.Errorf("SQLite 不支持删除外键约束")
+	}
+
+	var sqlStr string
+	switch driver {
+	case "mysql":
+		sqlStr = fmt.Sprintf("ALTER TABLE %s DROP FOREIGN KEY %s",
+			am.quoteIdentifier(tableName, driver), fkName)
+	case "postgres", "postgresql":
+		sqlStr = fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT %s",
+			am.quoteIdentifier(tableName, driver), fkName)
+	default:
+		return fmt.Errorf("不支持的数据库驱动: %s", driver)
+	}
+
+	_, err := am.connection.Exec(sqlStr)
+	if err != nil {
+		return fmt.Errorf("删除外键约束 %s 失败: %w", fkName, err)
+	}
+
+	return nil
+}
+
+// GetConnection 获取数据库连接
+func (am *AutoMigrator) GetConnection() db.Connection {
+	return am.connection
+}
+
+// GetAnalyzer 获取模型分析器
+func (am *AutoMigrator) GetAnalyzer() *ModelAnalyzer {
+	return am.analyzer
 }

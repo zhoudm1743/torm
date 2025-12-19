@@ -1,8 +1,8 @@
 package db
 
 import (
+	"context"
 	"database/sql"
-	"fmt"
 	"sync"
 	"time"
 
@@ -12,19 +12,22 @@ import (
 
 // MySQLConnection MySQL数据库连接
 type MySQLConnection struct {
-	config    *Config
-	db        *sql.DB
-	logger    LoggerInterface
-	connected bool
-	mu        sync.RWMutex
+	*BaseConnection
+	mu sync.RWMutex
 }
 
 // NewMySQLConnection 创建MySQL连接
-func NewMySQLConnection(config *Config, logger LoggerInterface) (ConnectionInterface, error) {
-	return &MySQLConnection{
-		config: config,
-		logger: logger,
-	}, nil
+func NewMySQLConnection(config *Config, log LoggerInterface) (Connection, error) {
+	if config == nil {
+		return nil, NewError(ErrCodeConfigurationError, "config cannot be nil")
+	}
+
+	conn := &MySQLConnection{
+		BaseConnection: NewBaseConnection(config),
+	}
+	conn.SetLogger(log)
+
+	return conn, nil
 }
 
 // Connect 连接到数据库
@@ -32,30 +35,37 @@ func (c *MySQLConnection) Connect() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.connected && c.db != nil {
+	if c.IsConnected() {
 		return nil
 	}
 
-	dsn := c.config.DSN()
+	config := c.GetConfig()
+	dsn := config.DSN()
+
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
-		return fmt.Errorf("failed to open mysql connection: %w", err)
+		return NewConnectionError(err, "mysql", config.Host, config.Database)
 	}
 
 	// 配置连接池
-	db.SetMaxOpenConns(c.config.MaxOpenConns)
-	db.SetMaxIdleConns(c.config.MaxIdleConns)
-	db.SetConnMaxLifetime(c.config.ConnMaxLifetime)
-	db.SetConnMaxIdleTime(c.config.ConnMaxIdleTime)
+	c.SetDB(db)
+	c.ConfigurePool()
 
 	// 测试连接
 	if err := db.Ping(); err != nil {
 		db.Close()
-		return fmt.Errorf("failed to ping mysql database: %w", err)
+		c.SetDB(nil)
+		return NewConnectionError(err, "mysql", config.Host, config.Database)
 	}
 
-	c.db = db
-	c.connected = true
+	// 设置MySQL构建器
+	c.SetBuilder(NewMySQLBuilder())
+
+	if c.GetLogger() != nil {
+		c.GetLogger().Info("MySQL连接建立成功",
+			"host", config.Host,
+			"database", config.Database)
+	}
 
 	return nil
 }
@@ -65,164 +75,18 @@ func (c *MySQLConnection) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.db == nil {
-		return nil
-	}
+	log := c.GetLogger()
+	err := c.BaseConnection.Close()
 
-	err := c.db.Close()
-	c.db = nil
-	c.connected = false
-
-	if c.logger != nil {
+	if log != nil {
 		if err != nil {
-			c.logger.Error("Failed to close MySQL connection", "error", err)
+			log.Error("关闭MySQL连接失败", "error", err)
 		} else {
-			c.logger.Info("MySQL connection closed")
+			log.Info("MySQL连接已关闭")
 		}
 	}
 
 	return err
-}
-
-// Ping 测试连接
-func (c *MySQLConnection) Ping() error {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.db == nil {
-		return fmt.Errorf("connection not established")
-	}
-
-	return c.db.Ping()
-}
-
-// IsConnected 检查是否已连接
-func (c *MySQLConnection) IsConnected() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.connected && c.db != nil
-}
-
-// Query 执行查询
-func (c *MySQLConnection) Query(query string, args ...interface{}) (*sql.Rows, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.db == nil {
-		return nil, fmt.Errorf("connection not established")
-	}
-
-	start := time.Now()
-	rows, err := c.db.Query(query, args...)
-	duration := time.Since(start)
-
-	// 统一SQL日志记录
-	if c.logger != nil {
-		if sqlLogger, ok := c.logger.(*logger.SQLLogger); ok {
-			sqlLogger.LogSQL(query, args, duration, err)
-		} else {
-			// 兼容旧的日志接口
-			if err != nil {
-				c.logger.Error("sql", query, "args", args, "duration", duration, "error", err)
-			} else if c.config.LogQueries {
-				c.logger.Debug("sql", query, "args", args, "duration", duration)
-			}
-		}
-	}
-
-	return rows, err
-}
-
-// QueryRow 执行单行查询
-func (c *MySQLConnection) QueryRow(query string, args ...interface{}) *sql.Row {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.db == nil {
-		return &sql.Row{}
-	}
-
-	start := time.Now()
-	row := c.db.QueryRow(query, args...)
-	duration := time.Since(start)
-
-	// 统一SQL日志记录（QueryRow总是成功，没有error）
-	if c.logger != nil {
-		if sqlLogger, ok := c.logger.(*logger.SQLLogger); ok {
-			sqlLogger.LogSQL(query, args, duration, nil)
-		} else if c.config.LogQueries {
-			c.logger.Debug("sql", query, "args", args, "duration", duration)
-		}
-	}
-
-	return row
-}
-
-// Exec 执行SQL语句
-func (c *MySQLConnection) Exec(query string, args ...interface{}) (sql.Result, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.db == nil {
-		return nil, fmt.Errorf("connection not established")
-	}
-
-	start := time.Now()
-	result, err := c.db.Exec(query, args...)
-	duration := time.Since(start)
-
-	// 统一SQL日志记录
-	if c.logger != nil {
-		if sqlLogger, ok := c.logger.(*logger.SQLLogger); ok {
-			if err != nil {
-				sqlLogger.LogSQL(query, args, duration, err)
-			} else {
-				// 获取影响的行数
-				rowsAffected, _ := result.RowsAffected()
-				sqlLogger.LogSQLWithRows(query, args, duration, rowsAffected, nil)
-			}
-		} else {
-			// 兼容旧的日志接口
-			if err != nil {
-				c.logger.Error("sql", query, "args", args, "duration", duration, "error", err)
-			} else if c.config.LogQueries {
-				c.logger.Debug("sql", query, "args", args, "duration", duration)
-			}
-		}
-	}
-
-	return result, err
-}
-
-// Begin 开始事务
-func (c *MySQLConnection) Begin() (TransactionInterface, error) {
-	return c.BeginTx(nil)
-}
-
-// BeginTx 开始事务（带选项）
-func (c *MySQLConnection) BeginTx(opts *sql.TxOptions) (TransactionInterface, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	if c.db == nil {
-		return nil, fmt.Errorf("connection not established")
-	}
-
-	tx, err := c.db.Begin()
-	if err != nil {
-		return nil, err
-	}
-
-	return &MySQLTransaction{
-		tx:     tx,
-		logger: c.logger,
-		config: c.config,
-	}, nil
-}
-
-// GetConfig 获取配置
-func (c *MySQLConnection) GetConfig() *Config {
-	return c.config
 }
 
 // GetDriver 获取驱动名称
@@ -230,106 +94,261 @@ func (c *MySQLConnection) GetDriver() string {
 	return "mysql"
 }
 
-// GetStats 获取连接统计
-func (c *MySQLConnection) GetStats() sql.DBStats {
+// Query 执行查询
+func (c *MySQLConnection) Query(query string, args ...interface{}) (*sql.Rows, error) {
+	return c.QueryContext(context.Background(), query, args...)
+}
+
+// QueryContext 执行带上下文的查询
+func (c *MySQLConnection) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	if c.db == nil {
-		return sql.DBStats{}
+	db := c.GetDB()
+	if db == nil {
+		return nil, NewError(ErrCodeConnectionClosed, "connection not established")
 	}
 
-	return c.db.Stats()
-}
-
-// MySQLTransaction MySQL事务
-type MySQLTransaction struct {
-	tx     *sql.Tx
-	logger LoggerInterface
-	config *Config
-}
-
-// Query 在事务中执行查询
-func (t *MySQLTransaction) Query(query string, args ...interface{}) (*sql.Rows, error) {
 	start := time.Now()
-	rows, err := t.tx.Query(query, args...)
+	rows, err := db.QueryContext(ctx, query, args...)
 	duration := time.Since(start)
 
-	if t.logger != nil {
-		if err != nil {
-			t.logger.Error("sql", query, "args", args, "duration", duration, "error", err)
-		} else if t.config.LogQueries {
-			t.logger.Debug("sql", query, "args", args, "duration", duration)
-		}
+	c.logSQL(query, args, duration, err)
+
+	if err != nil {
+		return nil, NewQueryError(err, query, args)
 	}
 
-	return rows, err
+	return rows, nil
 }
 
-// QueryRow 在事务中执行单行查询
-func (t *MySQLTransaction) QueryRow(query string, args ...interface{}) *sql.Row {
+// QueryRow 执行单行查询
+func (c *MySQLConnection) QueryRow(query string, args ...interface{}) *sql.Row {
+	return c.QueryRowContext(context.Background(), query, args...)
+}
+
+// QueryRowContext 执行带上下文的单行查询
+func (c *MySQLConnection) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	db := c.GetDB()
+	if db == nil {
+		return nil
+	}
+
 	start := time.Now()
-	row := t.tx.QueryRow(query, args...)
+	row := db.QueryRowContext(ctx, query, args...)
 	duration := time.Since(start)
 
-	if t.logger != nil && t.config.LogQueries {
-		t.logger.Debug("sql", query, "args", args, "duration", duration)
-	}
+	c.logSQL(query, args, duration, nil)
 
 	return row
 }
 
-// Exec 在事务中执行SQL语句
-func (t *MySQLTransaction) Exec(query string, args ...interface{}) (sql.Result, error) {
+// Exec 执行SQL语句
+func (c *MySQLConnection) Exec(query string, args ...interface{}) (sql.Result, error) {
+	return c.ExecContext(context.Background(), query, args...)
+}
+
+// ExecContext 执行带上下文的SQL语句
+func (c *MySQLConnection) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	db := c.GetDB()
+	if db == nil {
+		return nil, NewError(ErrCodeConnectionClosed, "connection not established")
+	}
+
 	start := time.Now()
-	result, err := t.tx.Exec(query, args...)
+	result, err := db.ExecContext(ctx, query, args...)
 	duration := time.Since(start)
 
-	if t.logger != nil {
-		if err != nil {
-			t.logger.Error("sql", query, "args", args, "duration", duration, "error", err)
-		} else if t.config.LogQueries {
-			t.logger.Debug("sql", query, "args", args, "duration", duration)
-		}
+	c.logSQL(query, args, duration, err)
+
+	if err != nil {
+		return nil, NewQueryError(err, query, args)
 	}
 
-	return result, err
+	return result, nil
 }
 
-// Commit 提交事务
-func (t *MySQLTransaction) Commit() error {
-	err := t.tx.Commit()
-	if t.logger != nil {
+// Begin 开始事务
+func (c *MySQLConnection) Begin() (TxInterface, error) {
+	return c.BeginTx(context.Background(), nil)
+}
+
+// BeginTx 开始事务（带选项）
+func (c *MySQLConnection) BeginTx(ctx context.Context, opts *sql.TxOptions) (TxInterface, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	db := c.GetDB()
+	if db == nil {
+		return nil, NewError(ErrCodeConnectionClosed, "connection not established")
+	}
+
+	tx, err := db.BeginTx(ctx, opts)
+	if err != nil {
+		return nil, NewTransactionError(err, "begin")
+	}
+
+	if c.GetLogger() != nil {
+		c.GetLogger().Debug("MySQL事务已开始")
+	}
+
+	return NewMySQLTransaction(tx, c.GetLogger(), c.GetConfig()), nil
+}
+
+// RunTransaction 执行事务
+func (c *MySQLConnection) RunTransaction(fn func(tx TxInterface) error) error {
+	return c.BaseConnection.RunTransaction(fn, c.Begin)
+}
+
+// GetTableFields 获取表字段信息
+func (c *MySQLConnection) GetTableFields(table string) ([]ConnFieldInfo, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	db := c.GetDB()
+	if db == nil {
+		return nil, NewError(ErrCodeConnectionClosed, "connection not established")
+	}
+
+	query := `
+		SELECT 
+			COLUMN_NAME,
+			DATA_TYPE,
+			IS_NULLABLE,
+			COLUMN_DEFAULT,
+			COLUMN_KEY,
+			EXTRA,
+			COLUMN_COMMENT,
+			CHARACTER_MAXIMUM_LENGTH,
+			NUMERIC_PRECISION,
+			NUMERIC_SCALE
+		FROM INFORMATION_SCHEMA.COLUMNS 
+		WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
+		ORDER BY ORDINAL_POSITION
+	`
+
+	rows, err := db.Query(query, table)
+	if err != nil {
+		return nil, NewQueryError(err, query, []interface{}{table})
+	}
+	defer rows.Close()
+
+	var fields []ConnFieldInfo
+	for rows.Next() {
+		var (
+			name, dataType, nullable, columnKey, extra string
+			defaultVal, comment                        sql.NullString
+			length, precision, scale                   sql.NullInt64
+		)
+
+		err := rows.Scan(&name, &dataType, &nullable, &defaultVal, &columnKey, &extra, &comment, &length, &precision, &scale)
 		if err != nil {
-			t.logger.Error("error", err)
-		} else {
-			t.logger.Debug("Transaction committed")
+			return nil, WrapError(err, ErrCodeQueryFailed, "failed to scan column info")
+		}
+
+		field := ConnFieldInfo{
+			Name:       name,
+			Type:       dataType,
+			Nullable:   nullable == "YES",
+			PrimaryKey: columnKey == "PRI",
+			AutoInc:    extra == "auto_increment",
+		}
+
+		if defaultVal.Valid {
+			field.Default = defaultVal.String
+		}
+		if comment.Valid {
+			field.Comment = comment.String
+		}
+		if length.Valid {
+			field.Length = int(length.Int64)
+		}
+		if precision.Valid {
+			field.Precision = int(precision.Int64)
+		}
+		if scale.Valid {
+			field.Scale = int(scale.Int64)
+		}
+
+		fields = append(fields, field)
+	}
+
+	return fields, nil
+}
+
+// GetTables 获取所有表名
+func (c *MySQLConnection) GetTables() ([]string, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	db := c.GetDB()
+	if db == nil {
+		return nil, NewError(ErrCodeConnectionClosed, "connection not established")
+	}
+
+	rows, err := db.Query("SHOW TABLES")
+	if err != nil {
+		return nil, NewQueryError(err, "SHOW TABLES", nil)
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			return nil, WrapError(err, ErrCodeQueryFailed, "failed to scan table name")
+		}
+		tables = append(tables, table)
+	}
+
+	return tables, nil
+}
+
+// logSQL 记录SQL日志
+func (c *MySQLConnection) logSQL(query string, args []interface{}, duration time.Duration, err error) {
+	log := c.GetLogger()
+	if log == nil {
+		return
+	}
+
+	if sqlLogger, ok := log.(*logger.SQLLogger); ok {
+		sqlLogger.LogSQL(query, args, duration, err)
+	} else {
+		config := c.GetConfig()
+		if err != nil {
+			log.Error("SQL执行失败",
+				"sql", query,
+				"args", args,
+				"duration", duration,
+				"error", err)
+		} else if config != nil && config.LogQueries {
+			log.Debug("SQL执行",
+				"sql", query,
+				"args", args,
+				"duration", duration)
 		}
 	}
-	return err
 }
 
-// Rollback 回滚事务
-func (t *MySQLTransaction) Rollback() error {
-	err := t.tx.Rollback()
-	if t.logger != nil {
-		if err != nil {
-			t.logger.Error("Transaction rollback failed", "error", err)
-		} else {
-			t.logger.Debug("Transaction rolled back")
-		}
+// MySQLTransaction MySQL事务
+type MySQLTransaction struct {
+	*BaseTransaction
+}
+
+// NewMySQLTransaction 创建MySQL事务
+func NewMySQLTransaction(tx *sql.Tx, log LoggerInterface, config *Config) *MySQLTransaction {
+	return &MySQLTransaction{
+		BaseTransaction: NewBaseTransaction(tx, log, config),
 	}
-	return err
 }
 
-// 占位符连接器
-
-// NewSQLServerConnection 创建SQL Server连接（占位符）
-func NewSQLServerConnection(config *Config, logger LoggerInterface) (ConnectionInterface, error) {
-	return nil, fmt.Errorf("SQL Server connector not implemented yet")
-}
-
-// GetDB 获取底层数据库连接
-func (c *MySQLConnection) GetDB() *sql.DB {
-	return c.db
+// NewMySQLBuilder 创建MySQL构建器（使用完整实现）
+func NewMySQLBuilder() Builder {
+	return NewMySQLBuilderImpl()
 }

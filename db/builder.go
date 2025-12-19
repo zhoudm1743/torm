@@ -45,7 +45,7 @@ var (
 
 // QueryBuilder 查询构建器 - TORM的核心
 type QueryBuilder struct {
-	connection     ConnectionInterface
+	connection     Connection
 	connectionName string // 连接名，延迟获取连接
 	tableName      string
 	model          interface{} // 关联的模型实例
@@ -153,7 +153,7 @@ func (qb *QueryBuilder) Release() {
 }
 
 // getConnection 延迟获取数据库连接 - 优化连接管理
-func (qb *QueryBuilder) getConnection() (ConnectionInterface, error) {
+func (qb *QueryBuilder) getConnection() (Connection, error) {
 	// 如果已经有连接，直接返回
 	if qb.connection != nil {
 		return qb.connection, nil
@@ -2997,7 +2997,7 @@ func (qb *QueryBuilder) sanitizeColumn(column string) string {
 
 // isValidSQLExpression 检查是否是有效的SQL表达式
 func (qb *QueryBuilder) isValidSQLExpression(expr string) bool {
-	expr = strings.TrimSpace(strings.ToUpper(expr))
+	exprUpper := strings.TrimSpace(strings.ToUpper(expr))
 
 	// 常见的安全SQL表达式模式
 	safePatterns := []string{
@@ -3012,9 +3012,15 @@ func (qb *QueryBuilder) isValidSQLExpression(expr string) bool {
 	}
 
 	for _, pattern := range safePatterns {
-		if strings.HasPrefix(expr, pattern) {
+		if strings.HasPrefix(exprUpper, pattern) {
 			return true
 		}
+	}
+
+	// 检查是否是 table.* 格式 (如 roles.*, users.*)
+	tableStarPattern := regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*\.\*$`)
+	if tableStarPattern.MatchString(strings.TrimSpace(expr)) {
+		return true
 	}
 
 	// 检查是否是简单的列名（字母、数字、下划线、点号）
@@ -3024,21 +3030,61 @@ func (qb *QueryBuilder) isValidSQLExpression(expr string) bool {
 
 // containsDangerousChars 检查是否包含危险字符
 func (qb *QueryBuilder) containsDangerousChars(input string) bool {
-	// 危险字符和SQL关键字
-	dangerousPatterns := []string{
+	// 危险特殊字符 - 这些在任何位置都不允许
+	dangerousChars := []string{
 		";", "--", "/*", "*/", "'", "\"", "\\",
+	}
+
+	for _, char := range dangerousChars {
+		if strings.Contains(input, char) {
+			return true
+		}
+	}
+
+	// SQL关键字 - 只有当它们作为独立单词出现时才危险
+	// 例如 "soft_delete_test" 包含 "delete" 但不是独立的关键字
+	// 而 "DELETE FROM" 中的 "DELETE" 是独立的关键字
+	dangerousKeywords := []string{
 		"DROP", "DELETE", "UPDATE", "INSERT", "ALTER", "CREATE",
 		"TRUNCATE", "EXEC", "EXECUTE", "SCRIPT", "UNION", "SELECT",
 	}
 
 	upperInput := strings.ToUpper(input)
-	for _, pattern := range dangerousPatterns {
-		if strings.Contains(upperInput, pattern) {
-			return true
+	for _, keyword := range dangerousKeywords {
+		// 检查是否作为独立单词出现（前后是空格、开头或结尾）
+		// 使用简单的边界检查
+		idx := strings.Index(upperInput, keyword)
+		for idx != -1 {
+			// 检查前边界
+			beforeOK := idx == 0 || !isAlphaNumeric(upperInput[idx-1])
+			// 检查后边界
+			afterIdx := idx + len(keyword)
+			afterOK := afterIdx >= len(upperInput) || !isAlphaNumeric(upperInput[afterIdx])
+
+			if beforeOK && afterOK {
+				return true
+			}
+
+			// 继续查找下一个匹配
+			if afterIdx < len(upperInput) {
+				nextIdx := strings.Index(upperInput[afterIdx:], keyword)
+				if nextIdx != -1 {
+					idx = afterIdx + nextIdx
+				} else {
+					idx = -1
+				}
+			} else {
+				idx = -1
+			}
 		}
 	}
 
 	return false
+}
+
+// isAlphaNumeric 检查字符是否是字母或数字或下划线
+func isAlphaNumeric(c byte) bool {
+	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_'
 }
 
 // sanitizeOperator 清理操作符

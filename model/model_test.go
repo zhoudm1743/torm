@@ -86,15 +86,15 @@ func TestNewModel(t *testing.T) {
 func TestModelConfiguration(t *testing.T) {
 	model := NewModel()
 
-	// 测试链式配置
-	model.SetTable("users").
-		SetPrimaryKey("user_id").
-		SetConnection("test_conn").
-		EnableTimestamps().
-		SetCreatedAtField("create_time").
-		SetUpdatedAtField("update_time").
-		EnableSoftDeletes().
-		SetDeletedAtField("delete_time")
+	// 测试链式配置（使用BaseModel方法）
+	model.SetTable("users")
+	model.SetPrimaryKey("user_id")
+	model.SetConnection("test_conn")
+	model.EnableTimestamps()
+	model.SetCreatedAtField("create_time")
+	model.SetUpdatedAtField("update_time")
+	model.EnableSoftDeletes()
+	model.SetDeletedAtField("delete_time")
 
 	if model.GetTableName() != "users" {
 		t.Errorf("Expected table name 'users', got '%s'", model.GetTableName())
@@ -834,5 +834,359 @@ func TestCustomTableName(t *testing.T) {
 	emptyModel := TestCustomTableNameModel{}
 	if tableName := emptyModel.TableName(); tableName != "my_custom_table" {
 		t.Errorf("Expected table name 'my_custom_table' from empty struct, got '%s'", tableName)
+	}
+}
+
+// TestDirtyTracking 测试脏数据追踪
+func TestDirtyTracking(t *testing.T) {
+	model := NewModel("users")
+
+	// 新模型应该没有脏数据
+	if model.IsDirty() {
+		t.Error("New model should not be dirty")
+	}
+
+	// 设置属性后应该有脏数据
+	model.SetAttribute("name", "John")
+	if !model.IsDirty() {
+		t.Error("Model should be dirty after setting attribute")
+	}
+
+	// 获取脏数据
+	dirty := model.GetDirty()
+	if len(dirty) != 1 {
+		t.Errorf("Expected 1 dirty field, got %d", len(dirty))
+	}
+	if dirty["name"] != "John" {
+		t.Errorf("Expected dirty field 'name' to be 'John', got '%v'", dirty["name"])
+	}
+
+	// 同步原始数据后应该没有脏数据
+	model.SyncOriginal()
+	if model.IsDirty() {
+		t.Error("Model should not be dirty after syncing original")
+	}
+
+	// 修改属性后应该有脏数据
+	model.SetAttribute("name", "Jane")
+	if !model.IsDirty() {
+		t.Error("Model should be dirty after modifying attribute")
+	}
+
+	// 检查特定字段是否脏
+	if !model.IsDirtyField("name") {
+		t.Error("Field 'name' should be dirty")
+	}
+
+	// 获取原始数据
+	original := model.GetOriginal("name")
+	if original != "John" {
+		t.Errorf("Expected original 'name' to be 'John', got '%v'", original)
+	}
+}
+
+// TestFillAndSync 测试填充并同步
+func TestFillAndSync(t *testing.T) {
+	model := NewModel("users")
+
+	// 模拟从数据库加载数据
+	data := map[string]interface{}{
+		"id":    1,
+		"name":  "John",
+		"email": "john@example.com",
+	}
+	model.FillAndSync(data)
+	model.MarkAsExists()
+
+	// 应该没有脏数据
+	if model.IsDirty() {
+		t.Error("Model should not be dirty after FillAndSync")
+	}
+
+	// 修改属性
+	model.SetAttribute("name", "Jane")
+
+	// 应该有脏数据
+	if !model.IsDirty() {
+		t.Error("Model should be dirty after modifying attribute")
+	}
+
+	// 只有name字段应该是脏的
+	dirty := model.GetDirty()
+	if len(dirty) != 1 {
+		t.Errorf("Expected 1 dirty field, got %d", len(dirty))
+	}
+	if _, exists := dirty["name"]; !exists {
+		t.Error("Expected 'name' to be in dirty fields")
+	}
+}
+
+// TestModelEventHooks 测试模型事件钩子
+func TestModelEventHooks(t *testing.T) {
+	model := NewModel("users")
+
+	// 测试钩子方法存在且不返回错误
+	if err := model.BeforeSave(); err != nil {
+		t.Errorf("BeforeSave should not return error, got: %v", err)
+	}
+	if err := model.AfterSave(); err != nil {
+		t.Errorf("AfterSave should not return error, got: %v", err)
+	}
+	if err := model.BeforeCreate(); err != nil {
+		t.Errorf("BeforeCreate should not return error, got: %v", err)
+	}
+	if err := model.AfterCreate(); err != nil {
+		t.Errorf("AfterCreate should not return error, got: %v", err)
+	}
+	if err := model.BeforeUpdate(); err != nil {
+		t.Errorf("BeforeUpdate should not return error, got: %v", err)
+	}
+	if err := model.AfterUpdate(); err != nil {
+		t.Errorf("AfterUpdate should not return error, got: %v", err)
+	}
+	if err := model.BeforeDelete(); err != nil {
+		t.Errorf("BeforeDelete should not return error, got: %v", err)
+	}
+	if err := model.AfterDelete(); err != nil {
+		t.Errorf("AfterDelete should not return error, got: %v", err)
+	}
+}
+
+// TestModelInterface 测试模型接口实现
+func TestModelInterface(t *testing.T) {
+	model := NewModel("users")
+
+	// 测试 Model 接口方法
+	var m Model = model
+
+	// TableName
+	if m.TableName() != "users" {
+		t.Errorf("Expected TableName 'users', got '%s'", m.TableName())
+	}
+
+	// PrimaryKey
+	if m.PrimaryKey() != "id" {
+		t.Errorf("Expected PrimaryKey 'id', got '%s'", m.PrimaryKey())
+	}
+
+	// Connection
+	if m.Connection() != "default" {
+		t.Errorf("Expected Connection 'default', got '%s'", m.Connection())
+	}
+
+	// IsNew
+	if !m.IsNew() {
+		t.Error("New model should return true for IsNew()")
+	}
+
+	// IsDirty
+	if m.IsDirty() {
+		t.Error("New model should not be dirty")
+	}
+
+	// SetAttribute and GetAttribute
+	m.SetAttribute("name", "John")
+	if m.GetAttribute("name") != "John" {
+		t.Errorf("Expected attribute 'name' to be 'John', got '%v'", m.GetAttribute("name"))
+	}
+
+	// GetAttributes
+	attrs := m.GetAttributes()
+	if len(attrs) != 1 {
+		t.Errorf("Expected 1 attribute, got %d", len(attrs))
+	}
+
+	// GetDirty
+	dirty := m.GetDirty()
+	if len(dirty) != 1 {
+		t.Errorf("Expected 1 dirty field, got %d", len(dirty))
+	}
+}
+
+// TestSoftDeleteModel 测试软删除模型接口
+func TestSoftDeleteModel(t *testing.T) {
+	model := NewModel("users")
+	model.EnableSoftDeletes()
+
+	var sdm SoftDeleteModel = model
+
+	// GetDeletedAtField
+	if sdm.GetDeletedAtField() != "deleted_at" {
+		t.Errorf("Expected deleted_at field 'deleted_at', got '%s'", sdm.GetDeletedAtField())
+	}
+
+	// IsSoftDeleted - 新模型不应该被软删除
+	if sdm.IsSoftDeleted() {
+		t.Error("New model should not be soft deleted")
+	}
+}
+
+// TestTimestampModel 测试时间戳模型接口
+func TestTimestampModel(t *testing.T) {
+	model := NewModel("users")
+
+	var tsm TimestampModel = model
+
+	// GetCreatedAtField
+	if tsm.GetCreatedAtField() != "created_at" {
+		t.Errorf("Expected created_at field 'created_at', got '%s'", tsm.GetCreatedAtField())
+	}
+
+	// GetUpdatedAtField
+	if tsm.GetUpdatedAtField() != "updated_at" {
+		t.Errorf("Expected updated_at field 'updated_at', got '%s'", tsm.GetUpdatedAtField())
+	}
+
+	// EnableTimestamps and DisableTimestamps
+	tsm.DisableTimestamps()
+	tsm.EnableTimestamps()
+}
+
+// TestTimestamp 测试时间戳类型
+func TestTimestamp(t *testing.T) {
+	// 测试创建时间戳
+	ts := Now()
+	if !ts.Valid {
+		t.Error("Now() should create a valid timestamp")
+	}
+	if ts.IsZero() {
+		t.Error("Now() should not be zero")
+	}
+
+	// 测试Unix时间戳
+	unix := ts.Unix()
+	if unix <= 0 {
+		t.Error("Unix timestamp should be positive")
+	}
+
+	// 测试字符串格式化
+	str := ts.String()
+	if str == "" {
+		t.Error("String() should not be empty")
+	}
+
+	// 测试零值
+	var zeroTs Timestamp
+	if !zeroTs.IsZero() {
+		t.Error("Zero timestamp should be zero")
+	}
+	if zeroTs.String() != "" {
+		t.Error("Zero timestamp String() should be empty")
+	}
+}
+
+// TestTimestampScan 测试时间戳扫描
+func TestTimestampScan(t *testing.T) {
+	var ts Timestamp
+
+	// 测试扫描time.Time
+	now := time.Now()
+	err := ts.Scan(now)
+	if err != nil {
+		t.Errorf("Scan time.Time failed: %v", err)
+	}
+	if !ts.Valid {
+		t.Error("Timestamp should be valid after scanning time.Time")
+	}
+
+	// 测试扫描int64
+	ts = Timestamp{}
+	err = ts.Scan(int64(1609459200))
+	if err != nil {
+		t.Errorf("Scan int64 failed: %v", err)
+	}
+	if !ts.Valid {
+		t.Error("Timestamp should be valid after scanning int64")
+	}
+
+	// 测试扫描字符串
+	ts = Timestamp{}
+	err = ts.Scan("2021-01-01 00:00:00")
+	if err != nil {
+		t.Errorf("Scan string failed: %v", err)
+	}
+	if !ts.Valid {
+		t.Error("Timestamp should be valid after scanning string")
+	}
+
+	// 测试扫描nil
+	ts = Timestamp{}
+	err = ts.Scan(nil)
+	if err != nil {
+		t.Errorf("Scan nil failed: %v", err)
+	}
+	if ts.Valid {
+		t.Error("Timestamp should not be valid after scanning nil")
+	}
+}
+
+// TestTimestampManager 测试时间戳管理器
+func TestTimestampManager(t *testing.T) {
+	tm := NewTimestampManager()
+
+	// 测试处理插入数据
+	data := map[string]interface{}{
+		"name": "John",
+	}
+	result := tm.ProcessInsertData(data)
+
+	if _, exists := result["created_at"]; !exists {
+		t.Error("ProcessInsertData should add created_at")
+	}
+	if _, exists := result["updated_at"]; !exists {
+		t.Error("ProcessInsertData should add updated_at")
+	}
+
+	// 测试处理更新数据
+	data = map[string]interface{}{
+		"name": "Jane",
+	}
+	result = tm.ProcessUpdateData(data)
+
+	if _, exists := result["created_at"]; exists {
+		t.Error("ProcessUpdateData should not add created_at")
+	}
+	if _, exists := result["updated_at"]; !exists {
+		t.Error("ProcessUpdateData should add updated_at")
+	}
+}
+
+// TestTimestampManagerDisabled 测试禁用时间戳
+func TestTimestampManagerDisabled(t *testing.T) {
+	config := TimestampConfig{
+		Enabled: false,
+	}
+	tm := NewTimestampManager(config)
+
+	data := map[string]interface{}{
+		"name": "John",
+	}
+	result := tm.ProcessInsertData(data)
+
+	if _, exists := result["created_at"]; exists {
+		t.Error("Disabled timestamp manager should not add created_at")
+	}
+	if _, exists := result["updated_at"]; exists {
+		t.Error("Disabled timestamp manager should not add updated_at")
+	}
+}
+
+// TestInferTimestampFields 测试推断时间戳字段
+func TestInferTimestampFields(t *testing.T) {
+	type TestModel struct {
+		ID        int       `json:"id"`
+		Name      string    `json:"name"`
+		CreatedAt time.Time `json:"created_at" torm:"auto_create_time"`
+		UpdatedAt time.Time `json:"updated_at" torm:"auto_update_time"`
+	}
+
+	model := &TestModel{}
+	createdAt, updatedAt := InferTimestampFields(model)
+
+	if createdAt != "created_at" {
+		t.Errorf("Expected created_at field 'created_at', got '%s'", createdAt)
+	}
+	if updatedAt != "updated_at" {
+		t.Errorf("Expected updated_at field 'updated_at', got '%s'", updatedAt)
 	}
 }

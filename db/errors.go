@@ -1,6 +1,7 @@
 package db
 
 import (
+	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -18,6 +19,7 @@ const (
 	ErrCodeConfigurationError
 	ErrCodeValidationFailed
 	ErrCodeTimeout
+	ErrCodeCanceled
 	ErrCodeNotImplemented
 
 	// 连接错误 2000-2999
@@ -86,16 +88,23 @@ func (code ErrorCode) String() string {
 	}
 }
 
+// Category 返回错误类别
+func (code ErrorCode) Category() string {
+	return code.String()
+}
+
 // TormError TORM统一错误类型
 type TormError struct {
-	Code      ErrorCode              `json:"code"`
-	Message   string                 `json:"message"`
-	Details   string                 `json:"details,omitempty"`
-	Cause     error                  `json:"cause,omitempty"`
-	Context   map[string]interface{} `json:"context,omitempty"`
-	Timestamp time.Time              `json:"timestamp"`
-	Stack     string                 `json:"stack,omitempty"`
-	mutex     sync.RWMutex           `json:"-"` // 并发安全保护
+	Code      ErrorCode              `json:"code"`              // 错误代码
+	Message   string                 `json:"message"`           // 错误消息
+	SQL       string                 `json:"sql,omitempty"`     // SQL语句
+	Args      []interface{}          `json:"args,omitempty"`    // SQL参数
+	Details   string                 `json:"details,omitempty"` // 详细信息
+	Cause     error                  `json:"-"`                 // 原因错误
+	Context   map[string]interface{} `json:"context,omitempty"` // 上下文信息
+	Timestamp time.Time              `json:"timestamp"`         // 时间戳
+	Stack     string                 `json:"stack,omitempty"`   // 调用栈
+	mutex     sync.RWMutex           `json:"-"`                 // 并发安全保护
 }
 
 // Error 实现error接口
@@ -105,6 +114,16 @@ func (e *TormError) Error() string {
 	// 基础错误信息
 	parts = append(parts, fmt.Sprintf("[%d] %s", e.Code, e.Message))
 
+	// 添加SQL信息
+	if e.SQL != "" {
+		parts = append(parts, fmt.Sprintf("SQL: %s", e.SQL))
+	}
+
+	// 添加参数信息
+	if len(e.Args) > 0 {
+		parts = append(parts, fmt.Sprintf("Args: %v", e.Args))
+	}
+
 	// 添加详细信息
 	if e.Details != "" {
 		parts = append(parts, e.Details)
@@ -112,45 +131,7 @@ func (e *TormError) Error() string {
 
 	// 添加原因错误
 	if e.Cause != nil {
-		parts = append(parts, fmt.Sprintf("原因: %v", e.Cause))
-	}
-
-	// 添加重要的上下文信息
-	e.mutex.RLock()
-	contextCopy := make(map[string]interface{})
-	if e.Context != nil {
-		for k, v := range e.Context {
-			contextCopy[k] = v
-		}
-	}
-	e.mutex.RUnlock()
-
-	if len(contextCopy) > 0 {
-		var contextParts []string
-
-		// 优先显示SQL和参数
-		if sql, ok := contextCopy["sql"].(string); ok && sql != "" {
-			contextParts = append(contextParts, fmt.Sprintf("SQL: %s", sql))
-		}
-		if args, ok := contextCopy["args"]; ok && args != nil {
-			contextParts = append(contextParts, fmt.Sprintf("参数: %v", args))
-		}
-		if table, ok := contextCopy["table"].(string); ok && table != "" {
-			contextParts = append(contextParts, fmt.Sprintf("表: %s", table))
-		}
-
-		// 添加其他重要上下文
-		for key, value := range contextCopy {
-			if key != "sql" && key != "args" && key != "table" {
-				if str := fmt.Sprintf("%v", value); len(str) < 100 { // 限制长度
-					contextParts = append(contextParts, fmt.Sprintf("%s: %v", key, value))
-				}
-			}
-		}
-
-		if len(contextParts) > 0 {
-			parts = append(parts, fmt.Sprintf("上下文: {%s}", strings.Join(contextParts, ", ")))
-		}
+		parts = append(parts, fmt.Sprintf("Cause: %v", e.Cause))
 	}
 
 	return strings.Join(parts, " | ")
@@ -169,6 +150,15 @@ func (e *TormError) Is(target error) bool {
 	return false
 }
 
+// As 支持errors.As
+func (e *TormError) As(target interface{}) bool {
+	if te, ok := target.(**TormError); ok {
+		*te = e
+		return true
+	}
+	return false
+}
+
 // WithContext 添加上下文信息
 func (e *TormError) WithContext(key string, value interface{}) *TormError {
 	e.mutex.Lock()
@@ -178,6 +168,13 @@ func (e *TormError) WithContext(key string, value interface{}) *TormError {
 		e.Context = make(map[string]interface{})
 	}
 	e.Context[key] = value
+	return e
+}
+
+// WithSQL 添加SQL语句和参数
+func (e *TormError) WithSQL(sql string, args ...interface{}) *TormError {
+	e.SQL = sql
+	e.Args = args
 	return e
 }
 
@@ -191,6 +188,78 @@ func (e *TormError) WithDetails(details string) *TormError {
 func (e *TormError) WithCause(cause error) *TormError {
 	e.Cause = cause
 	return e
+}
+
+// GetContext 获取上下文值
+func (e *TormError) GetContext(key string) (interface{}, bool) {
+	e.mutex.RLock()
+	defer e.mutex.RUnlock()
+
+	if e.Context == nil {
+		return nil, false
+	}
+	val, ok := e.Context[key]
+	return val, ok
+}
+
+// GetSQL 获取SQL语句
+func (e *TormError) GetSQL() string {
+	return e.SQL
+}
+
+// GetArgs 获取SQL参数
+func (e *TormError) GetArgs() []interface{} {
+	return e.Args
+}
+
+// GetCode 获取错误代码
+func (e *TormError) GetCode() ErrorCode {
+	return e.Code
+}
+
+// GetMessage 获取错误消息
+func (e *TormError) GetMessage() string {
+	return e.Message
+}
+
+// GetCause 获取原因错误
+func (e *TormError) GetCause() error {
+	return e.Cause
+}
+
+// GetStack 获取调用栈
+func (e *TormError) GetStack() string {
+	return e.Stack
+}
+
+// Clone 克隆错误
+func (e *TormError) Clone() *TormError {
+	e.mutex.RLock()
+	defer e.mutex.RUnlock()
+
+	clone := &TormError{
+		Code:      e.Code,
+		Message:   e.Message,
+		SQL:       e.SQL,
+		Details:   e.Details,
+		Cause:     e.Cause,
+		Timestamp: e.Timestamp,
+		Stack:     e.Stack,
+	}
+
+	if e.Args != nil {
+		clone.Args = make([]interface{}, len(e.Args))
+		copy(clone.Args, e.Args)
+	}
+
+	if e.Context != nil {
+		clone.Context = make(map[string]interface{}, len(e.Context))
+		for k, v := range e.Context {
+			clone.Context[k] = v
+		}
+	}
+
+	return clone
 }
 
 // NewError 创建新的TORM错误
@@ -219,6 +288,13 @@ func WrapError(err error, code ErrorCode, message string) *TormError {
 		return nil
 	}
 
+	// 如果已经是TormError，保留原始信息
+	if te, ok := err.(*TormError); ok {
+		clone := te.Clone()
+		clone.Message = message + ": " + clone.Message
+		return clone
+	}
+
 	return &TormError{
 		Code:      code,
 		Message:   message,
@@ -243,6 +319,49 @@ func WrapErrorf(err error, code ErrorCode, format string, args ...interface{}) *
 	}
 }
 
+// NewQueryError 创建查询错误（包含SQL和参数）
+func NewQueryError(err error, sql string, args []interface{}) *TormError {
+	return &TormError{
+		Code:      ErrCodeQueryFailed,
+		Message:   "query execution failed",
+		SQL:       sql,
+		Args:      args,
+		Cause:     err,
+		Timestamp: time.Now(),
+		Stack:     getStack(),
+	}
+}
+
+// NewConnectionError 创建连接错误
+func NewConnectionError(err error, driver, host, database string) *TormError {
+	return &TormError{
+		Code:      ErrCodeConnectionFailed,
+		Message:   "database connection failed",
+		Cause:     err,
+		Timestamp: time.Now(),
+		Stack:     getStack(),
+		Context: map[string]interface{}{
+			"driver":   driver,
+			"host":     host,
+			"database": database,
+		},
+	}
+}
+
+// NewTransactionError 创建事务错误
+func NewTransactionError(err error, operation string) *TormError {
+	return &TormError{
+		Code:      ErrCodeTransactionFailed,
+		Message:   fmt.Sprintf("transaction %s failed", operation),
+		Cause:     err,
+		Timestamp: time.Now(),
+		Stack:     getStack(),
+		Context: map[string]interface{}{
+			"operation": operation,
+		},
+	}
+}
+
 // getStack 获取调用栈
 func getStack() string {
 	const depth = 32
@@ -253,7 +372,9 @@ func getStack() string {
 	var stack strings.Builder
 	for {
 		frame, more := frames.Next()
-		if !strings.Contains(frame.File, "torm") {
+		// 过滤掉标准库和测试框架的调用
+		if strings.Contains(frame.File, "runtime/") ||
+			strings.Contains(frame.File, "testing/") {
 			if !more {
 				break
 			}
@@ -270,37 +391,42 @@ func getStack() string {
 // 预定义的常用错误
 var (
 	// 连接错误
-	ErrConnectionFailed   = NewError(ErrCodeConnectionFailed, "数据库连接失败")
-	ErrConnectionClosed   = NewError(ErrCodeConnectionClosed, "数据库连接已关闭")
-	ErrConnectionTimeout  = NewError(ErrCodeConnectionTimeout, "数据库连接超时")
-	ErrDriverNotSupported = NewError(ErrCodeDriverNotSupported, "不支持的数据库驱动")
+	ErrConnectionFailed   = NewError(ErrCodeConnectionFailed, "database connection failed")
+	ErrConnectionClosed   = NewError(ErrCodeConnectionClosed, "database connection closed")
+	ErrConnectionTimeout  = NewError(ErrCodeConnectionTimeout, "database connection timeout")
+	ErrDriverNotSupported = NewError(ErrCodeDriverNotSupported, "unsupported database driver")
 
 	// 查询错误
-	ErrQueryFailed          = NewError(ErrCodeQueryFailed, "查询执行失败")
-	ErrQuerySyntaxError     = NewError(ErrCodeQuerySyntaxError, "SQL语法错误")
-	ErrRecordNotFound       = NewError(ErrCodeRecordNotFound, "记录不存在")
-	ErrMultipleRecordsFound = NewError(ErrCodeMultipleRecordsFound, "找到多条记录，期望只有一条")
-	ErrDuplicateKey         = NewError(ErrCodeDuplicateKey, "违反唯一性约束")
+	ErrQueryFailed          = NewError(ErrCodeQueryFailed, "query execution failed")
+	ErrQuerySyntaxError     = NewError(ErrCodeQuerySyntaxError, "SQL syntax error")
+	ErrRecordNotFound       = NewError(ErrCodeRecordNotFound, "record not found")
+	ErrMultipleRecordsFound = NewError(ErrCodeMultipleRecordsFound, "multiple records found, expected one")
+	ErrDuplicateKey         = NewError(ErrCodeDuplicateKey, "duplicate key violation")
 
 	// 事务错误
-	ErrTransactionFailed         = NewError(ErrCodeTransactionFailed, "事务执行失败")
-	ErrTransactionCommitFailed   = NewError(ErrCodeTransactionCommitFailed, "事务提交失败")
-	ErrTransactionRollbackFailed = NewError(ErrCodeTransactionRollbackFailed, "事务回滚失败")
-	ErrDeadlockDetected          = NewError(ErrCodeDeadlockDetected, "检测到死锁")
+	ErrTransactionFailed         = NewError(ErrCodeTransactionFailed, "transaction failed")
+	ErrTransactionCommitFailed   = NewError(ErrCodeTransactionCommitFailed, "transaction commit failed")
+	ErrTransactionRollbackFailed = NewError(ErrCodeTransactionRollbackFailed, "transaction rollback failed")
+	ErrTransactionNotStarted     = NewError(ErrCodeTransactionNotStarted, "transaction not started")
+	ErrDeadlockDetected          = NewError(ErrCodeDeadlockDetected, "deadlock detected")
 
 	// 模型错误
-	ErrModelValidationFailed = NewError(ErrCodeModelValidationFailed, "模型验证失败")
-	ErrModelNotFound         = NewError(ErrCodeModelNotFound, "模型不存在")
-	ErrModelSaveFailed       = NewError(ErrCodeModelSaveFailed, "模型保存失败")
-	ErrInvalidModelState     = NewError(ErrCodeInvalidModelState, "无效的模型状态")
+	ErrModelValidationFailed = NewError(ErrCodeModelValidationFailed, "model validation failed")
+	ErrModelNotFound         = NewError(ErrCodeModelNotFound, "model not found")
+	ErrModelSaveFailed       = NewError(ErrCodeModelSaveFailed, "model save failed")
+	ErrInvalidModelState     = NewError(ErrCodeInvalidModelState, "invalid model state")
 
 	// 参数错误
-	ErrInvalidParameter = NewError(ErrCodeInvalidParameter, "无效的参数")
-	ErrValidationFailed = NewError(ErrCodeValidationFailed, "数据验证失败")
+	ErrInvalidParameter = NewError(ErrCodeInvalidParameter, "invalid parameter")
+	ErrValidationFailed = NewError(ErrCodeValidationFailed, "validation failed")
+
+	// 超时和取消
+	ErrTimeout  = NewError(ErrCodeTimeout, "operation timeout")
+	ErrCanceled = NewError(ErrCodeCanceled, "operation canceled")
 
 	// 缓存错误
-	ErrCacheFailed      = NewError(ErrCodeCacheFailed, "缓存操作失败")
-	ErrCacheKeyNotFound = NewError(ErrCodeCacheKeyNotFound, "缓存键不存在")
+	ErrCacheFailed      = NewError(ErrCodeCacheFailed, "cache operation failed")
+	ErrCacheKeyNotFound = NewError(ErrCodeCacheKeyNotFound, "cache key not found")
 )
 
 // IsConnectionError 检查是否为连接错误
@@ -351,63 +477,103 @@ func IsDuplicateError(err error) bool {
 	return false
 }
 
-// ErrorLogger 错误日志记录器
+// IsTimeoutError 检查是否为超时错误
+func IsTimeoutError(err error) bool {
+	if te, ok := err.(*TormError); ok {
+		return te.Code == ErrCodeTimeout || te.Code == ErrCodeQueryTimeout || te.Code == ErrCodeConnectionTimeout
+	}
+	return false
+}
+
+// IsCanceledError 检查是否为取消错误
+func IsCanceledError(err error) bool {
+	if te, ok := err.(*TormError); ok {
+		return te.Code == ErrCodeCanceled
+	}
+	return false
+}
+
+// ExtractTormError 从错误链中提取TormError
+func ExtractTormError(err error) (*TormError, bool) {
+	var te *TormError
+	if errors.As(err, &te) {
+		return te, true
+	}
+	return nil, false
+}
+
+// GetErrorCode 获取错误代码，如果不是TormError则返回ErrCodeUnknown
+func GetErrorCode(err error) ErrorCode {
+	if te, ok := err.(*TormError); ok {
+		return te.Code
+	}
+	return ErrCodeUnknown
+}
+
+// ErrorLogger 错误日志记录器接口
 type ErrorLogger interface {
 	LogError(err *TormError)
 }
 
 // DefaultErrorLogger 默认错误日志记录器
-type DefaultErrorLogger struct{}
+type DefaultErrorLogger struct {
+	debug bool
+}
+
+// NewDefaultErrorLogger 创建默认错误日志记录器
+func NewDefaultErrorLogger(debug bool) *DefaultErrorLogger {
+	return &DefaultErrorLogger{debug: debug}
+}
 
 // LogError 记录错误日志
 func (l *DefaultErrorLogger) LogError(err *TormError) {
-	fmt.Printf("[TORM ERROR] %s %s\n", time.Now().Format("2006-01-02 15:04:05"), err.Error())
+	fmt.Printf("[TORM ERROR] %s [%d] %s\n",
+		err.Timestamp.Format("2006-01-02 15:04:05"),
+		err.Code,
+		err.Message)
+
+	// 打印SQL信息
+	if err.SQL != "" {
+		fmt.Printf("  SQL: %s\n", err.SQL)
+	}
+	if len(err.Args) > 0 {
+		fmt.Printf("  Args: %v\n", err.Args)
+	}
 
 	// 打印重要的上下文信息
 	if err.Context != nil {
-		if sql, ok := err.Context["sql"].(string); ok && sql != "" {
-			fmt.Printf("  SQL: %s\n", sql)
-		}
-		if args, ok := err.Context["args"]; ok && args != nil {
-			fmt.Printf("  参数: %v\n", args)
-		}
 		if table, ok := err.Context["table"].(string); ok && table != "" {
-			fmt.Printf("  表: %s\n", table)
+			fmt.Printf("  Table: %s\n", table)
 		}
 		if operation, ok := err.Context["operation"].(string); ok && operation != "" {
-			fmt.Printf("  操作: %s\n", operation)
+			fmt.Printf("  Operation: %s\n", operation)
 		}
 	}
 
 	// 打印原因错误
 	if err.Cause != nil {
-		fmt.Printf("  根本原因: %v\n", err.Cause)
+		fmt.Printf("  Cause: %v\n", err.Cause)
 	}
 
 	// 仅在调试模式下打印完整上下文和堆栈
-	if isDebugMode() {
-		if err.Context != nil {
-			fmt.Printf("  完整上下文: %+v\n", err.Context)
+	if l.debug {
+		if len(err.Context) > 0 {
+			fmt.Printf("  Context: %+v\n", err.Context)
 		}
 		if err.Stack != "" {
-			fmt.Printf("  调用栈:\n%s\n", err.Stack)
+			fmt.Printf("  Stack:\n%s\n", err.Stack)
 		}
 	}
 }
 
-// isDebugMode 检查是否为调试模式
-func isDebugMode() bool {
-	// 可以通过环境变量或其他方式控制
-	// 这里简化处理，可以根据需要扩展
-	return false
-}
-
 // 全局错误日志记录器
-var globalErrorLogger ErrorLogger = &DefaultErrorLogger{}
+var globalErrorLogger ErrorLogger = &DefaultErrorLogger{debug: false}
 
 // SetErrorLogger 设置全局错误日志记录器
 func SetErrorLogger(logger ErrorLogger) {
-	globalErrorLogger = logger
+	if logger != nil {
+		globalErrorLogger = logger
+	}
 }
 
 // LogError 记录错误到全局日志记录器
@@ -415,4 +581,14 @@ func LogError(err error) {
 	if te, ok := err.(*TormError); ok && globalErrorLogger != nil {
 		globalErrorLogger.LogError(te)
 	}
+}
+
+// EnableDebugErrors 启用调试模式的错误日志
+func EnableDebugErrors() {
+	globalErrorLogger = &DefaultErrorLogger{debug: true}
+}
+
+// DisableDebugErrors 禁用调试模式的错误日志
+func DisableDebugErrors() {
+	globalErrorLogger = &DefaultErrorLogger{debug: false}
 }

@@ -4,8 +4,19 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 
 	"github.com/zhoudm1743/torm/db"
+)
+
+// RelationType 关联类型
+type RelationType int
+
+const (
+	RelationHasOne RelationType = iota
+	RelationHasMany
+	RelationBelongsTo
+	RelationBelongsToMany
 )
 
 // RelationInterface 关联接口
@@ -20,6 +31,35 @@ type RelationInterface interface {
 	Get() ([]map[string]interface{}, error)
 	// Where 添加查询条件
 	Where(column, operator string, value interface{}) RelationInterface
+	// GetType 获取关联类型
+	GetType() RelationType
+	// GetForeignKey 获取外键
+	GetForeignKey() string
+	// GetLocalKey 获取本地键
+	GetLocalKey() string
+	// GetRelatedTable 获取关联表名
+	GetRelatedTable() string
+	// EagerLoad 预加载关联数据
+	EagerLoad(models []map[string]interface{}, relation string) ([]map[string]interface{}, error)
+}
+
+// RelationDefinition 关联定义 - 用于存储关联配置
+type RelationDefinition struct {
+	Name        string                                          // 关联名称
+	Type        RelationType                                    // 关联类型
+	Related     reflect.Type                                    // 关联模型类型
+	ForeignKey  string                                          // 外键
+	LocalKey    string                                          // 本地键
+	PivotTable  string                                          // 中间表（多对多）
+	Builder     func(parent *BaseModel) RelationInterface       // 关联构建器
+	Constraints []func(query *db.QueryBuilder) *db.QueryBuilder // 约束条件
+}
+
+// RelationLoader 关联加载器 - 用于预加载
+type RelationLoader struct {
+	relations   map[string]*RelationDefinition
+	constraints map[string][]func(query *db.QueryBuilder) *db.QueryBuilder
+	mu          sync.RWMutex
 }
 
 // BaseRelation 基础关联结构 - 重构版本
@@ -36,6 +76,12 @@ type BaseRelation struct {
 	localKey string
 	// 关联表名
 	relatedTable string
+	// 关联类型
+	relationType RelationType
+	// 是否已加载
+	loaded bool
+	// 缓存的结果
+	cachedResults interface{}
 }
 
 // NewBaseRelation 创建基础关联
@@ -71,6 +117,47 @@ func (r *BaseRelation) GetQuery() *db.QueryBuilder {
 	return r.query
 }
 
+// GetType 获取关联类型
+func (r *BaseRelation) GetType() RelationType {
+	return r.relationType
+}
+
+// GetForeignKey 获取外键
+func (r *BaseRelation) GetForeignKey() string {
+	return r.foreignKey
+}
+
+// GetLocalKey 获取本地键
+func (r *BaseRelation) GetLocalKey() string {
+	return r.localKey
+}
+
+// GetRelatedTable 获取关联表名
+func (r *BaseRelation) GetRelatedTable() string {
+	return r.relatedTable
+}
+
+// IsLoaded 检查是否已加载
+func (r *BaseRelation) IsLoaded() bool {
+	return r.loaded
+}
+
+// SetLoaded 设置加载状态
+func (r *BaseRelation) SetLoaded(loaded bool) {
+	r.loaded = loaded
+}
+
+// GetCachedResults 获取缓存的结果
+func (r *BaseRelation) GetCachedResults() interface{} {
+	return r.cachedResults
+}
+
+// SetCachedResults 设置缓存的结果
+func (r *BaseRelation) SetCachedResults(results interface{}) {
+	r.cachedResults = results
+	r.loaded = true
+}
+
 // ============================================================================
 // HasOne 一对一关联
 // ============================================================================
@@ -90,6 +177,7 @@ func NewHasOne(parent *BaseModel, related reflect.Type, foreignKey, localKey str
 	}
 
 	baseRelation := NewBaseRelation(parent, related, foreignKey, localKey)
+	baseRelation.relationType = RelationHasOne
 	return &HasOne{BaseRelation: baseRelation}
 }
 
@@ -103,6 +191,7 @@ func NewHasOneWithTable(parent *BaseModel, related reflect.Type, tableName, fore
 	}
 
 	baseRelation := NewBaseRelationWithTable(parent, related, tableName, foreignKey, localKey)
+	baseRelation.relationType = RelationHasOne
 	return &HasOne{BaseRelation: baseRelation}
 }
 
@@ -141,6 +230,60 @@ func (h *HasOne) Where(column, operator string, value interface{}) RelationInter
 	return h
 }
 
+// EagerLoad 预加载一对一关联数据
+func (h *HasOne) EagerLoad(models []map[string]interface{}, relation string) ([]map[string]interface{}, error) {
+	if len(models) == 0 {
+		return models, nil
+	}
+
+	// 收集所有本地键值
+	localKeys := make([]interface{}, 0, len(models))
+	keyMap := make(map[interface{}]int) // 用于快速查找
+
+	for i, model := range models {
+		if localValue, ok := model[h.localKey]; ok && localValue != nil {
+			localKeys = append(localKeys, localValue)
+			keyMap[localValue] = i
+		}
+	}
+
+	if len(localKeys) == 0 {
+		return models, nil
+	}
+
+	// 查询关联数据
+	query, err := db.NewQueryBuilder(h.parent.GetConnection())
+	if err != nil {
+		return nil, fmt.Errorf("创建查询构建器失败: %w", err)
+	}
+
+	relatedData, err := query.From(h.relatedTable).WhereIn(h.foreignKey, localKeys).GetRaw()
+	if err != nil {
+		return nil, fmt.Errorf("查询关联数据失败: %w", err)
+	}
+
+	// 将关联数据映射到父模型
+	relatedMap := make(map[interface{}]map[string]interface{})
+	for _, related := range relatedData {
+		if fkValue, ok := related[h.foreignKey]; ok {
+			relatedMap[fkValue] = related
+		}
+	}
+
+	// 将关联数据附加到父模型
+	for i, model := range models {
+		if localValue, ok := model[h.localKey]; ok {
+			if relatedItem, exists := relatedMap[localValue]; exists {
+				models[i][relation] = relatedItem
+			} else {
+				models[i][relation] = nil
+			}
+		}
+	}
+
+	return models, nil
+}
+
 // ============================================================================
 // HasMany 一对多关联
 // ============================================================================
@@ -160,6 +303,7 @@ func NewHasMany(parent *BaseModel, related reflect.Type, foreignKey, localKey st
 	}
 
 	baseRelation := NewBaseRelation(parent, related, foreignKey, localKey)
+	baseRelation.relationType = RelationHasMany
 	return &HasMany{BaseRelation: baseRelation}
 }
 
@@ -173,6 +317,7 @@ func NewHasManyWithTable(parent *BaseModel, related reflect.Type, tableName, for
 	}
 
 	baseRelation := NewBaseRelationWithTable(parent, related, tableName, foreignKey, localKey)
+	baseRelation.relationType = RelationHasMany
 	return &HasMany{BaseRelation: baseRelation}
 }
 
@@ -225,6 +370,62 @@ func (h *HasMany) Limit(limit int) *HasMany {
 	return h
 }
 
+// EagerLoad 预加载一对多关联数据
+func (h *HasMany) EagerLoad(models []map[string]interface{}, relation string) ([]map[string]interface{}, error) {
+	if len(models) == 0 {
+		return models, nil
+	}
+
+	// 收集所有本地键值
+	localKeys := make([]interface{}, 0, len(models))
+	keyIndexMap := make(map[interface{}][]int) // 一个键可能对应多个模型
+
+	for i, model := range models {
+		if localValue, ok := model[h.localKey]; ok && localValue != nil {
+			if _, exists := keyIndexMap[localValue]; !exists {
+				localKeys = append(localKeys, localValue)
+			}
+			keyIndexMap[localValue] = append(keyIndexMap[localValue], i)
+		}
+	}
+
+	if len(localKeys) == 0 {
+		return models, nil
+	}
+
+	// 查询关联数据
+	query, err := db.NewQueryBuilder(h.parent.GetConnection())
+	if err != nil {
+		return nil, fmt.Errorf("创建查询构建器失败: %w", err)
+	}
+
+	relatedData, err := query.From(h.relatedTable).WhereIn(h.foreignKey, localKeys).GetRaw()
+	if err != nil {
+		return nil, fmt.Errorf("查询关联数据失败: %w", err)
+	}
+
+	// 按外键分组关联数据
+	relatedMap := make(map[interface{}][]map[string]interface{})
+	for _, related := range relatedData {
+		if fkValue, ok := related[h.foreignKey]; ok {
+			relatedMap[fkValue] = append(relatedMap[fkValue], related)
+		}
+	}
+
+	// 将关联数据附加到父模型
+	for i, model := range models {
+		if localValue, ok := model[h.localKey]; ok {
+			if relatedItems, exists := relatedMap[localValue]; exists {
+				models[i][relation] = relatedItems
+			} else {
+				models[i][relation] = []map[string]interface{}{}
+			}
+		}
+	}
+
+	return models, nil
+}
+
 // ============================================================================
 // BelongsTo 反向关联
 // ============================================================================
@@ -245,6 +446,7 @@ func NewBelongsTo(parent *BaseModel, related reflect.Type, foreignKey, localKey 
 	}
 
 	baseRelation := NewBaseRelation(parent, related, foreignKey, localKey)
+	baseRelation.relationType = RelationBelongsTo
 	return &BelongsTo{BaseRelation: baseRelation}
 }
 
@@ -259,6 +461,7 @@ func NewBelongsToWithTable(parent *BaseModel, related reflect.Type, tableName, f
 	}
 
 	baseRelation := NewBaseRelationWithTable(parent, related, tableName, foreignKey, localKey)
+	baseRelation.relationType = RelationBelongsTo
 	return &BelongsTo{BaseRelation: baseRelation}
 }
 
@@ -297,6 +500,62 @@ func (b *BelongsTo) Where(column, operator string, value interface{}) RelationIn
 	return b
 }
 
+// EagerLoad 预加载反向关联数据
+func (b *BelongsTo) EagerLoad(models []map[string]interface{}, relation string) ([]map[string]interface{}, error) {
+	if len(models) == 0 {
+		return models, nil
+	}
+
+	// 收集所有外键值
+	foreignKeys := make([]interface{}, 0, len(models))
+	keySet := make(map[interface{}]bool)
+
+	for _, model := range models {
+		if fkValue, ok := model[b.foreignKey]; ok && fkValue != nil {
+			if !keySet[fkValue] {
+				foreignKeys = append(foreignKeys, fkValue)
+				keySet[fkValue] = true
+			}
+		}
+	}
+
+	if len(foreignKeys) == 0 {
+		return models, nil
+	}
+
+	// 查询关联数据
+	query, err := db.NewQueryBuilder(b.parent.GetConnection())
+	if err != nil {
+		return nil, fmt.Errorf("创建查询构建器失败: %w", err)
+	}
+
+	relatedData, err := query.From(b.relatedTable).WhereIn(b.localKey, foreignKeys).GetRaw()
+	if err != nil {
+		return nil, fmt.Errorf("查询关联数据失败: %w", err)
+	}
+
+	// 将关联数据映射
+	relatedMap := make(map[interface{}]map[string]interface{})
+	for _, related := range relatedData {
+		if pkValue, ok := related[b.localKey]; ok {
+			relatedMap[pkValue] = related
+		}
+	}
+
+	// 将关联数据附加到父模型
+	for i, model := range models {
+		if fkValue, ok := model[b.foreignKey]; ok {
+			if relatedItem, exists := relatedMap[fkValue]; exists {
+				models[i][relation] = relatedItem
+			} else {
+				models[i][relation] = nil
+			}
+		}
+	}
+
+	return models, nil
+}
+
 // ============================================================================
 // BelongsToMany 多对多关联
 // ============================================================================
@@ -331,6 +590,7 @@ func NewBelongsToMany(parent *BaseModel, related reflect.Type, pivotTable, forei
 	}
 
 	baseRelation := NewBaseRelation(parent, related, foreignKey, localKey)
+	baseRelation.relationType = RelationBelongsToMany
 
 	return &BelongsToMany{
 		BaseRelation:    baseRelation,
@@ -359,6 +619,7 @@ func NewBelongsToManyWithTable(parent *BaseModel, related reflect.Type, tableNam
 	}
 
 	baseRelation := NewBaseRelationWithTable(parent, related, tableName, foreignKey, localKey)
+	baseRelation.relationType = RelationBelongsToMany
 
 	return &BelongsToMany{
 		BaseRelation:    baseRelation,
@@ -486,7 +747,8 @@ func (b *BelongsToMany) Sync(relatedIDs []interface{}) error {
 
 	// 添加新关联
 	for _, relatedID := range relatedIDs {
-		_, err = query.From(b.pivotTable).Insert(map[string]interface{}{
+		newQuery, _ := db.NewQueryBuilder(b.parent.GetConnection())
+		_, err = newQuery.From(b.pivotTable).Insert(map[string]interface{}{
 			b.pivotLocalKey:   localValue,
 			b.pivotForeignKey: relatedID,
 		})
@@ -496,6 +758,111 @@ func (b *BelongsToMany) Sync(relatedIDs []interface{}) error {
 	}
 
 	return nil
+}
+
+// EagerLoad 预加载多对多关联数据
+func (b *BelongsToMany) EagerLoad(models []map[string]interface{}, relation string) ([]map[string]interface{}, error) {
+	if len(models) == 0 {
+		return models, nil
+	}
+
+	// 收集所有本地键值（父模型的主键）
+	localKeys := make([]interface{}, 0, len(models))
+	keySet := make(map[interface{}]bool)
+
+	parentPK := b.parent.GetPrimaryKey()
+	for _, model := range models {
+		if localValue, ok := model[parentPK]; ok && localValue != nil {
+			if !keySet[localValue] {
+				localKeys = append(localKeys, localValue)
+				keySet[localValue] = true
+			}
+		}
+	}
+
+	if len(localKeys) == 0 {
+		return models, nil
+	}
+
+	// 查询中间表数据
+	pivotQuery, err := db.NewQueryBuilder(b.parent.GetConnection())
+	if err != nil {
+		return nil, fmt.Errorf("创建查询构建器失败: %w", err)
+	}
+
+	pivotData, err := pivotQuery.From(b.pivotTable).WhereIn(b.pivotLocalKey, localKeys).GetRaw()
+	if err != nil {
+		return nil, fmt.Errorf("查询中间表数据失败: %w", err)
+	}
+
+	// 收集所有关联模型的ID
+	relatedIDs := make([]interface{}, 0)
+	relatedIDSet := make(map[interface{}]bool)
+	pivotMap := make(map[interface{}][]interface{}) // localKey -> []foreignKey
+
+	for _, pivot := range pivotData {
+		localVal := pivot[b.pivotLocalKey]
+		foreignVal := pivot[b.pivotForeignKey]
+		if localVal != nil && foreignVal != nil {
+			pivotMap[localVal] = append(pivotMap[localVal], foreignVal)
+			if !relatedIDSet[foreignVal] {
+				relatedIDs = append(relatedIDs, foreignVal)
+				relatedIDSet[foreignVal] = true
+			}
+		}
+	}
+
+	if len(relatedIDs) == 0 {
+		// 没有关联数据，设置空数组
+		for i := range models {
+			models[i][relation] = []map[string]interface{}{}
+		}
+		return models, nil
+	}
+
+	// 查询关联模型数据
+	relatedQuery, err := db.NewQueryBuilder(b.parent.GetConnection())
+	if err != nil {
+		return nil, fmt.Errorf("创建查询构建器失败: %w", err)
+	}
+
+	relatedData, err := relatedQuery.From(b.relatedTable).WhereIn("id", relatedIDs).GetRaw()
+	if err != nil {
+		return nil, fmt.Errorf("查询关联数据失败: %w", err)
+	}
+
+	// 将关联数据映射
+	relatedMap := make(map[interface{}]map[string]interface{})
+	for _, related := range relatedData {
+		if id, ok := related["id"]; ok {
+			relatedMap[id] = related
+		}
+	}
+
+	// 将关联数据附加到父模型
+	for i, model := range models {
+		localValue := model[parentPK]
+		if localValue == nil {
+			models[i][relation] = []map[string]interface{}{}
+			continue
+		}
+
+		foreignKeys := pivotMap[localValue]
+		relatedItems := make([]map[string]interface{}, 0, len(foreignKeys))
+		for _, fk := range foreignKeys {
+			if relatedItem, exists := relatedMap[fk]; exists {
+				relatedItems = append(relatedItems, relatedItem)
+			}
+		}
+		models[i][relation] = relatedItems
+	}
+
+	return models, nil
+}
+
+// GetPivotTable 获取中间表名
+func (b *BelongsToMany) GetPivotTable() string {
+	return b.pivotTable
 }
 
 // ============================================================================

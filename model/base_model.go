@@ -5,11 +5,17 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zhoudm1743/torm/db"
 	"github.com/zhoudm1743/torm/migration"
 )
+
+// 确保 BaseModel 实现了 Model 接口
+var _ Model = (*BaseModel)(nil)
+var _ SoftDeleteModel = (*BaseModel)(nil)
+var _ TimestampModel = (*BaseModel)(nil)
 
 // ModelConfig 模型配置
 type ModelConfig struct {
@@ -45,12 +51,18 @@ type BaseModel struct {
 	// 模型数据
 	attributes map[string]interface{}
 
+	// 原始数据（用于脏数据追踪）
+	original map[string]interface{}
+
 	// 模型状态
 	exists bool
 
 	// 时间管理
 	timeManager *db.TimeFieldManager
 	timeFields  []db.TimeFieldInfo
+
+	// 互斥锁（保护并发访问）
+	mu sync.RWMutex
 }
 
 // NewModel 创建模型 - 简化和优化版本
@@ -103,6 +115,7 @@ func NewModel(args ...interface{}) *BaseModel {
 	model := &BaseModel{
 		config:      config,
 		attributes:  make(map[string]interface{}),
+		original:    make(map[string]interface{}),
 		exists:      false,
 		timeManager: db.NewTimeFieldManager(),
 		timeFields:  make([]db.TimeFieldInfo, 0),
@@ -187,6 +200,12 @@ func (m *BaseModel) SetTable(tableName string) *BaseModel {
 	return m
 }
 
+// Table 设置表名（GORM兼容方法）
+// 这是SetTable的别名，提供与GORM一致的API
+func (m *BaseModel) Table(tableName string) *BaseModel {
+	return m.SetTable(tableName)
+}
+
 // GetTableName 获取表名
 func (m *BaseModel) GetTableName() string {
 	return m.config.TableName
@@ -198,6 +217,17 @@ func (m *BaseModel) TableName() string {
 	return m.config.TableName
 }
 
+// WithTableName 设置表名并返回模型（链式调用）
+func (m *BaseModel) WithTableName(tableName string) *BaseModel {
+	m.config.TableName = tableName
+	return m
+}
+
+// SetTableName 实现 DynamicTableNamer 接口
+func (m *BaseModel) SetTableName(name string) {
+	m.config.TableName = name
+}
+
 // SetPrimaryKey 设置主键
 func (m *BaseModel) SetPrimaryKey(key string) *BaseModel {
 	m.config.PrimaryKey = key
@@ -206,6 +236,11 @@ func (m *BaseModel) SetPrimaryKey(key string) *BaseModel {
 
 // GetPrimaryKey 获取主键
 func (m *BaseModel) GetPrimaryKey() string {
+	return m.config.PrimaryKey
+}
+
+// PrimaryKey 获取主键名称（实现 Model 接口）
+func (m *BaseModel) PrimaryKey() string {
 	return m.config.PrimaryKey
 }
 
@@ -220,14 +255,19 @@ func (m *BaseModel) GetConnection() string {
 	return m.config.Connection
 }
 
+// Connection 获取连接名称（实现 Model 接口）
+func (m *BaseModel) Connection() string {
+	return m.config.Connection
+}
+
 // EnableTimestamps 启用时间戳
-func (m *BaseModel) EnableTimestamps() *BaseModel {
+func (m *BaseModel) EnableTimestamps() Model {
 	m.config.Timestamps = true
 	return m
 }
 
 // DisableTimestamps 禁用时间戳
-func (m *BaseModel) DisableTimestamps() *BaseModel {
+func (m *BaseModel) DisableTimestamps() Model {
 	m.config.Timestamps = false
 	return m
 }
@@ -276,8 +316,9 @@ func (m *BaseModel) SetDeletedAtField(field string) *BaseModel {
 // 查询方法 - 通过组合方式提供，完全兼容参数式查询
 // ============================================================================
 
-// Query 创建查询构建器
-func (m *BaseModel) Query() (*db.QueryBuilder, error) {
+// RawQuery 创建查询构建器（不自动添加软删除过滤条件）
+// 用于需要绕过软删除过滤的场景，如 WithTrashed、OnlyTrashed、Restore 等
+func (m *BaseModel) RawQuery() (*db.QueryBuilder, error) {
 	if m.config.TableName == "" {
 		return nil, fmt.Errorf("表名未设置，请使用 SetTable() 方法设置表名")
 	}
@@ -288,7 +329,25 @@ func (m *BaseModel) Query() (*db.QueryBuilder, error) {
 	}
 
 	// 绑定模型实例以支持访问器处理
-	return query.From(m.config.TableName).WithModel(m), nil
+	query = query.From(m.config.TableName).WithModel(m)
+
+	return query, nil
+}
+
+// Query 创建查询构建器
+// 如果启用了软删除，会自动添加 deleted_at IS NULL 条件
+func (m *BaseModel) Query() (*db.QueryBuilder, error) {
+	query, err := m.RawQuery()
+	if err != nil {
+		return nil, err
+	}
+
+	// 如果启用了软删除，自动添加 deleted_at IS NULL 条件
+	if m.config.SoftDeletes {
+		query = query.WhereNull(m.config.DeletedAtCol)
+	}
+
+	return query, nil
 }
 
 // Where 支持多种参数式查询格式，返回QueryBuilder以支持链式调用
@@ -472,7 +531,9 @@ func (m *BaseModel) RightJoin(table, first, operator, second string) (*db.QueryB
 // ============================================================================
 
 // SetAttribute 设置属性
-func (m *BaseModel) SetAttribute(key string, value interface{}) *BaseModel {
+func (m *BaseModel) SetAttribute(key string, value interface{}) Model {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.attributes[key] = value
 	return m
 }
@@ -483,7 +544,9 @@ func (m *BaseModel) GetAttribute(key string) interface{} {
 }
 
 // SetAttributes 批量设置属性
-func (m *BaseModel) SetAttributes(attributes map[string]interface{}) *BaseModel {
+func (m *BaseModel) SetAttributes(attributes map[string]interface{}) Model {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for key, value := range attributes {
 		m.attributes[key] = value
 	}
@@ -503,8 +566,21 @@ func (m *BaseModel) ClearAttributes() *BaseModel {
 
 // Fill 填充模型属性
 func (m *BaseModel) Fill(data map[string]interface{}) *BaseModel {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for key, value := range data {
 		m.attributes[key] = value
+	}
+	return m
+}
+
+// FillAndSync 填充模型属性并同步原始数据（用于从数据库加载）
+func (m *BaseModel) FillAndSync(data map[string]interface{}) *BaseModel {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key, value := range data {
+		m.attributes[key] = value
+		m.original[key] = value
 	}
 	return m
 }
@@ -515,7 +591,78 @@ func (m *BaseModel) Fill(data map[string]interface{}) *BaseModel {
 
 // IsNew 检查是否是新记录
 func (m *BaseModel) IsNew() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return !m.exists
+}
+
+// IsDirty 检查模型是否有脏数据（已修改但未保存）
+func (m *BaseModel) IsDirty() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.getDirtyInternal()) > 0
+}
+
+// GetDirty 获取脏数据（已修改的字段）
+func (m *BaseModel) GetDirty() map[string]interface{} {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.getDirtyInternal()
+}
+
+// getDirtyInternal 内部方法获取脏数据（不加锁）
+func (m *BaseModel) getDirtyInternal() map[string]interface{} {
+	dirty := make(map[string]interface{})
+	for key, value := range m.attributes {
+		if key == m.config.PrimaryKey {
+			continue
+		}
+		originalValue, exists := m.original[key]
+		if !exists || !reflect.DeepEqual(value, originalValue) {
+			dirty[key] = value
+		}
+	}
+	return dirty
+}
+
+// IsDirtyField 检查指定字段是否有脏数据
+func (m *BaseModel) IsDirtyField(field string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	value, exists := m.attributes[field]
+	if !exists {
+		return false
+	}
+	originalValue, originalExists := m.original[field]
+	if !originalExists {
+		return true
+	}
+	return !reflect.DeepEqual(value, originalValue)
+}
+
+// SyncOriginal 同步原始数据（保存后调用）
+func (m *BaseModel) SyncOriginal() *BaseModel {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.original = make(map[string]interface{})
+	for key, value := range m.attributes {
+		m.original[key] = value
+	}
+	return m
+}
+
+// GetOriginal 获取原始数据
+func (m *BaseModel) GetOriginal(key ...string) interface{} {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if len(key) > 0 {
+		return m.original[key[0]]
+	}
+	result := make(map[string]interface{})
+	for k, v := range m.original {
+		result[k] = v
+	}
+	return result
 }
 
 // IsExists 检查记录是否存在
@@ -625,12 +772,24 @@ func (m *BaseModel) SetAttributesWithAccessor(model interface{}, data map[string
 
 // Save 保存模型
 func (m *BaseModel) Save() error {
+	// 调用保存前钩子
+	if err := m.BeforeSave(); err != nil {
+		return err
+	}
+
 	query, err := m.Query()
 	if err != nil {
 		return err
 	}
 
-	if m.IsNew() {
+	isNew := m.IsNew()
+
+	if isNew {
+		// 调用创建前钩子
+		if err := m.BeforeCreate(); err != nil {
+			return err
+		}
+
 		// 插入新记录
 		data := m.prepareForInsert()
 		if len(data) == 0 {
@@ -648,9 +807,19 @@ func (m *BaseModel) Save() error {
 		}
 
 		m.MarkAsExists()
-		return nil
+		m.SyncOriginal()
+
+		// 调用创建后钩子
+		if err := m.AfterCreate(); err != nil {
+			return err
+		}
 	} else {
-		// 更新现有记录
+		// 调用更新前钩子
+		if err := m.BeforeUpdate(); err != nil {
+			return err
+		}
+
+		// 只更新脏数据
 		data := m.prepareForUpdate()
 		if len(data) == 0 {
 			return nil // 没有需要更新的数据
@@ -670,8 +839,20 @@ func (m *BaseModel) Save() error {
 			return fmt.Errorf("没有找到要更新的记录")
 		}
 
-		return nil
+		m.SyncOriginal()
+
+		// 调用更新后钩子
+		if err := m.AfterUpdate(); err != nil {
+			return err
+		}
 	}
+
+	// 调用保存后钩子
+	if err := m.AfterSave(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // FindByPK 根据主键查找
@@ -690,9 +871,18 @@ func (m *BaseModel) FindByPK(key interface{}) error {
 		return fmt.Errorf("查找模型失败: %w", err)
 	}
 
-	m.Fill(result)
+	m.FillAndSync(result)
 	m.MarkAsExists()
 	return nil
+}
+
+// Reload 重新加载模型数据
+func (m *BaseModel) Reload() error {
+	pk := m.GetKey()
+	if pk == nil {
+		return fmt.Errorf("主键值不能为空")
+	}
+	return m.FindByPK(pk)
 }
 
 // Find 根据主键查找记录（别名方法）
@@ -702,10 +892,24 @@ func (m *BaseModel) Find(pk interface{}) error {
 
 // Delete 删除记录
 func (m *BaseModel) Delete() error {
-	if m.config.SoftDeletes {
-		return m.SoftDelete()
+	// 调用删除前钩子
+	if err := m.BeforeDelete(); err != nil {
+		return err
 	}
-	return m.ForceDelete()
+
+	var err error
+	if m.config.SoftDeletes {
+		err = m.SoftDelete()
+	} else {
+		err = m.ForceDelete()
+	}
+
+	if err != nil {
+		return err
+	}
+
+	// 调用删除后钩子
+	return m.AfterDelete()
 }
 
 // SoftDelete 软删除（如果启用）
@@ -724,8 +928,9 @@ func (m *BaseModel) SoftDelete() error {
 		return fmt.Errorf("主键值不能为空")
 	}
 
+	now := time.Now()
 	data := map[string]interface{}{
-		m.config.DeletedAtCol: time.Now(),
+		m.config.DeletedAtCol: now,
 	}
 
 	affected, err := query.Where(m.config.PrimaryKey, "=", pk).Update(data)
@@ -737,7 +942,39 @@ func (m *BaseModel) SoftDelete() error {
 		return fmt.Errorf("没有找到要删除的记录")
 	}
 
+	// 更新模型属性
+	m.SetAttribute(m.config.DeletedAtCol, now)
+
 	return nil
+}
+
+// IsSoftDeleted 检查是否已软删除
+func (m *BaseModel) IsSoftDeleted() bool {
+	if !m.config.SoftDeletes {
+		return false
+	}
+	deletedAt := m.GetAttribute(m.config.DeletedAtCol)
+	if deletedAt == nil {
+		return false
+	}
+	// 检查是否为有效的时间值
+	switch v := deletedAt.(type) {
+	case time.Time:
+		return !v.IsZero()
+	case *time.Time:
+		return v != nil && !v.IsZero()
+	case DeletedAt:
+		return v.Valid
+	case *DeletedAt:
+		return v != nil && v.Valid
+	default:
+		return deletedAt != nil
+	}
+}
+
+// GetDeletedAtField 获取软删除字段名
+func (m *BaseModel) GetDeletedAtField() string {
+	return m.config.DeletedAtCol
 }
 
 // Restore 恢复软删除的记录
@@ -746,7 +983,8 @@ func (m *BaseModel) Restore() error {
 		return fmt.Errorf("该模型未启用软删除")
 	}
 
-	query, err := m.Query()
+	// 使用 RawQuery 绕过软删除过滤，否则无法找到已软删除的记录
+	query, err := m.RawQuery()
 	if err != nil {
 		return err
 	}
@@ -766,7 +1004,8 @@ func (m *BaseModel) Restore() error {
 
 // ForceDelete 强制删除（真实删除）
 func (m *BaseModel) ForceDelete() error {
-	query, err := m.Query()
+	// 使用 RawQuery 绕过软删除过滤，确保可以删除已软删除的记录
+	query, err := m.RawQuery()
 	if err != nil {
 		return err
 	}
@@ -786,6 +1025,50 @@ func (m *BaseModel) ForceDelete() error {
 	}
 
 	m.MarkAsNew()
+	return nil
+}
+
+// ============================================================================
+// 事件钩子方法
+// ============================================================================
+
+// BeforeSave 保存前钩子
+func (m *BaseModel) BeforeSave() error {
+	return nil
+}
+
+// AfterSave 保存后钩子
+func (m *BaseModel) AfterSave() error {
+	return nil
+}
+
+// BeforeCreate 创建前钩子
+func (m *BaseModel) BeforeCreate() error {
+	return nil
+}
+
+// AfterCreate 创建后钩子
+func (m *BaseModel) AfterCreate() error {
+	return nil
+}
+
+// BeforeUpdate 更新前钩子
+func (m *BaseModel) BeforeUpdate() error {
+	return nil
+}
+
+// AfterUpdate 更新后钩子
+func (m *BaseModel) AfterUpdate() error {
+	return nil
+}
+
+// BeforeDelete 删除前钩子
+func (m *BaseModel) BeforeDelete() error {
+	return nil
+}
+
+// AfterDelete 删除后钩子
+func (m *BaseModel) AfterDelete() error {
 	return nil
 }
 
@@ -850,6 +1133,78 @@ func (m *BaseModel) BelongsToMany(modelType interface{}, pivotTable, foreignKey,
 	relatedType := getReflectType(modelType)
 	relatedTable := getTableNameFromModel(modelType)
 	return NewBelongsToManyWithTable(m, relatedType, relatedTable, pivotTable, foreignKey, localKey)
+}
+
+// ============================================================================
+// 预加载方法
+// ============================================================================
+
+// With 预加载关联数据
+// 支持多个关联名称，也支持嵌套关联（如 "posts.comments"）
+func (m *BaseModel) With(relations ...string) *ModelQueryBuilder {
+	mqb := NewModelQueryBuilder(m)
+	return mqb.With(relations...)
+}
+
+// WithConstraint 带约束的预加载
+func (m *BaseModel) WithConstraint(relation string, constraint func(*db.QueryBuilder) *db.QueryBuilder) *ModelQueryBuilder {
+	mqb := NewModelQueryBuilder(m)
+	return mqb.WithConstraint(relation, constraint)
+}
+
+// Load 延迟加载关联数据到当前模型
+func (m *BaseModel) Load(relations ...string) error {
+	if !m.IsExists() {
+		return fmt.Errorf("模型不存在，无法加载关联")
+	}
+
+	// 获取当前模型数据
+	data := m.GetAttributes()
+	results := []map[string]interface{}{data}
+
+	// 加载关联
+	loadedResults, err := LoadRelations(m, results, relations)
+	if err != nil {
+		return err
+	}
+
+	// 更新模型属性
+	if len(loadedResults) > 0 {
+		m.SetAttributes(loadedResults[0])
+	}
+
+	return nil
+}
+
+// GetRelation 获取已加载的关联数据
+func (m *BaseModel) GetRelation(name string) interface{} {
+	return m.GetAttribute(name)
+}
+
+// SetRelation 设置关联数据
+func (m *BaseModel) SetRelation(name string, data interface{}) *BaseModel {
+	m.SetAttribute(name, data)
+	return m
+}
+
+// GetRelationOrLoad 获取关联数据，如果未加载则自动加载（延迟加载）
+func (m *BaseModel) GetRelationOrLoad(name string) (interface{}, error) {
+	// 检查是否已加载
+	if data := m.GetAttribute(name); data != nil {
+		return data, nil
+	}
+
+	// 尝试延迟加载
+	if err := m.Load(name); err != nil {
+		return nil, err
+	}
+
+	return m.GetAttribute(name), nil
+}
+
+// HasRelationLoaded 检查关联是否已加载
+func (m *BaseModel) HasRelationLoaded(name string) bool {
+	return m.GetAttribute(name) != nil
 }
 
 // ============================================================================
@@ -947,14 +1302,22 @@ func (m *BaseModel) prepareForInsert() map[string]interface{} {
 	return data
 }
 
-// prepareForUpdate 准备更新数据
+// prepareForUpdate 准备更新数据（只更新脏数据）
 func (m *BaseModel) prepareForUpdate() map[string]interface{} {
-	data := make(map[string]interface{})
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
-	// 获取所有属性，除了主键
-	for key, value := range m.attributes {
-		if key != m.config.PrimaryKey {
-			data[key] = value
+	// 只获取脏数据
+	data := m.getDirtyInternal()
+
+	// 如果没有脏数据，返回空
+	if len(data) == 0 {
+		// 但如果启用了时间戳，仍然需要更新 updated_at
+		if m.config.Timestamps {
+			data = make(map[string]interface{})
+			data[m.config.UpdatedAtCol] = time.Now()
+		} else {
+			return data
 		}
 	}
 
@@ -998,13 +1361,27 @@ func parseTagsIntoConfig(structInstance interface{}, config *ModelConfig) {
 }
 
 // parseFieldTag 解析单个字段的标签
+// 支持两种格式：
+// - torm格式：使用逗号分隔，如 `torm:"primary_key,auto_increment"`
+// - GORM格式：使用分号分隔，如 `torm:"primaryKey;autoIncrement"`
 func parseFieldTag(field reflect.StructField, tormTag string, config *ModelConfig) {
-	parts := strings.Split(tormTag, ",")
+	// 检测分隔符：如果包含分号，使用GORM格式；否则使用torm格式
+	var parts []string
+	if strings.Contains(tormTag, ";") {
+		parts = strings.Split(tormTag, ";")
+	} else {
+		parts = strings.Split(tormTag, ",")
+	}
 
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
+		}
+
+		// 检查忽略标记
+		if part == "-" {
+			return // 忽略此字段
 		}
 
 		if strings.Contains(part, ":") {
@@ -1032,6 +1409,7 @@ func getColumnNameFromField(field reflect.StructField) string {
 }
 
 // parseTormKeyValue 解析torm标签的键值对 - 与migration包保持一致
+// 支持GORM兼容的驼峰命名和torm的蛇形命名
 func parseTormKeyValue(part string, field reflect.StructField, config *ModelConfig) {
 	kv := strings.SplitN(part, ":", 2)
 	if len(kv) != 2 {
@@ -1039,17 +1417,41 @@ func parseTormKeyValue(part string, field reflect.StructField, config *ModelConf
 	}
 
 	key := strings.ToLower(strings.TrimSpace(kv[0]))
-	_ = strings.TrimSpace(kv[1]) // value currently not used in model config, handled by migration
+	value := strings.TrimSpace(kv[1])
 
 	switch key {
+	// ============================================================================
+	// 列名相关 - GORM: column, torm: column/db
+	// ============================================================================
+	case "column", "db":
+		// 自定义列名：column:user_name, db:user_id
+		// 这主要用于字段映射，在模型配置层面不需要特殊处理
+		// 但我们可以在这里记录以供后续使用
+
+	// ============================================================================
+	// 数据类型相关 - GORM: type, torm: type
+	// ============================================================================
 	case "type":
 		// 数据库类型：type:varchar, type:decimal等
 		// 模型配置层面不处理具体的数据库类型，这由migration包处理
 
+	// ============================================================================
+	// 序列化器 - GORM: serializer
+	// ============================================================================
+	case "serializer":
+		// 序列化器：serializer:json, serializer:gob等
+		// 模型配置层面不处理，由migration包处理
+
+	// ============================================================================
+	// 大小相关 - GORM: size, torm: size
+	// ============================================================================
 	case "size":
 		// 字段大小：size:50, size:100等
 		// 模型配置层面不处理，由migration包处理
 
+	// ============================================================================
+	// 精度相关 - GORM: precision/scale, torm: precision/scale
+	// ============================================================================
 	case "precision":
 		// 精度：precision:10 (用于decimal类型)
 		// 模型配置层面不处理，由migration包处理
@@ -1058,82 +1460,184 @@ func parseTormKeyValue(part string, field reflect.StructField, config *ModelConf
 		// 标度：scale:2 (用于decimal类型)
 		// 模型配置层面不处理，由migration包处理
 
+	// ============================================================================
+	// 默认值 - GORM: default, torm: default
+	// ============================================================================
 	case "default":
 		// 默认值：default:0, default:'active'等
 		// 模型配置层面不处理，由migration包处理
 
+	// ============================================================================
+	// 注释 - GORM: comment, torm: comment
+	// ============================================================================
 	case "comment":
 		// 字段注释：comment:'用户名'
 		// 模型配置层面不处理，由migration包处理
 
-	case "column", "db":
-		// 自定义列名：column:user_name, db:user_id
-		// 这主要用于字段映射，在模型配置层面不需要特殊处理
-
-	case "foreign_key", "fk", "references", "ref":
-		// 外键：foreign_key:users.id, references:roles(id)
+	// ============================================================================
+	// 自增步长 - GORM: autoIncrementIncrement
+	// ============================================================================
+	case "autoincrementincrement", "auto_increment_increment":
+		// 自增步长：autoIncrementIncrement:5
 		// 模型配置层面不处理，由migration包处理
 
-	case "on_delete":
+	// ============================================================================
+	// 嵌入前缀 - GORM: embeddedPrefix
+	// ============================================================================
+	case "embeddedprefix", "embedded_prefix":
+		// 嵌入前缀：embeddedPrefix:author_
+		// 模型配置层面不处理，由migration包处理
+
+	// ============================================================================
+	// 时间戳精度 - GORM: autoCreateTime:nano/milli, autoUpdateTime:nano/milli
+	// ============================================================================
+	case "autocreatetime", "auto_create_time":
+		// 自动创建时间：autoCreateTime:nano, autoCreateTime:milli
+		columnName := getColumnNameFromField(field)
+		config.CreatedAtCol = columnName
+
+	case "autoupdatetime", "auto_update_time":
+		// 自动更新时间：autoUpdateTime:nano, autoUpdateTime:milli
+		columnName := getColumnNameFromField(field)
+		config.UpdatedAtCol = columnName
+
+	// ============================================================================
+	// 索引相关 - GORM: index/uniqueIndex
+	// ============================================================================
+	case "index":
+		// 带类型的索引：index:btree, index:hash
+		// 或带名称的索引：index:idx_name
+		// 模型配置层面不处理，由migration包处理
+
+	case "uniqueindex", "unique_index":
+		// 唯一索引：uniqueIndex:idx_name
+		// 模型配置层面不处理，由migration包处理
+
+	// ============================================================================
+	// 检查约束 - GORM: check
+	// ============================================================================
+	case "check":
+		// 检查约束：check:age > 0
+		// 模型配置层面不处理，由migration包处理
+
+	// ============================================================================
+	// 外键相关 - torm扩展
+	// ============================================================================
+	case "foreign_key", "fk", "foreignkey":
+		// 外键：foreign_key:users.id
+		// 模型配置层面不处理，由migration包处理
+
+	case "references", "ref":
+		// 引用：references:roles(id)
+		// 模型配置层面不处理，由migration包处理
+
+	case "on_delete", "ondelete":
 		// 删除时动作：on_delete:cascade
 		// 模型配置层面不处理，由migration包处理
 
-	case "on_update":
+	case "on_update", "onupdate":
 		// 更新时动作：on_update:cascade
 		// 模型配置层面不处理，由migration包处理
 
+	// ============================================================================
+	// 生成列 - torm扩展
+	// ============================================================================
 	case "generated":
 		// 生成列：generated:virtual, generated:stored
 		// 模型配置层面不处理，由migration包处理
 
-	case "index":
-		// 带类型的索引：index:btree, index:hash
-		// 模型配置层面不处理，由migration包处理
+	// ============================================================================
+	// 字段权限 - GORM: <-:create/<-:update/<-:false/->:false
+	// ============================================================================
+	case "<-":
+		// 写入权限：<-:create, <-:update, <-:false
+		// 由accessor.go处理
+		_ = value
+
+	case "->":
+		// 读取权限：->:false
+		// 由accessor.go处理
+		_ = value
 	}
 }
 
 // parseTormFlagAdvanced 解析torm标签的标志 - 扩展版本
+// 支持GORM兼容的驼峰命名和torm的蛇形命名
 func parseTormFlagAdvanced(flag string, field reflect.StructField, config *ModelConfig) {
-	flag = strings.ToLower(flag)
+	flagLower := strings.ToLower(flag)
 	columnName := getColumnNameFromField(field)
 
-	switch flag {
+	switch flagLower {
+	// ============================================================================
+	// 主键相关 - GORM: primaryKey, torm: primary_key
+	// ============================================================================
 	case "primary_key", "pk", "primary", "primarykey":
-		// 设置主键
 		config.PrimaryKey = columnName
 
+	// ============================================================================
+	// 自增相关 - GORM: autoIncrement, torm: auto_increment
+	// ============================================================================
 	case "auto_increment", "autoincrement", "auto_inc", "autoinc":
 		// 自增字段 - 这通常与primary_key一起使用
 		// 在模型配置中，我们主要关心主键设置
 		// auto_increment的具体处理在迁移时由migration包负责
-		// PostgreSQL会自动使用SERIAL/BIGSERIAL等序列类型
 
+	// ============================================================================
+	// 时间戳相关 - GORM: autoCreateTime/autoUpdateTime, torm: auto_create_time/auto_update_time
+	// ============================================================================
 	case "auto_create_time", "create_time", "created_at", "auto_created_at",
-		"autocreate_time", "autocreatetime", "auto_create", "autocreate":
-		// 自动创建时间字段 - 支持多种标记格式
+		"autocreate_time", "autocreatetime", "auto_create", "autocreate",
+		"autocreatetime:nano", "autocreatetime:milli": // GORM支持纳秒/毫秒
 		config.CreatedAtCol = columnName
 
 	case "auto_update_time", "update_time", "updated_at", "auto_updated_at",
-		"autoupdate_time", "autoupdatetime", "auto_update", "autoupdate":
-		// 自动更新时间字段 - 支持多种标记格式
+		"autoupdate_time", "autoupdatetime", "auto_update", "autoupdate",
+		"autoupdatetime:nano", "autoupdatetime:milli": // GORM支持纳秒/毫秒
 		config.UpdatedAtCol = columnName
 
-	case "soft_delete", "soft_deletes", "deleted_at":
-		// 软删除字段
+	// ============================================================================
+	// 软删除相关 - GORM: softDelete, torm: soft_delete
+	// ============================================================================
+	case "soft_delete", "soft_deletes", "deleted_at", "softdelete", "softdeletes":
 		config.DeletedAtCol = columnName
 		config.SoftDeletes = true
 
-	// 以下标志主要用于数据库迁移，模型配置不直接处理
-	// 但我们仍然识别它们以确保标签解析的完整性
-	case "unique", "uniq":
+	// ============================================================================
+	// 唯一约束 - GORM: unique, torm: unique
+	// ============================================================================
+	case "unique", "uniq", "uniqueindex":
 		// 唯一索引 - 由migration包处理
 
+	// ============================================================================
+	// 非空约束 - GORM: not null, torm: not_null
+	// ============================================================================
 	case "not_null", "not null", "notnull", "not_nil", "notnil":
 		// 非空约束 - 由migration包处理
 
 	case "nullable", "null":
 		// 可空约束 - 由migration包处理
 
+	// ============================================================================
+	// 嵌入结构体 - GORM: embedded/embeddedPrefix
+	// ============================================================================
+	case "embedded":
+		// 嵌入结构体 - 由migration包处理
+
+	// ============================================================================
+	// 索引相关 - GORM: index/uniqueIndex
+	// ============================================================================
+	case "index", "idx":
+		// 普通索引 - 由migration包处理
+
+	case "fulltext", "fulltext_index":
+		// 全文索引 - 由migration包处理
+
+	case "spatial", "spatial_index":
+		// 空间索引 - 由migration包处理
+
+	// ============================================================================
+	// 数据类型相关
+	// ============================================================================
 	case "timestamp", "current_timestamp":
 		// 时间戳字段 - 由migration包处理
 
@@ -1146,28 +1650,33 @@ func parseTormFlagAdvanced(flag string, field reflect.StructField, config *Model
 	case "binary":
 		// 二进制存储 - 由migration包处理
 
-	case "index", "idx":
-		// 普通索引 - 由migration包处理
-
-	case "fulltext", "fulltext_index":
-		// 全文索引 - 由migration包处理
-
-	case "spatial", "spatial_index":
-		// 空间索引 - 由migration包处理
-
 	case "json", "is_json":
 		// JSON字段标记 - 由migration包处理
+
+	// ============================================================================
+	// 字段权限相关 - GORM: <-:create/<-:update/<-:false/->:false/-
+	// ============================================================================
+	case "readonly", "read_only", "immutable":
+		// 只读字段标记 - 由accessor.go处理
+
+	case "writeonly", "write_only":
+		// 只写字段标记 - 由accessor.go处理
+
+	case "createonly", "create_only":
+		// 只在创建时可写 - 由accessor.go处理
+
+	case "updateonly", "update_only":
+		// 只在更新时可写 - 由accessor.go处理
+
+	case "hidden", "invisible":
+		// 隐藏字段标记 - 由accessor.go处理
 
 	case "encrypted", "encrypt":
 		// 加密字段标记 - 可能需要在模型层处理，但目前不实现
 
-	case "hidden", "invisible":
-		// 隐藏字段标记 - 可能需要在模型层处理，但目前不实现
-
-	case "readonly", "immutable":
-		// 只读字段标记 - 可能需要在模型层处理，但目前不实现
-
-	// PostgreSQL序列相关 - 这些都由migration包自动处理
+	// ============================================================================
+	// PostgreSQL序列相关
+	// ============================================================================
 	case "serial":
 		// PostgreSQL SERIAL类型 - 等同于auto_increment
 
@@ -1177,7 +1686,9 @@ func parseTormFlagAdvanced(flag string, field reflect.StructField, config *Model
 	case "smallserial":
 		// PostgreSQL SMALLSERIAL类型
 
+	// ============================================================================
 	// 外键级联操作标志
+	// ============================================================================
 	case "cascade_delete", "on_delete_cascade":
 		// 级联删除 - 由migration包处理
 
@@ -1202,7 +1713,9 @@ func parseTormFlagAdvanced(flag string, field reflect.StructField, config *Model
 	case "set_default_update", "on_update_set_default":
 		// 更新时设为默认值 - 由migration包处理
 
+	// ============================================================================
 	// 生成列相关
+	// ============================================================================
 	case "generated":
 		// 生成列（无值版本，默认虚拟列） - 由migration包处理
 

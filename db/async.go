@@ -589,7 +589,7 @@ func (aw *AsyncWorker) executeTransaction(ctx context.Context, task *AsyncTask) 
 		return nil, ErrUnsupportedTaskType
 	}
 
-	tx, err := task.Query.connection.BeginTx(nil)
+	tx, err := task.Query.connection.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}

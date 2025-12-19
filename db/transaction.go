@@ -6,14 +6,14 @@ import (
 	"fmt"
 )
 
-// DBTransaction 事务实现
+// DBTransaction 事务实现（兼容旧接口）
 type DBTransaction struct {
 	tx  *sql.Tx
 	ctx context.Context
 }
 
-// NewTransaction 创建新事务
-func NewTransaction(conn ConnectionInterface) (*DBTransaction, error) {
+// NewTransaction 创建新事务（使用新的Connection接口）
+func NewTransaction(conn Connection) (*DBTransaction, error) {
 	if conn == nil {
 		return nil, fmt.Errorf("连接不能为空")
 	}
@@ -104,4 +104,19 @@ func BeginTransaction(connectionName ...string) (*DBTransaction, error) {
 	}
 
 	return NewTransaction(conn)
+}
+
+// RunInTransaction 在事务中执行函数（使用新的TxInterface）
+func RunInTransaction(fn func(tx TxInterface) error, connectionName ...string) error {
+	connName := "default"
+	if len(connectionName) > 0 {
+		connName = connectionName[0]
+	}
+
+	conn, err := DefaultManager().Connection(connName)
+	if err != nil {
+		return fmt.Errorf("获取数据库连接失败: %w", err)
+	}
+
+	return conn.RunTransaction(fn)
 }

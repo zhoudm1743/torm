@@ -1,8 +1,10 @@
 package db
 
 import (
+	"context"
 	"database/sql"
-	"fmt"
+	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/zhoudm1743/torm/logger"
@@ -11,224 +13,115 @@ import (
 
 // SQLiteConnection SQLite数据库连接
 type SQLiteConnection struct {
-	config *Config
-	db     *sql.DB
-	logger LoggerInterface
+	*BaseConnection
+	mu sync.RWMutex
 }
 
 // NewSQLiteConnection 创建SQLite连接
-func NewSQLiteConnection(config *Config, logger LoggerInterface) (ConnectionInterface, error) {
-	conn := &SQLiteConnection{
-		config: config,
-		logger: logger,
+func NewSQLiteConnection(config *Config, log LoggerInterface) (Connection, error) {
+	if config == nil {
+		return nil, NewError(ErrCodeConfigurationError, "config cannot be nil")
 	}
+
+	conn := &SQLiteConnection{
+		BaseConnection: NewBaseConnection(config),
+	}
+	conn.SetLogger(log)
+
 	return conn, nil
 }
 
 // Connect 连接到SQLite数据库
 func (c *SQLiteConnection) Connect() error {
-	start := time.Now()
-	dsn := c.config.DSN()
-	if c.logger != nil {
-		c.logger.Debug("Connecting to SQLite", "dsn", dsn)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.IsConnected() {
+		return nil
 	}
+
+	config := c.GetConfig()
+	dsn := c.buildDSN(config)
 
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		if c.logger != nil {
-			c.logger.Error("Failed to open SQLite connection", "error", err)
-		}
-		return fmt.Errorf("failed to open SQLite connection: %w", err)
+		return NewConnectionError(err, "sqlite", "", config.Database)
 	}
 
-	// 配置连接池
-	if c.config.MaxOpenConns > 0 {
-		db.SetMaxOpenConns(c.config.MaxOpenConns)
-	}
-	if c.config.MaxIdleConns > 0 {
-		db.SetMaxIdleConns(c.config.MaxIdleConns)
-	}
-	if c.config.ConnMaxLifetime > 0 {
-		db.SetConnMaxLifetime(c.config.ConnMaxLifetime)
-	}
-	if c.config.ConnMaxIdleTime > 0 {
-		db.SetConnMaxIdleTime(c.config.ConnMaxIdleTime)
+	// 配置连接池（SQLite建议单连接）
+	c.SetDB(db)
+	if config.MaxOpenConns == 0 {
+		db.SetMaxOpenConns(1)
+	} else {
+		c.ConfigurePool()
 	}
 
 	// 测试连接
 	if err := db.Ping(); err != nil {
 		db.Close()
-		if c.logger != nil {
-			c.logger.Error("Failed to ping SQLite database", "error", err)
-		}
-		return fmt.Errorf("failed to ping SQLite database: %w", err)
+		c.SetDB(nil)
+		return NewConnectionError(err, "sqlite", "", config.Database)
 	}
 
-	c.db = db
-	duration := time.Since(start)
-	if c.logger != nil {
-		// 使用新的LogConnection方法记录连接信息
-		if sqlLogger, ok := c.logger.(*logger.SQLLogger); ok {
-			sqlLogger.LogConnection("connected", "sqlite", c.config.Database, duration)
-		} else {
-			c.logger.Info("SQLite连接建立成功", "database", c.config.Database, "duration", duration)
-		}
+	// 启用外键约束
+	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		c.GetLogger().Warn("启用外键约束失败", "error", err)
 	}
+
+	// 设置SQLite构建器
+	c.SetBuilder(NewSQLiteBuilder())
+
+	if c.GetLogger() != nil {
+		c.GetLogger().Info("SQLite连接建立成功",
+			"database", config.Database)
+	}
+
 	return nil
+}
+
+// buildDSN 构建SQLite DSN
+func (c *SQLiteConnection) buildDSN(config *Config) string {
+	dsn := config.Database
+
+	// 处理相对路径
+	if dsn != ":memory:" && !filepath.IsAbs(dsn) {
+		// 保持相对路径，让调用者决定工作目录
+	}
+
+	// 添加参数
+	if len(config.Options) > 0 {
+		params := ""
+		for k, v := range config.Options {
+			if params == "" {
+				params = "?"
+			} else {
+				params += "&"
+			}
+			params += k + "=" + v
+		}
+		dsn += params
+	}
+
+	return dsn
 }
 
 // Close 关闭连接
 func (c *SQLiteConnection) Close() error {
-	if c.db != nil {
-		if c.logger != nil {
-			c.logger.Debug("Closing SQLite connection")
-		}
-		err := c.db.Close()
-		c.db = nil
-		return err
-	}
-	return nil
-}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-// Ping 测试连接
-func (c *SQLiteConnection) Ping() error {
-	if c.db == nil {
-		return fmt.Errorf("database connection is not established")
-	}
-	return c.db.Ping()
-}
+	log := c.GetLogger()
+	err := c.BaseConnection.Close()
 
-// IsConnected 检查连接状态
-func (c *SQLiteConnection) IsConnected() bool {
-	if c.db == nil {
-		return false
-	}
-	return c.db.Ping() == nil
-}
-
-// Query 执行查询
-func (c *SQLiteConnection) Query(query string, args ...interface{}) (*sql.Rows, error) {
-	if c.db == nil {
-		return nil, fmt.Errorf("database connection is not established")
-	}
-
-	start := time.Now()
-	rows, err := c.db.Query(query, args...)
-	duration := time.Since(start)
-
-	// 统一SQL日志记录
-	if c.logger != nil {
-		if sqlLogger, ok := c.logger.(*logger.SQLLogger); ok {
-			// Query操作我们不知道确切的行数，使用简单版本
-			sqlLogger.LogSQL(query, args, duration, err)
+	if log != nil {
+		if err != nil {
+			log.Error("关闭SQLite连接失败", "error", err)
 		} else {
-			// 兼容旧的日志接口
-			if err != nil {
-				c.logger.Error("SQL查询错误", "sql", query, "args", args, "error", err, "duration", duration)
-			} else if c.config.LogQueries {
-				c.logger.Debug("SQL查询", "sql", query, "args", args, "duration", duration)
-			}
+			log.Info("SQLite连接已关闭")
 		}
 	}
 
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute SQLite query: %w", err)
-	}
-	return rows, nil
-}
-
-// QueryRow 执行单行查询
-func (c *SQLiteConnection) QueryRow(query string, args ...interface{}) *sql.Row {
-	if c.db == nil {
-		// 返回一个会出错的Row
-		return (&sql.DB{}).QueryRow(query, args...)
-	}
-
-	start := time.Now()
-	row := c.db.QueryRow(query, args...)
-	duration := time.Since(start)
-
-	// 统一SQL日志记录（QueryRow总是成功，没有error）
-	if c.logger != nil {
-		if sqlLogger, ok := c.logger.(*logger.SQLLogger); ok {
-			sqlLogger.LogSQL(query, args, duration, nil)
-		} else if c.config.LogQueries {
-			c.logger.Debug("SQL查询", "sql", query, "args", args, "duration", duration)
-		}
-	}
-
-	return row
-}
-
-// Exec 执行SQL语句
-func (c *SQLiteConnection) Exec(query string, args ...interface{}) (sql.Result, error) {
-	if c.db == nil {
-		return nil, fmt.Errorf("database connection is not established")
-	}
-
-	start := time.Now()
-	result, err := c.db.Exec(query, args...)
-	duration := time.Since(start)
-
-	// 统一SQL日志记录
-	if c.logger != nil {
-		if sqlLogger, ok := c.logger.(*logger.SQLLogger); ok {
-			if err != nil {
-				sqlLogger.LogSQL(query, args, duration, err)
-			} else {
-				// 获取影响的行数
-				rowsAffected, _ := result.RowsAffected()
-				sqlLogger.LogSQLWithRows(query, args, duration, rowsAffected, nil)
-			}
-		} else {
-			// 兼容旧的日志接口
-			if err != nil {
-				c.logger.Error("SQL执行错误", "sql", query, "args", args, "error", err, "duration", duration)
-			} else if c.config.LogQueries {
-				c.logger.Debug("SQL执行", "sql", query, "args", args, "duration", duration)
-			}
-		}
-	}
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute SQLite statement: %w", err)
-	}
-	return result, nil
-}
-
-// Begin 开始事务
-func (c *SQLiteConnection) Begin() (TransactionInterface, error) {
-	return c.BeginTx(nil)
-}
-
-// BeginTx 开始事务（带选项）
-func (c *SQLiteConnection) BeginTx(opts *sql.TxOptions) (TransactionInterface, error) {
-	if c.db == nil {
-		return nil, fmt.Errorf("database connection is not established")
-	}
-
-	tx, err := c.db.Begin()
-	if err != nil {
-		if c.logger != nil {
-			c.logger.Error("Failed to begin SQLite transaction", "error", err)
-		}
-		return nil, fmt.Errorf("failed to begin SQLite transaction: %w", err)
-	}
-
-	if c.logger != nil {
-		c.logger.Debug("SQLite transaction started")
-	}
-
-	return &SQLiteTransaction{
-		tx:     tx,
-		logger: c.logger,
-		config: c.config,
-	}, nil
-}
-
-// GetConfig 获取配置
-func (c *SQLiteConnection) GetConfig() *Config {
-	return c.config
+	return err
 }
 
 // GetDriver 获取驱动名称
@@ -236,132 +129,252 @@ func (c *SQLiteConnection) GetDriver() string {
 	return "sqlite"
 }
 
-// GetStats 获取连接统计信息
-func (c *SQLiteConnection) GetStats() sql.DBStats {
-	if c.db == nil {
-		return sql.DBStats{}
-	}
-	return c.db.Stats()
+// Query 执行查询
+func (c *SQLiteConnection) Query(query string, args ...interface{}) (*sql.Rows, error) {
+	return c.QueryContext(context.Background(), query, args...)
 }
 
-// SQLiteTransaction SQLite事务
-type SQLiteTransaction struct {
-	tx     *sql.Tx
-	logger LoggerInterface
-	config *Config
-}
+// QueryContext 执行带上下文的查询
+func (c *SQLiteConnection) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 
-// Query 在事务中执行查询
-func (t *SQLiteTransaction) Query(query string, args ...interface{}) (*sql.Rows, error) {
-	if t.tx == nil {
-		return nil, fmt.Errorf("transaction is not active")
+	db := c.GetDB()
+	if db == nil {
+		return nil, NewError(ErrCodeConnectionClosed, "connection not established")
 	}
 
 	start := time.Now()
-	rows, err := t.tx.Query(query, args...)
+	rows, err := db.QueryContext(ctx, query, args...)
 	duration := time.Since(start)
 
-	if t.logger != nil && t.config.LogQueries {
-		if err != nil {
-			t.logger.Error("sql", query, "args", args, "error", err, "duration", duration)
-		} else {
-			t.logger.Debug("sql", query, "args", args, "duration", duration)
-		}
-	}
+	c.logSQL(query, args, duration, err)
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute SQLite transaction query: %w", err)
+		return nil, NewQueryError(err, query, args)
 	}
+
 	return rows, nil
 }
 
-// QueryRow 在事务中执行单行查询
-func (t *SQLiteTransaction) QueryRow(query string, args ...interface{}) *sql.Row {
-	if t.tx == nil {
-		// 返回一个会出错的Row
-		return (&sql.DB{}).QueryRow(query, args...)
+// QueryRow 执行单行查询
+func (c *SQLiteConnection) QueryRow(query string, args ...interface{}) *sql.Row {
+	return c.QueryRowContext(context.Background(), query, args...)
+}
+
+// QueryRowContext 执行带上下文的单行查询
+func (c *SQLiteConnection) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	db := c.GetDB()
+	if db == nil {
+		return nil
 	}
 
 	start := time.Now()
-	row := t.tx.QueryRow(query, args...)
+	row := db.QueryRowContext(ctx, query, args...)
 	duration := time.Since(start)
 
-	if t.logger != nil && t.config.LogQueries {
-		t.logger.Debug("sql", query, "args", args, "duration", duration)
-	}
+	c.logSQL(query, args, duration, nil)
 
 	return row
 }
 
-// Exec 在事务中执行SQL语句
-func (t *SQLiteTransaction) Exec(query string, args ...interface{}) (sql.Result, error) {
-	if t.tx == nil {
-		return nil, fmt.Errorf("transaction is not active")
+// Exec 执行SQL语句
+func (c *SQLiteConnection) Exec(query string, args ...interface{}) (sql.Result, error) {
+	return c.ExecContext(context.Background(), query, args...)
+}
+
+// ExecContext 执行带上下文的SQL语句
+func (c *SQLiteConnection) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	db := c.GetDB()
+	if db == nil {
+		return nil, NewError(ErrCodeConnectionClosed, "connection not established")
 	}
 
 	start := time.Now()
-	result, err := t.tx.Exec(query, args...)
+	result, err := db.ExecContext(ctx, query, args...)
 	duration := time.Since(start)
 
-	if t.logger != nil && t.config.LogQueries {
-		if err != nil {
-			t.logger.Error("sql", query, "args", args, "error", err, "duration", duration)
-		} else {
-			t.logger.Debug("sql", query, "args", args, "duration", duration)
-		}
-	}
+	c.logSQL(query, args, duration, err)
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute SQLite transaction statement: %w", err)
+		return nil, NewQueryError(err, query, args)
 	}
+
 	return result, nil
 }
 
-// Commit 提交事务
-func (t *SQLiteTransaction) Commit() error {
-	if t.tx == nil {
-		return fmt.Errorf("transaction is not active")
-	}
-
-	err := t.tx.Commit()
-	if err != nil {
-		if t.logger != nil {
-			t.logger.Error("Failed to commit SQLite transaction", "error", err)
-		}
-		return fmt.Errorf("failed to commit SQLite transaction: %w", err)
-	}
-
-	if t.logger != nil {
-		t.logger.Debug("SQLite transaction committed")
-	}
-
-	t.tx = nil
-	return nil
+// Begin 开始事务
+func (c *SQLiteConnection) Begin() (TxInterface, error) {
+	return c.BeginTx(context.Background(), nil)
 }
 
-// Rollback 回滚事务
-func (t *SQLiteTransaction) Rollback() error {
-	if t.tx == nil {
-		return fmt.Errorf("transaction is not active")
+// BeginTx 开始事务（带选项）
+func (c *SQLiteConnection) BeginTx(ctx context.Context, opts *sql.TxOptions) (TxInterface, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	db := c.GetDB()
+	if db == nil {
+		return nil, NewError(ErrCodeConnectionClosed, "connection not established")
 	}
 
-	err := t.tx.Rollback()
+	tx, err := db.BeginTx(ctx, opts)
 	if err != nil {
-		if t.logger != nil {
-			t.logger.Error("Failed to rollback SQLite transaction", "error", err)
-		}
-		return fmt.Errorf("failed to rollback SQLite transaction: %w", err)
+		return nil, NewTransactionError(err, "begin")
 	}
 
-	if t.logger != nil {
-		t.logger.Debug("SQLite transaction rolled back")
+	if c.GetLogger() != nil {
+		c.GetLogger().Debug("SQLite事务已开始")
 	}
 
-	t.tx = nil
-	return nil
+	return NewSQLiteTransaction(tx, c.GetLogger(), c.GetConfig()), nil
 }
 
-// GetDB 获取底层数据库连接
-func (c *SQLiteConnection) GetDB() *sql.DB {
-	return c.db
+// RunTransaction 执行事务
+func (c *SQLiteConnection) RunTransaction(fn func(tx TxInterface) error) error {
+	return c.BaseConnection.RunTransaction(fn, c.Begin)
+}
+
+// GetTableFields 获取表字段信息
+func (c *SQLiteConnection) GetTableFields(table string) ([]ConnFieldInfo, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	db := c.GetDB()
+	if db == nil {
+		return nil, NewError(ErrCodeConnectionClosed, "connection not established")
+	}
+
+	query := "PRAGMA table_info(" + table + ")"
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, NewQueryError(err, query, nil)
+	}
+	defer rows.Close()
+
+	var fields []ConnFieldInfo
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			dataType   string
+			notNull    int
+			defaultVal sql.NullString
+			pk         int
+		)
+
+		err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultVal, &pk)
+		if err != nil {
+			return nil, WrapError(err, ErrCodeQueryFailed, "failed to scan column info")
+		}
+
+		field := ConnFieldInfo{
+			Name:       name,
+			Type:       dataType,
+			Nullable:   notNull == 0,
+			PrimaryKey: pk > 0,
+			AutoInc:    pk > 0 && dataType == "INTEGER", // SQLite INTEGER PRIMARY KEY 自动自增
+		}
+
+		if defaultVal.Valid {
+			field.Default = defaultVal.String
+		}
+
+		fields = append(fields, field)
+	}
+
+	return fields, nil
+}
+
+// GetTables 获取所有表名
+func (c *SQLiteConnection) GetTables() ([]string, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	db := c.GetDB()
+	if db == nil {
+		return nil, NewError(ErrCodeConnectionClosed, "connection not established")
+	}
+
+	query := "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, NewQueryError(err, query, nil)
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			return nil, WrapError(err, ErrCodeQueryFailed, "failed to scan table name")
+		}
+		tables = append(tables, table)
+	}
+
+	return tables, nil
+}
+
+// logSQL 记录SQL日志
+func (c *SQLiteConnection) logSQL(query string, args []interface{}, duration time.Duration, err error) {
+	log := c.GetLogger()
+	if log == nil {
+		return
+	}
+
+	if sqlLogger, ok := log.(*logger.SQLLogger); ok {
+		sqlLogger.LogSQL(query, args, duration, err)
+	} else {
+		config := c.GetConfig()
+		if err != nil {
+			log.Error("SQL执行失败",
+				"sql", query,
+				"args", args,
+				"duration", duration,
+				"error", err)
+		} else if config != nil && config.LogQueries {
+			log.Debug("SQL执行",
+				"sql", query,
+				"args", args,
+				"duration", duration)
+		}
+	}
+}
+
+// SQLiteTransaction SQLite事务
+type SQLiteTransaction struct {
+	*BaseTransaction
+}
+
+// NewSQLiteTransaction 创建SQLite事务
+func NewSQLiteTransaction(tx *sql.Tx, log LoggerInterface, config *Config) *SQLiteTransaction {
+	return &SQLiteTransaction{
+		BaseTransaction: NewBaseTransaction(tx, log, config),
+	}
+}
+
+// Savepoint 创建保存点（SQLite支持）
+func (t *SQLiteTransaction) Savepoint(name string) error {
+	return t.BaseTransaction.Savepoint(name)
+}
+
+// RollbackTo 回滚到保存点
+func (t *SQLiteTransaction) RollbackTo(name string) error {
+	return t.BaseTransaction.RollbackTo(name)
+}
+
+// ReleaseSavepoint 释放保存点
+func (t *SQLiteTransaction) ReleaseSavepoint(name string) error {
+	return t.BaseTransaction.ReleaseSavepoint(name)
+}
+
+// NewSQLiteBuilder 创建SQLite构建器（使用完整实现）
+func NewSQLiteBuilder() Builder {
+	return NewSQLiteBuilderImpl()
 }

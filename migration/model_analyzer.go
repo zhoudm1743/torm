@@ -7,6 +7,25 @@ import (
 	"strings"
 )
 
+// FieldPermission 字段权限配置
+type FieldPermission struct {
+	Read            bool // 是否允许读取
+	Create          bool // 是否允许创建时写入
+	Update          bool // 是否允许更新时写入
+	IgnoreAll       bool // 完全忽略该字段（读写和迁移）
+	IgnoreMigrate   bool // 迁移时忽略该字段
+	IgnoreReadWrite bool // 读写时忽略该字段
+}
+
+// DefaultFieldPermission 返回默认字段权限（允许读写）
+func DefaultFieldPermission() FieldPermission {
+	return FieldPermission{
+		Read:   true,
+		Create: true,
+		Update: true,
+	}
+}
+
 // ModelAnalyzer 模型分析器
 type ModelAnalyzer struct{}
 
@@ -22,8 +41,14 @@ func (ma *ModelAnalyzer) AnalyzeModel(modelType reflect.Type) ([]ModelColumn, er
 	for i := 0; i < modelType.NumField(); i++ {
 		field := modelType.Field(i)
 
-		// 跳过嵌入的BaseModel字段
-		if field.Type.Name() == "BaseModel" {
+		// 跳过嵌入的BaseModel字段，但递归分析其字段
+		if field.Anonymous && field.Type.Kind() == reflect.Struct {
+			// 递归分析嵌入的结构体
+			embeddedColumns, err := ma.AnalyzeModel(field.Type)
+			if err != nil {
+				return nil, err
+			}
+			columns = append(columns, embeddedColumns...)
 			continue
 		}
 
@@ -37,12 +62,75 @@ func (ma *ModelAnalyzer) AnalyzeModel(modelType reflect.Type) ([]ModelColumn, er
 			return nil, err
 		}
 
+		// column 可能为 nil（如果字段被标记为忽略）
 		if column != nil {
 			columns = append(columns, *column)
 		}
 	}
 
 	return columns, nil
+}
+
+// AnalyzeModelForMigration 分析模型结构体用于迁移（排除迁移忽略的字段）
+func (ma *ModelAnalyzer) AnalyzeModelForMigration(modelType reflect.Type) ([]ModelColumn, error) {
+	columns, err := ma.AnalyzeModel(modelType)
+	if err != nil {
+		return nil, err
+	}
+
+	// 过滤掉迁移忽略的字段
+	var migrationColumns []ModelColumn
+	for _, col := range columns {
+		if !col.IgnoreAll && !col.IgnoreMigration {
+			migrationColumns = append(migrationColumns, col)
+		}
+	}
+
+	return migrationColumns, nil
+}
+
+// GetFieldPermission 获取字段的权限配置
+func (ma *ModelAnalyzer) GetFieldPermission(field reflect.StructField) FieldPermission {
+	perm := DefaultFieldPermission()
+
+	tormTag := field.Tag.Get("torm")
+	if tormTag == "" {
+		return perm
+	}
+
+	// 创建临时列来解析权限
+	column := &ModelColumn{
+		CanRead:   true,
+		CanCreate: true,
+		CanUpdate: true,
+	}
+
+	// 解析权限指令
+	semiParts := strings.Split(tormTag, ";")
+	for _, semiPart := range semiParts {
+		semiPart = strings.TrimSpace(semiPart)
+		if ma.isPermissionDirective(semiPart) {
+			ma.parsePermissionDirective(semiPart, column)
+		}
+
+		// 也检查逗号分隔的部分
+		parts := strings.Split(semiPart, ",")
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if ma.isPermissionDirective(part) {
+				ma.parsePermissionDirective(part, column)
+			}
+		}
+	}
+
+	perm.Read = column.CanRead
+	perm.Create = column.CanCreate
+	perm.Update = column.CanUpdate
+	perm.IgnoreAll = column.IgnoreAll
+	perm.IgnoreMigrate = column.IgnoreMigration
+	perm.IgnoreReadWrite = column.IgnoreReadWrite
+
+	return perm
 }
 
 // HasDBTag 检查字段是否有数据库相关的标签
@@ -67,14 +155,24 @@ func (ma *ModelAnalyzer) HasDBTag(field reflect.StructField) bool {
 func (ma *ModelAnalyzer) analyzeField(field reflect.StructField) (*ModelColumn, error) {
 	column := &ModelColumn{
 		Name: ma.GetColumnName(field),
+		// 默认权限：允许读写
+		CanRead:   true,
+		CanCreate: true,
+		CanUpdate: true,
 	}
 
 	// 分析Go类型并映射到数据库类型
 	column.Type = ma.mapGoTypeToColumnType(field.Type)
+	column.GoType = field.Type.String()
 
 	// 解析标签
 	if err := ma.parseFieldTags(field, column); err != nil {
 		return nil, err
+	}
+
+	// 如果字段被标记为完全忽略或迁移忽略，返回nil
+	if column.IgnoreAll || column.IgnoreMigration {
+		return nil, nil
 	}
 
 	return column, nil
@@ -126,26 +224,146 @@ func (ma *ModelAnalyzer) parseFieldTags(field reflect.StructField, column *Model
 
 // parseTormTag 解析torm标签
 func (ma *ModelAnalyzer) parseTormTag(tormTag string, column *ModelColumn) error {
-	parts := strings.Split(tormTag, ",")
+	// 首先处理分号分隔的权限指令（如 "->;<-:create"）
+	// 然后处理逗号分隔的其他属性
 
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
+	// 分割分号分隔的部分（权限指令）
+	semiParts := strings.Split(tormTag, ";")
+
+	for _, semiPart := range semiParts {
+		semiPart = strings.TrimSpace(semiPart)
+		if semiPart == "" {
 			continue
 		}
 
-		if strings.Contains(part, ":") {
-			// 键值对形式: key:value
-			if err := ma.ParseTormKeyValue(part, column); err != nil {
-				return err
+		// 检查是否是权限指令
+		if ma.isPermissionDirective(semiPart) {
+			ma.parsePermissionDirective(semiPart, column)
+			continue
+		}
+
+		// 处理逗号分隔的属性
+		parts := strings.Split(semiPart, ",")
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
 			}
-		} else {
-			// 标志形式: primary_key, unique等
-			ma.ParseTormFlag(part, column)
+
+			// 检查是否是权限指令
+			if ma.isPermissionDirective(part) {
+				ma.parsePermissionDirective(part, column)
+				continue
+			}
+
+			if strings.Contains(part, ":") {
+				// 键值对形式: key:value
+				if err := ma.ParseTormKeyValue(part, column); err != nil {
+					return err
+				}
+			} else {
+				// 标志形式: primary_key, unique等
+				ma.ParseTormFlag(part, column)
+			}
 		}
 	}
 
 	return nil
+}
+
+// isPermissionDirective 检查是否是权限指令
+func (ma *ModelAnalyzer) isPermissionDirective(part string) bool {
+	part = strings.TrimSpace(part)
+	// 权限指令以 "<-", "->", 或 "-" 开头
+	return strings.HasPrefix(part, "<-") ||
+		strings.HasPrefix(part, "->") ||
+		(strings.HasPrefix(part, "-") && !strings.HasPrefix(part, "-:"))
+}
+
+// parsePermissionDirective 解析权限指令
+// 支持的格式:
+// `torm:"<-:create"` - 允许读和创建
+// `torm:"<-:update"` - 允许读和更新
+// `torm:"<-"`        - 允许读和写（创建和更新）
+// `torm:"<-:false"`  - 允许读，禁止写
+// `torm:"->"`        - 只读（除非有自定义配置，否则禁止写）
+// `torm:"->;<-:create"` - 允许读和创建
+// `torm:"->:false;<-:create"` - 仅创建（禁止从db读）
+// `torm:"-"`         - 通过struct读写会忽略该字段
+// `torm:"-:all"`     - 通过struct读写、迁移会忽略该字段
+// `torm:"-:migration"` - 通过struct迁移会忽略该字段
+func (ma *ModelAnalyzer) parsePermissionDirective(directive string, column *ModelColumn) {
+	directive = strings.TrimSpace(directive)
+
+	// 处理 "-" 开头的忽略指令
+	if strings.HasPrefix(directive, "-") && !strings.HasPrefix(directive, "->") && !strings.HasPrefix(directive, "<-") {
+		if directive == "-" {
+			// `torm:"-"` - 通过struct读写会忽略该字段
+			column.IgnoreReadWrite = true
+			column.CanRead = false
+			column.CanCreate = false
+			column.CanUpdate = false
+		} else if strings.HasPrefix(directive, "-:") {
+			value := strings.TrimPrefix(directive, "-:")
+			switch strings.ToLower(value) {
+			case "all":
+				// `torm:"-:all"` - 通过struct读写、迁移会忽略该字段
+				column.IgnoreAll = true
+				column.IgnoreReadWrite = true
+				column.IgnoreMigration = true
+				column.CanRead = false
+				column.CanCreate = false
+				column.CanUpdate = false
+			case "migration":
+				// `torm:"-:migration"` - 通过struct迁移会忽略该字段
+				column.IgnoreMigration = true
+			}
+		}
+		return
+	}
+
+	// 处理 "->" 读取权限指令
+	if strings.HasPrefix(directive, "->") {
+		if directive == "->" {
+			// `torm:"->"` - 只读
+			column.CanRead = true
+			// 注意：只读模式下，如果没有其他写入指令，则禁止写入
+			// 但这里不直接设置 CanCreate/CanUpdate = false，
+			// 因为可能后续有 "<-:create" 等指令
+		} else if strings.HasPrefix(directive, "->:") {
+			value := strings.TrimPrefix(directive, "->:")
+			if strings.ToLower(value) == "false" {
+				// `torm:"->:false"` - 禁止从db读
+				column.CanRead = false
+			}
+		}
+		return
+	}
+
+	// 处理 "<-" 写入权限指令
+	if strings.HasPrefix(directive, "<-") {
+		if directive == "<-" {
+			// `torm:"<-"` - 允许读和写（创建和更新）
+			column.CanRead = true
+			column.CanCreate = true
+			column.CanUpdate = true
+		} else if strings.HasPrefix(directive, "<-:") {
+			value := strings.TrimPrefix(directive, "<-:")
+			switch strings.ToLower(value) {
+			case "create":
+				// `torm:"<-:create"` - 允许创建
+				column.CanCreate = true
+			case "update":
+				// `torm:"<-:update"` - 允许更新
+				column.CanUpdate = true
+			case "false":
+				// `torm:"<-:false"` - 禁止写
+				column.CanCreate = false
+				column.CanUpdate = false
+			}
+		}
+		return
+	}
 }
 
 // ParseTormKeyValue 解析torm标签的键值对

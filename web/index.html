@@ -136,6 +136,7 @@
                         <pre><code class="language-go">package main
 
 import (
+    "fmt"
     "time"
     "github.com/zhoudm1743/torm"
 )
@@ -144,7 +145,7 @@ import (
 type User struct {
     torm.BaseModel
     ID        int       `json:"id" torm:"primary_key,auto_increment"`
-    Username  string    `json:"username" torm:"type:varchar,size:50,unique"`
+    Username  string    `json:"username" torm:"type:varchar,size:50,unique,index"`
     Email     string    `json:"email" torm:"type:varchar,size:100,unique"`
     Age       int       `json:"age" torm:"type:int,default:0"`
     Status    string    `json:"status" torm:"type:varchar,size:20,default:active"`
@@ -153,7 +154,7 @@ type User struct {
 }
 
 func main() {
-    // 🚀 TORM 
+    // 🚀 三步快速上手 TORM
 
     // 第1步：配置数据库（支持MySQL、PostgreSQL、SQLite）
     torm.AddConnection("default", &torm.Config{
@@ -165,17 +166,16 @@ func main() {
         Password: "password",
     })
 
-    // 第2步：创建表结构
+    // 第2步：自动创建表结构
     user := &User{}
-    user.AutoMigrate() 
+    user.AutoMigrate()
     
-    // 第3步：开始使用
+    // 第3步：开始使用 - 创建、查询、更新、删除
     // 创建用户
     newUser := &User{
         Username: "zhangsan",
         Email:    "zhangsan@example.com",
         Age:      25,
-        Status:   "active",
     }
     newUser.Save()
     
@@ -183,10 +183,10 @@ func main() {
     users, _ := torm.Table("users").
         Where("status", "=", "active").
         Where("age", ">=", 18).
+        OrderBy("created_at", "desc").
         Get()
     
-    // 完成！无需复杂配置，立即可用
-    fmt.Printf("创建了 %d 个用户", len(users))
+    fmt.Printf("查询到 %d 个活跃用户\n", len(users))
 }</code></pre>
                     </div>
                     <div class="tab-content" id="model">
@@ -325,64 +325,58 @@ func crossDatabase() {
 }</code></pre>
                     </div>
                     <div class="tab-content" id="transaction">
-                        <pre><code class="language-go">// 🔗 查询构建器
+                        <pre><code class="language-go">// 🔗 查询构建器 & 事务处理
 
-func main() {
-    // 基础查询 - 链式调用
-    users, _ := torm.Table("users").
-        Where("status", "=", "active").
-        Where("age", ">=", 18).
-        OrderBy("created_at", "desc").
-        Limit(10).
-        Get()
+// 基础查询 - 链式调用
+users, _ := torm.Table("users").
+    Select("id", "username", "email").
+    Where("status", "=", "active").
+    Where("age", ">=", 18).
+    OrderBy("created_at", "desc").
+    Limit(10).
+    Get()
 
-    // 参数化查询 
-    user, _ := torm.Table("users").
-        Where("username = ? AND age >= ?", "zhangsan", 25).
-        First()
+// 参数化查询
+user, _ := torm.Table("users").
+    Where("username = ? AND age >= ?", "zhangsan", 25).
+    First()
 
-    // 数组参数支持
-    activeUsers, _ := torm.Table("users").
-        Where("status IN (?)", []string{"active", "premium", "vip"}).
-        Where("age BETWEEN ? AND ?", 18, 65).
-        Get()
+// 数组参数支持
+activeUsers, _ := torm.Table("users").
+    Where("status IN (?)", []string{"active", "premium"}).
+    Get()
 
-    // 复杂条件组合
-    complexResults, _ := torm.Table("users").
-        Where("(status = ? OR vip_level > ?) AND age >= ?", "premium", 3, 25).
-        WhereIn("department", []string{"tech", "product", "design"}).
-        Get()
+// 聚合查询
+count, _ := torm.Table("users").Where("status", "=", "active").Count()
+sum, _ := torm.Table("orders").Where("user_id", "=", 1).Sum("amount")
 
-    // 聚合和分页
-    count, _ := torm.Table("users").Where("status", "=", "active").Count()
+// 分页查询
+result, _ := torm.Table("users").
+    Where("status", "=", "active").
+    Paginate(1, 20) // 第1页，每页20条
+
+// 事务处理 - 自动提交/回滚
+err := torm.Transaction(func(tx torm.TransactionInterface) error {
+    _, err := tx.Exec("INSERT INTO orders (user_id, amount) VALUES (?, ?)",
+                     123, 99.99)
+    if err != nil {
+        return err // 自动回滚
+    }
     
-    pagination, _ := torm.Table("users").
-        Where("status", "=", "active").
-        Paginate(1, 20) // 第1页，每页20条
+    _, err = tx.Exec("UPDATE users SET balance = balance - ? WHERE id = ?",
+                    99.99, 123)
+    if err != nil {
+        return err // 自动回滚
+    }
 
-    // 事务处理 - 自动管理
-    err := torm.Transaction(func(tx torm.TransactionInterface) error {
-        // 在事务中执行多个操作
-        _, err := tx.Exec("INSERT INTO orders (user_id, amount) VALUES (?, ?)", 
-                         123, 99.99)
-        if err != nil {
-            return err // 自动回滚
-        }
-        
-        _, err = tx.Exec("UPDATE users SET balance = balance - ? WHERE id = ?", 
-                        99.99, 123)
-        if err != nil {
-            return err // 自动回滚
-        }
+    return nil // 自动提交
+})
 
-        return nil // 自动提交
-    })
-
-    // 跨数据库占位符自动适配
-    // MySQL: SELECT * FROM users WHERE status = ? AND age >= ?
-    // PostgreSQL: SELECT * FROM users WHERE status = $1 AND age >= $2
-    // SQLite: SELECT * FROM users WHERE status = ? AND age >= ?
-}</code></pre>
+// 缓存查询 - 5分钟有效期
+users, _ = torm.Table("users").
+    Where("status", "=", "active").
+    Cache(5 * time.Minute).
+    Get()</code></pre>
                     </div>
                 </div>
             </div>

@@ -12,9 +12,9 @@ import (
 // MigrationInterface 迁移接口
 type MigrationInterface interface {
 	// Up 执行迁移
-	Up(conn db.ConnectionInterface) error
+	Up(conn db.Connection) error
 	// Down 回滚迁移
-	Down(conn db.ConnectionInterface) error
+	Down(conn db.Connection) error
 	// Version 获取迁移版本号
 	Version() string
 	// Description 获取迁移描述
@@ -25,13 +25,13 @@ type MigrationInterface interface {
 type Migration struct {
 	version     string
 	description string
-	upFunc      func(conn db.ConnectionInterface) error
-	downFunc    func(conn db.ConnectionInterface) error
+	upFunc      func(conn db.Connection) error
+	downFunc    func(conn db.Connection) error
 }
 
 // NewMigration 创建新迁移
 func NewMigration(version, description string,
-	upFunc, downFunc func(conn db.ConnectionInterface) error) *Migration {
+	upFunc, downFunc func(conn db.Connection) error) *Migration {
 	return &Migration{
 		version:     version,
 		description: description,
@@ -41,7 +41,7 @@ func NewMigration(version, description string,
 }
 
 // Up 执行迁移
-func (m *Migration) Up(conn db.ConnectionInterface) error {
+func (m *Migration) Up(conn db.Connection) error {
 	if m.upFunc == nil {
 		return db.NewError(db.ErrCodeMigrationFailed, "up function not defined for migration").
 			WithContext("version", m.version)
@@ -59,7 +59,7 @@ func (m *Migration) Up(conn db.ConnectionInterface) error {
 }
 
 // Down 回滚迁移
-func (m *Migration) Down(conn db.ConnectionInterface) error {
+func (m *Migration) Down(conn db.Connection) error {
 	if m.downFunc == nil {
 		return db.NewError(db.ErrCodeMigrationRollbackFailed, "down function not defined for migration").
 			WithContext("version", m.version)
@@ -95,7 +95,7 @@ type MigrationRecord struct {
 
 // Migrator 迁移器
 type Migrator struct {
-	conn       db.ConnectionInterface
+	conn       db.Connection
 	migrations []MigrationInterface
 	tableName  string
 	logger     db.LoggerInterface
@@ -103,7 +103,7 @@ type Migrator struct {
 }
 
 // NewMigrator 创建新的迁移器
-func NewMigrator(conn db.ConnectionInterface, logger db.LoggerInterface) *Migrator {
+func NewMigrator(conn db.Connection, logger db.LoggerInterface) *Migrator {
 	return &Migrator{
 		conn:       conn,
 		migrations: make([]MigrationInterface, 0),
@@ -133,7 +133,7 @@ func (m *Migrator) Register(migration MigrationInterface) *Migrator {
 
 // RegisterFunc 注册函数式迁移
 func (m *Migrator) RegisterFunc(version, description string,
-	upFunc, downFunc func(conn db.ConnectionInterface) error) *Migrator {
+	upFunc, downFunc func(conn db.Connection) error) *Migrator {
 	migration := NewMigration(version, description, upFunc, downFunc)
 	return m.Register(migration)
 }

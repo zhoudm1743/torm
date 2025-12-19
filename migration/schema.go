@@ -77,10 +77,29 @@ type ModelColumn struct {
 	ForeignKey string // 外键表.字段
 	OnDelete   string // 删除时动作: "cascade", "restrict", "set null", "set default"
 	OnUpdate   string // 更新时动作: "cascade", "restrict", "set null", "set default"
-	
+
 	// 时间管理
 	AutoCreateTime bool // 自动创建时间字段
 	AutoUpdateTime bool // 自动更新时间字段
+
+	// 字段权限（用于读写控制）
+	// 支持的torm标签格式:
+	// `torm:"<-:create"` - 允许读和创建
+	// `torm:"<-:update"` - 允许读和更新
+	// `torm:"<-"`        - 允许读和写（创建和更新）
+	// `torm:"<-:false"`  - 允许读，禁止写
+	// `torm:"->"`        - 只读
+	// `torm:"->;<-:create"` - 允许读和创建
+	// `torm:"->:false;<-:create"` - 仅创建（禁止从db读）
+	// `torm:"-"`         - 通过struct读写会忽略该字段
+	// `torm:"-:all"`     - 通过struct读写、迁移会忽略该字段
+	// `torm:"-:migration"` - 通过struct迁移会忽略该字段
+	CanRead         bool // 是否允许从数据库读取
+	CanCreate       bool // 是否允许创建时写入
+	CanUpdate       bool // 是否允许更新时写入
+	IgnoreAll       bool // 完全忽略该字段（读写和迁移）
+	IgnoreMigration bool // 迁移时忽略该字段
+	IgnoreReadWrite bool // 读写时忽略该字段（但迁移时包含）
 }
 
 // Column 列定义
@@ -129,12 +148,12 @@ type Table struct {
 
 // SchemaBuilder 结构构建器
 type SchemaBuilder struct {
-	conn   db.ConnectionInterface
+	conn   db.Connection
 	driver string
 }
 
 // NewSchemaBuilder 创建结构构建器
-func NewSchemaBuilder(conn db.ConnectionInterface) *SchemaBuilder {
+func NewSchemaBuilder(conn db.Connection) *SchemaBuilder {
 	return &SchemaBuilder{
 		conn:   conn,
 		driver: conn.GetDriver(),
@@ -743,4 +762,260 @@ func (sb *SchemaBuilder) quoteName(name string) string {
 	default:
 		return name
 	}
+}
+
+// GenerateIndexesFromModelColumns 从模型列生成索引定义
+func (sb *SchemaBuilder) GenerateIndexesFromModelColumns(tableName string, columns []ModelColumn) []*Index {
+	var indexes []*Index
+
+	for _, col := range columns {
+		// 普通索引
+		if col.Index && !col.Unique && !col.PrimaryKey {
+			indexName := fmt.Sprintf("idx_%s_%s", tableName, col.Name)
+			indexes = append(indexes, &Index{
+				Name:    indexName,
+				Columns: []string{col.Name},
+				Unique:  false,
+				Type:    col.IndexType,
+			})
+		}
+
+		// 唯一索引（非主键）
+		if col.Unique && !col.PrimaryKey {
+			indexName := fmt.Sprintf("idx_%s_%s_unique", tableName, col.Name)
+			indexes = append(indexes, &Index{
+				Name:    indexName,
+				Columns: []string{col.Name},
+				Unique:  true,
+			})
+		}
+	}
+
+	return indexes
+}
+
+// GenerateForeignKeysFromModelColumns 从模型列生成外键定义
+func (sb *SchemaBuilder) GenerateForeignKeysFromModelColumns(tableName string, columns []ModelColumn) []*ForeignKey {
+	var foreignKeys []*ForeignKey
+
+	for _, col := range columns {
+		if col.ForeignKey != "" {
+			// 解析外键引用: "table.column" 或 "table(column)"
+			refTable, refColumn := sb.parseForeignKeyReference(col.ForeignKey)
+			if refTable != "" && refColumn != "" {
+				fkName := fmt.Sprintf("fk_%s_%s", tableName, col.Name)
+				fk := &ForeignKey{
+					Name:              fkName,
+					Columns:           []string{col.Name},
+					ReferencedTable:   refTable,
+					ReferencedColumns: []string{refColumn},
+				}
+
+				if col.OnDelete != "" {
+					fk.OnDelete = strings.ToUpper(strings.ReplaceAll(col.OnDelete, "_", " "))
+				}
+				if col.OnUpdate != "" {
+					fk.OnUpdate = strings.ToUpper(strings.ReplaceAll(col.OnUpdate, "_", " "))
+				}
+
+				foreignKeys = append(foreignKeys, fk)
+			}
+		}
+	}
+
+	return foreignKeys
+}
+
+// parseForeignKeyReference 解析外键引用
+func (sb *SchemaBuilder) parseForeignKeyReference(reference string) (table, column string) {
+	// 支持 "table.column" 和 "table(column)" 格式
+	if strings.Contains(reference, ".") {
+		parts := strings.Split(reference, ".")
+		if len(parts) == 2 {
+			return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+		}
+	} else if strings.Contains(reference, "(") && strings.Contains(reference, ")") {
+		table = strings.TrimSpace(reference[:strings.Index(reference, "(")])
+		column = strings.TrimSpace(reference[strings.Index(reference, "(")+1 : strings.Index(reference, ")")])
+		return table, column
+	}
+
+	return "", ""
+}
+
+// ConvertModelColumnsToColumns 将ModelColumn转换为Column
+func (sb *SchemaBuilder) ConvertModelColumnsToColumns(modelColumns []ModelColumn) []*Column {
+	var columns []*Column
+
+	for _, mc := range modelColumns {
+		// 跳过迁移忽略的字段
+		if mc.IgnoreAll || mc.IgnoreMigration {
+			continue
+		}
+
+		col := &Column{
+			Name:          mc.Name,
+			Type:          mc.Type,
+			Length:        mc.Length,
+			Precision:     mc.Precision,
+			Scale:         mc.Scale,
+			NotNull:       mc.NotNull,
+			PrimaryKey:    mc.PrimaryKey,
+			AutoIncrement: mc.AutoIncrement,
+			Unique:        mc.Unique,
+			Default:       mc.Default,
+			Comment:       mc.Comment,
+		}
+		columns = append(columns, col)
+	}
+
+	return columns
+}
+
+// CreateTableFromModelColumns 从模型列创建表
+func (sb *SchemaBuilder) CreateTableFromModelColumns(tableName string, modelColumns []ModelColumn) error {
+	// 转换列定义
+	columns := sb.ConvertModelColumnsToColumns(modelColumns)
+
+	// 生成索引
+	indexes := sb.GenerateIndexesFromModelColumns(tableName, modelColumns)
+
+	// 生成外键
+	foreignKeys := sb.GenerateForeignKeysFromModelColumns(tableName, modelColumns)
+
+	// 创建表定义
+	table := &Table{
+		Name:        tableName,
+		Columns:     columns,
+		Indexes:     indexes,
+		ForeignKeys: foreignKeys,
+	}
+
+	return sb.CreateTable(table)
+}
+
+// RenameColumn 重命名列
+func (sb *SchemaBuilder) RenameColumn(tableName, oldName, newName string) error {
+	var sql string
+
+	switch sb.driver {
+	case "mysql":
+		// MySQL 8.0+ 支持 RENAME COLUMN
+		sql = fmt.Sprintf("ALTER TABLE %s RENAME COLUMN %s TO %s",
+			sb.quoteName(tableName), sb.quoteName(oldName), sb.quoteName(newName))
+	case "postgres", "postgresql":
+		sql = fmt.Sprintf("ALTER TABLE %s RENAME COLUMN %s TO %s",
+			sb.quoteName(tableName), sb.quoteName(oldName), sb.quoteName(newName))
+	case "sqlite", "sqlite3":
+		// SQLite 3.25.0+ 支持 RENAME COLUMN
+		sql = fmt.Sprintf("ALTER TABLE %s RENAME COLUMN %s TO %s",
+			sb.quoteName(tableName), sb.quoteName(oldName), sb.quoteName(newName))
+	case "sqlserver", "mssql":
+		sql = fmt.Sprintf("EXEC sp_rename '%s.%s', '%s', 'COLUMN'",
+			tableName, oldName, newName)
+	default:
+		return fmt.Errorf("unsupported driver for rename column: %s", sb.driver)
+	}
+
+	_, err := sb.conn.Exec(sql)
+	if err != nil {
+		return fmt.Errorf("failed to rename column %s to %s in table %s: %w",
+			oldName, newName, tableName, err)
+	}
+
+	return nil
+}
+
+// HasTable 检查表是否存在
+func (sb *SchemaBuilder) HasTable(tableName string) (bool, error) {
+	var query string
+	var args []interface{}
+
+	switch sb.driver {
+	case "mysql":
+		query = "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?"
+		args = []interface{}{tableName}
+	case "postgres", "postgresql":
+		query = "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = $1"
+		args = []interface{}{tableName}
+	case "sqlite", "sqlite3":
+		query = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?"
+		args = []interface{}{tableName}
+	case "sqlserver", "mssql":
+		query = "SELECT COUNT(*) FROM sys.tables WHERE name = ?"
+		args = []interface{}{tableName}
+	default:
+		return false, fmt.Errorf("unsupported driver: %s", sb.driver)
+	}
+
+	row := sb.conn.QueryRow(query, args...)
+	var count int
+	if err := row.Scan(&count); err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
+}
+
+// HasColumn 检查列是否存在
+func (sb *SchemaBuilder) HasColumn(tableName, columnName string) (bool, error) {
+	var query string
+	var args []interface{}
+
+	switch sb.driver {
+	case "mysql":
+		query = "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?"
+		args = []interface{}{tableName, columnName}
+	case "postgres", "postgresql":
+		query = "SELECT COUNT(*) FROM information_schema.columns WHERE table_name = $1 AND column_name = $2"
+		args = []interface{}{tableName, columnName}
+	case "sqlite", "sqlite3":
+		// SQLite 需要使用 PRAGMA
+		query = fmt.Sprintf("SELECT COUNT(*) FROM pragma_table_info('%s') WHERE name = ?", tableName)
+		args = []interface{}{columnName}
+	case "sqlserver", "mssql":
+		query = "SELECT COUNT(*) FROM sys.columns WHERE object_id = OBJECT_ID(?) AND name = ?"
+		args = []interface{}{tableName, columnName}
+	default:
+		return false, fmt.Errorf("unsupported driver: %s", sb.driver)
+	}
+
+	row := sb.conn.QueryRow(query, args...)
+	var count int
+	if err := row.Scan(&count); err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
+}
+
+// HasIndex 检查索引是否存在
+func (sb *SchemaBuilder) HasIndex(tableName, indexName string) (bool, error) {
+	var query string
+	var args []interface{}
+
+	switch sb.driver {
+	case "mysql":
+		query = "SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?"
+		args = []interface{}{tableName, indexName}
+	case "postgres", "postgresql":
+		query = "SELECT COUNT(*) FROM pg_indexes WHERE tablename = $1 AND indexname = $2"
+		args = []interface{}{tableName, indexName}
+	case "sqlite", "sqlite3":
+		query = "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND tbl_name = ? AND name = ?"
+		args = []interface{}{tableName, indexName}
+	case "sqlserver", "mssql":
+		query = "SELECT COUNT(*) FROM sys.indexes WHERE object_id = OBJECT_ID(?) AND name = ?"
+		args = []interface{}{tableName, indexName}
+	default:
+		return false, fmt.Errorf("unsupported driver: %s", sb.driver)
+	}
+
+	row := sb.conn.QueryRow(query, args...)
+	var count int
+	if err := row.Scan(&count); err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
 }
