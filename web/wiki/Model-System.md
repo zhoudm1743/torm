@@ -1153,7 +1153,7 @@ func developmentWorkflow() {
 
 ## 🎨 访问器系统 (Accessor System)
 
-TORM 提供了强大的属性访问器（Accessor）和修改器（Mutator）系统，类似于 ThinkPHP 的模型访问器，但更加强大和灵活。
+TORM 提供了强大的属性访问器（Accessor）和修改器（Mutator）系统，模型访问器，更加强大和灵活。
 
 ### 🚀 访问器基础
 

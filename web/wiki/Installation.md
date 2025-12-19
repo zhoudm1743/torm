@@ -32,7 +32,7 @@
 go get github.com/zhoudm1743/torm
 
 # 安装指定版本
-go get github.com/zhoudm1743/torm@v1.1.6
+go get github.com/zhoudm1743/torm@v1.3.0
 ```
 
 ### 方法2: 使用 go mod
@@ -699,7 +699,7 @@ go list -m github.com/zhoudm1743/torm
 go get -u github.com/zhoudm1743/torm
 
 # 或升级到指定版本
-go get github.com/zhoudm1743/torm@v1.1.6
+go get github.com/zhoudm1743/torm@v1.3.0
 
 # 清理未使用的依赖
 go mod tidy

@@ -1,5 +1,5 @@
 // Package torm 是一个高性能的 Go ORM 框架
-// 参考 ThinkORM 4.0 架构设计，对 database/sql 进行深度封装
+// 对 database/sql 进行深度封装
 //
 // 主要特性:
 //   - 支持 MySQL、PostgreSQL、SQLite 多种数据库

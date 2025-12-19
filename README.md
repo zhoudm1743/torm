@@ -5,7 +5,7 @@
 [![Documentation](https://img.shields.io/badge/docs-torm.site-brightgreen.svg)](http://torm.site)
 [![Version](https://img.shields.io/badge/version-1.2.12-orange.svg)](https://github.com/zhoudm1743/torm/releases)
 
-TORM 是一个参考 ThinkORM 4.0 架构设计的高性能 Go ORM 框架，对 database/sql 进行深度封装，提供流畅的链式查询、完整的模型系统、关联关系、事务支持、查询缓存和数据库迁移功能。
+TORM 是一个高性能 Go ORM 框架，对 database/sql 进行深度封装，提供流畅的链式查询、完整的模型系统、关联关系、事务支持、查询缓存和数据库迁移功能。
 
 如果您觉得 TORM 有帮助，请帮忙给个 star ⭐
 

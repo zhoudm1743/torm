@@ -85,12 +85,12 @@ type QueryInterface interface {
     WhereRaw(expression string, bindings ...interface{}) QueryInterface
     WhereIn(column string, values []interface{}) QueryInterface
     WhereNotIn(column string, values []interface{}) QueryInterface
-    WhereBetween(column string, values []interface{}) QueryInterface  // v1.1.6 更新
-    WhereNotBetween(column string, values []interface{}) QueryInterface  // v1.1.6 新增
+    WhereBetween(column string, values []interface{}) QueryInterface  // v1.3.0 更新
+    WhereNotBetween(column string, values []interface{}) QueryInterface  // v1.3.0 新增
     WhereNull(column string) QueryInterface
     WhereNotNull(column string) QueryInterface
-    WhereExists(subQuery interface{}) QueryInterface              // v1.1.6 增强
-    WhereNotExists(subQuery interface{}) QueryInterface          // v1.1.6 增强
+    WhereExists(subQuery interface{}) QueryInterface              // v1.3.0 增强
+    WhereNotExists(subQuery interface{}) QueryInterface          // v1.3.0 增强
     
     // OR 条件
     OrWhere(column string, operator string, value interface{}) QueryInterface
@@ -111,11 +111,11 @@ type QueryInterface interface {
     // 排序
     OrderBy(column string, direction string) QueryInterface
     OrderByRaw(expression string, bindings ...interface{}) QueryInterface
-    OrderRand() QueryInterface                               // v1.1.6 新增：随机排序
-    OrderField(field string, values []interface{}, direction string) QueryInterface  // v1.1.6 新增：按值排序
+    OrderRand() QueryInterface                               // v1.3.0 新增：随机排序
+    OrderField(field string, values []interface{}, direction string) QueryInterface  // v1.3.0 新增：按值排序
     
     // 字段表达式
-    FieldRaw(expression string, bindings ...interface{}) QueryInterface  // v1.1.6 新增：原生字段
+    FieldRaw(expression string, bindings ...interface{}) QueryInterface  // v1.3.0 新增：原生字段
     
     // 分组
     GroupBy(columns ...string) QueryInterface

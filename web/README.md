@@ -34,7 +34,7 @@ web/
 
 ### 统一标签语法
 
-TORM v1.1.6 引入了统一的 `torm` 标签，简化了模型定义：
+TORM v1.3.0 引入了统一的 `torm` 标签，简化了模型定义：
 
 ```go
 type User struct {
@@ -146,7 +146,7 @@ go run -m httptest.NewServer
 
 ### TORM 特性展示
 
-网站完整展示了 TORM v1.1.6 的核心特性：
+网站完整展示了 TORM v1.3.0 的核心特性：
 
 - **统一标签语法**: 展示 `torm` 标签的使用方法
 - **大小写不敏感**: 演示各种大小写组合
@@ -234,7 +234,7 @@ go run -m httptest.NewServer
 
 ## 📈 更新历史
 
-### v1.1.6 (最新)
+### v1.3.0 (最新)
 - ✅ 引入统一的 `torm` 标签语法
 - ✅ 支持大小写不敏感的标签解析
 - ✅ 新增 AutoMigrate 自动迁移功能
