@@ -4,6 +4,7 @@ TORM API 完整参考文档，包含所有核心接口、方法和参数说明�
 
 ## 📋 目录
 
+- [全局函数](#全局函数)
 - [数据库连接](#数据库连接)
 - [查询构建器](#查询构建器)
 - [模型接口](#模型接口)
@@ -11,11 +12,42 @@ TORM API 完整参考文档，包含所有核心接口、方法和参数说明�
 - [缓存接口](#缓存接口)
 - [迁移接口](#迁移接口)
 
+## 🌐 全局函数
+
+### torm 包入口函数
+
+```go
+import "github.com/zhoudm1743/torm"
+
+// 添加数据库连接
+func AddConnection(name string, config *Config) error
+
+// 获取查询构建器
+func Table(table string, connectionName ...string) (*QueryBuilder, error)
+
+// 获取数据库连接
+func DB(name ...string) (Connection, error)
+
+// 获取版本号
+func GetVersion() string
+
+// 事务处理
+func Transaction(fn func(tx TransactionInterface) error, connectionName ...string) error
+func BeginTransaction(connectionName ...string) (*DBTransaction, error)
+
+// 日志控制
+func EnableSQLLogging()
+func SetSQLLogging(level int, enabled bool)
+func SetLogger(logger LoggerInterface)
+
+// 关闭连接
+func Close(name ...string) error
+func CloseAll() error
+```
+
 ## 🔌 数据库连接
 
-### db.Config
-
-数据库配置结构体：
+### Config 配置结构体
 
 ```go
 type Config struct {
@@ -33,72 +65,79 @@ type Config struct {
     ConnMaxLifetime time.Duration // 连接最大生存时间，默认 1小时
     ConnMaxIdleTime time.Duration // 连接最大空闲时间，默认 30分钟
     
-    // SSL配置
+    // SSL配置 (PostgreSQL)
     SSLMode         string        // SSL模式: "disable", "require", "verify-ca"
-    SSLCert         string        // SSL证书路径
-    SSLKey          string        // SSL密钥路径
-    SSLRootCert     string        // SSL根证书路径
     
     // 日志配置
     LogQueries      bool          // 是否记录查询日志
 }
 ```
 
-### 连接管理函数
+### 连接管理
 
 ```go
 // 添加数据库连接
-func AddConnection(name string, config *Config) error
-
-// 获取数据库管理器
-func DefaultManager() *DbManager
+err := torm.AddConnection("default", &torm.Config{
+    Driver:   "mysql",
+    Host:     "localhost",
+    Port:     3306,
+    Database: "myapp",
+    Username: "root",
+    Password: "password",
+})
 
 // 获取数据库连接
-func (m *DbManager) Connection(name string) (Connection, error)
+conn, err := torm.DB("default")
+
+// 测试连接
+err = conn.Ping(ctx)
 
 // 关闭连接
-func (m *DbManager) Close(name string) error
+err = torm.Close("default")
 
 // 关闭所有连接
-func (m *DbManager) CloseAll() error
-```
-
-### DSN 构建
-
-```go
-// MySQL DSN
-func (c *Config) MySQLDSN() string
-
-// PostgreSQL DSN
-func (c *Config) PostgresDSN() string
-
-// SQLite DSN
-func (c *Config) SQLiteDSN() string
+err = torm.CloseAll()
 ```
 
 ## 🔍 查询构建器
 
-### QueryBuilder
-
-查询构建器核心方法：
+### 创建查询
 
 ```go
-// 创建查询构建器
-func NewQueryBuilder(connectionName string) (*QueryBuilder, error)
+// 方式1：使用全局函数
+query, err := torm.Table("users")
+query, err := torm.Table("users", "mysql_conn")
 
-// 表操作
-func (q *QueryBuilder) Table(table string) *QueryBuilder
-func (q *QueryBuilder) From(table string) *QueryBuilder
+// 方式2：使用连接创建
+conn, _ := torm.DB("default")
+query := conn.Table("users")
+```
 
-// 字段选择
+### 字段选择
+
+```go
 func (q *QueryBuilder) Select(columns ...interface{}) *QueryBuilder
 func (q *QueryBuilder) SelectRaw(expression string, bindings ...interface{}) *QueryBuilder
 func (q *QueryBuilder) Distinct() *QueryBuilder
+```
 
-// 条件查询
+```go
+// 示例
+query.Select("id", "name", "email")
+query.Select("users.id", "users.name", "profiles.avatar")
+query.SelectRaw("COUNT(*) as total")
+query.Distinct()
+```
+
+### WHERE 条件
+
+```go
+// 基础条件
 func (q *QueryBuilder) Where(args ...interface{}) *QueryBuilder
 func (q *QueryBuilder) OrWhere(args ...interface{}) *QueryBuilder
 func (q *QueryBuilder) WhereRaw(expression string, bindings ...interface{}) *QueryBuilder
+
+// 特殊条件
 func (q *QueryBuilder) WhereIn(column string, values []interface{}) *QueryBuilder
 func (q *QueryBuilder) WhereNotIn(column string, values []interface{}) *QueryBuilder
 func (q *QueryBuilder) WhereBetween(column string, values []interface{}) *QueryBuilder
@@ -107,77 +146,174 @@ func (q *QueryBuilder) WhereNull(column string) *QueryBuilder
 func (q *QueryBuilder) WhereNotNull(column string) *QueryBuilder
 func (q *QueryBuilder) WhereLike(column string, pattern string) *QueryBuilder
 func (q *QueryBuilder) WhereNotLike(column string, pattern string) *QueryBuilder
+func (q *QueryBuilder) WhereExists(subQuery string, bindings ...interface{}) *QueryBuilder
+func (q *QueryBuilder) WhereNotExists(subQuery string, bindings ...interface{}) *QueryBuilder
+```
 
-// 连接查询
+```go
+// 示例
+query.Where("status", "=", "active")
+query.Where("age", ">=", 18)
+query.OrWhere("vip_level", ">", 3)
+query.WhereIn("status", []interface{}{"active", "pending"})
+query.WhereBetween("age", []interface{}{18, 65})
+query.WhereNull("deleted_at")
+query.WhereNotNull("email")
+query.WhereLike("name", "%张%")
+```
+
+### JOIN 查询
+
+```go
 func (q *QueryBuilder) Join(table, first, operator, second string) *QueryBuilder
 func (q *QueryBuilder) LeftJoin(table, first, operator, second string) *QueryBuilder
 func (q *QueryBuilder) RightJoin(table, first, operator, second string) *QueryBuilder
 func (q *QueryBuilder) CrossJoin(table string) *QueryBuilder
+```
 
-// 排序
+```go
+// 示例
+query.Join("profiles", "users.id", "=", "profiles.user_id")
+query.LeftJoin("orders", "users.id", "=", "orders.user_id")
+```
+
+### 排序和分组
+
+```go
 func (q *QueryBuilder) OrderBy(column, direction string) *QueryBuilder
 func (q *QueryBuilder) OrderByRaw(expression string, bindings ...interface{}) *QueryBuilder
 func (q *QueryBuilder) OrderRand() *QueryBuilder
-
-// 分组
+func (q *QueryBuilder) OrderField(column string, values []interface{}, direction string) *QueryBuilder
 func (q *QueryBuilder) GroupBy(columns ...string) *QueryBuilder
 func (q *QueryBuilder) Having(args ...interface{}) *QueryBuilder
 func (q *QueryBuilder) HavingRaw(expression string, bindings ...interface{}) *QueryBuilder
+```
 
-// 限制
+```go
+// 示例
+query.OrderBy("created_at", "desc")
+query.OrderRand() // 随机排序，自动适配数据库
+query.OrderField("status", []interface{}{"premium", "active", "trial"}, "asc")
+query.GroupBy("category")
+query.Having("COUNT(*)", ">", 5)
+```
+
+### 限制和分页
+
+```go
 func (q *QueryBuilder) Limit(limit int) *QueryBuilder
 func (q *QueryBuilder) Offset(offset int) *QueryBuilder
 func (q *QueryBuilder) Page(page, size int) *QueryBuilder
+func (q *QueryBuilder) Paginate(page, perPage int) (*Pagination, error)
+```
 
-// 执行查询
+```go
+// 示例
+query.Limit(10)
+query.Offset(20)
+query.Page(2, 10) // 第2页，每页10条
+result, err := query.Paginate(1, 20) // 分页查询
+```
+
+### 执行查询
+
+```go
+// 获取多条记录
 func (q *QueryBuilder) Get() ([]map[string]interface{}, error)
-func (q *QueryBuilder) GetRaw() ([]map[string]interface{}, error)
+
+// 获取单条记录
 func (q *QueryBuilder) First() (map[string]interface{}, error)
-func (q *QueryBuilder) FirstRaw() (map[string]interface{}, error)
+
+// 根据主键查找
+func (q *QueryBuilder) Find(id interface{}) (map[string]interface{}, error)
+
+// 获取单列值
 func (q *QueryBuilder) Pluck(column string) ([]interface{}, error)
 func (q *QueryBuilder) Value(column string) (interface{}, error)
-func (q *QueryBuilder) Exists() (bool, error)
 
-// 聚合查询
+// 检查是否存在
+func (q *QueryBuilder) Exists() (bool, error)
+```
+
+### 聚合查询
+
+```go
 func (q *QueryBuilder) Count() (int64, error)
 func (q *QueryBuilder) Sum(column string) (interface{}, error)
 func (q *QueryBuilder) Avg(column string) (interface{}, error)
 func (q *QueryBuilder) Max(column string) (interface{}, error)
 func (q *QueryBuilder) Min(column string) (interface{}, error)
+```
 
-// 插入
+### 插入数据
+
+```go
 func (q *QueryBuilder) Insert(data map[string]interface{}) (int64, error)
 func (q *QueryBuilder) InsertBatch(data []map[string]interface{}) (int64, error)
 func (q *QueryBuilder) InsertGetId(data map[string]interface{}) (int64, error)
+```
 
-// 更新
+```go
+// 示例
+id, err := query.Insert(map[string]interface{}{
+    "name":  "张三",
+    "email": "zhangsan@example.com",
+})
+
+// 批量插入
+count, err := query.InsertBatch([]map[string]interface{}{
+    {"name": "用户1", "email": "user1@example.com"},
+    {"name": "用户2", "email": "user2@example.com"},
+})
+```
+
+### 更新数据
+
+```go
 func (q *QueryBuilder) Update(data map[string]interface{}) (int64, error)
 func (q *QueryBuilder) Increment(column string, amount interface{}) (int64, error)
 func (q *QueryBuilder) Decrement(column string, amount interface{}) (int64, error)
+```
 
-// 删除
+```go
+// 示例
+affected, err := query.Where("id", "=", 1).Update(map[string]interface{}{
+    "status": "inactive",
+})
+
+affected, err := query.Where("id", "=", 1).Increment("views", 1)
+```
+
+### 删除数据
+
+```go
 func (q *QueryBuilder) Delete() (int64, error)
 func (q *QueryBuilder) Truncate() error
+```
 
-// 分页
-func (q *QueryBuilder) Paginate(page, perPage int) (*Pagination, error)
+### 缓存
 
-// 分块处理
-func (q *QueryBuilder) Chunk(size int, callback func([]map[string]interface{}) bool) error
-
-// 缓存
+```go
 func (q *QueryBuilder) Cache(duration time.Duration) *QueryBuilder
 func (q *QueryBuilder) CacheWithTags(duration time.Duration, tags ...string) *QueryBuilder
 func (q *QueryBuilder) CacheKey(key string) *QueryBuilder
+```
 
-// 调试
+```go
+// 示例
+users, err := query.Where("status", "=", "active").
+    Cache(5 * time.Minute).
+    Get()
+```
+
+### 调试
+
+```go
 func (q *QueryBuilder) ToSQL() (string, []interface{})
-
-// 克隆
 func (q *QueryBuilder) Clone() *QueryBuilder
 ```
 
-### 分页结果
+### 分页结果结构
 
 ```go
 type Pagination struct {
@@ -193,70 +329,48 @@ type Pagination struct {
 
 ## 📊 模型接口
 
-### BaseModel
-
-基础模型方法：
+### BaseModel 方法
 
 ```go
 // 创建模型
 func NewModel(args ...interface{}) *BaseModel
 
-// 配置方法
+// 表配置
 func (m *BaseModel) SetTable(table string) *BaseModel
 func (m *BaseModel) GetTableName() string
 func (m *BaseModel) SetPrimaryKey(key string) *BaseModel
 func (m *BaseModel) GetPrimaryKey() string
 func (m *BaseModel) SetConnection(connection string) *BaseModel
-func (m *BaseModel) GetConnection() string
 
 // 属性操作
 func (m *BaseModel) SetAttribute(key string, value interface{}) Model
 func (m *BaseModel) GetAttribute(key string) interface{}
-func (m *BaseModel) SetAttributes(attrs map[string]interface{}) Model
-func (m *BaseModel) GetAttributes() map[string]interface{}
 func (m *BaseModel) Fill(data map[string]interface{}) *BaseModel
-func (m *BaseModel) ClearAttributes() *BaseModel
+func (m *BaseModel) GetAttributes() map[string]interface{}
 
 // 状态方法
 func (m *BaseModel) IsNew() bool
-func (m *BaseModel) IsExists() bool
 func (m *BaseModel) IsDirty() bool
 func (m *BaseModel) GetDirty() map[string]interface{}
-func (m *BaseModel) MarkAsNew() *BaseModel
-func (m *BaseModel) MarkAsExists() *BaseModel
-
-// 主键操作
-func (m *BaseModel) GetKey() interface{}
-func (m *BaseModel) SetKey(key interface{}) *BaseModel
 
 // 持久化操作
 func (m *BaseModel) Save() error
 func (m *BaseModel) Delete() error
 func (m *BaseModel) Find(pk interface{}) error
-func (m *BaseModel) FindByPK(pk interface{}) error
-func (m *BaseModel) Reload() error
 
 // 软删除
 func (m *BaseModel) SoftDelete() error
 func (m *BaseModel) Restore() error
 func (m *BaseModel) ForceDelete() error
-func (m *BaseModel) IsSoftDeleted() bool
 func (m *BaseModel) EnableSoftDeletes() *BaseModel
-func (m *BaseModel) DisableSoftDeletes() *BaseModel
 
 // 时间戳
 func (m *BaseModel) EnableTimestamps() Model
 func (m *BaseModel) DisableTimestamps() Model
-func (m *BaseModel) SetCreatedAtField(field string) *BaseModel
-func (m *BaseModel) SetUpdatedAtField(field string) *BaseModel
 
 // 查询方法
 func (m *BaseModel) Query() (*QueryBuilder, error)
-func (m *BaseModel) RawQuery() (*QueryBuilder, error)
 func (m *BaseModel) Where(args ...interface{}) (*QueryBuilder, error)
-func (m *BaseModel) Get() ([]map[string]interface{}, error)
-func (m *BaseModel) First() (map[string]interface{}, error)
-func (m *BaseModel) Count() (int64, error)
 
 // 关联方法
 func (m *BaseModel) HasOne(model interface{}, foreignKey, localKey string) *HasOne
@@ -266,38 +380,14 @@ func (m *BaseModel) BelongsToMany(model interface{}, pivotTable, foreignKey, loc
 
 // 预加载
 func (m *BaseModel) With(relations ...string) *ModelQueryBuilder
-func (m *BaseModel) WithConstraint(relation string, constraint func(*QueryBuilder) *QueryBuilder) *ModelQueryBuilder
 func (m *BaseModel) Load(relations ...string) error
-func (m *BaseModel) GetRelation(name string) interface{}
-func (m *BaseModel) SetRelation(name string, data interface{}) *BaseModel
 
 // 序列化
 func (m *BaseModel) ToMap() map[string]interface{}
 func (m *BaseModel) ToJSON() (string, error)
-func (m *BaseModel) FromJSON(jsonStr string) error
 
 // 迁移
 func (m *BaseModel) AutoMigrate(models ...interface{}) error
-```
-
-### 事件钩子
-
-```go
-// 保存钩子
-func (m *BaseModel) BeforeSave() error
-func (m *BaseModel) AfterSave() error
-
-// 创建钩子
-func (m *BaseModel) BeforeCreate() error
-func (m *BaseModel) AfterCreate() error
-
-// 更新钩子
-func (m *BaseModel) BeforeUpdate() error
-func (m *BaseModel) AfterUpdate() error
-
-// 删除钩子
-func (m *BaseModel) BeforeDelete() error
-func (m *BaseModel) AfterDelete() error
 ```
 
 ## 🔄 事务接口
@@ -306,28 +396,39 @@ func (m *BaseModel) AfterDelete() error
 
 ```go
 type TransactionInterface interface {
-    // SQL执行
     Query(query string, args ...interface{}) (*sql.Rows, error)
     QueryRow(query string, args ...interface{}) *sql.Row
     Exec(query string, args ...interface{}) (sql.Result, error)
-    
-    // 事务控制
     Commit() error
     Rollback() error
 }
 ```
 
-### 事务函数
+### 事务使用
 
 ```go
-// 闭包事务
-func Transaction(fn func(tx TransactionInterface) error, connectionName ...string) error
+// 闭包事务（推荐）
+err := torm.Transaction(func(tx torm.TransactionInterface) error {
+    _, err := tx.Exec("INSERT INTO users (name) VALUES (?)", "张三")
+    if err != nil {
+        return err // 自动回滚
+    }
+    return nil // 自动提交
+})
 
-// 开始事务
-func BeginTransaction(connectionName ...string) (*DBTransaction, error)
+// 手动事务
+tx, err := torm.BeginTransaction()
+if err != nil {
+    return err
+}
 
-// 运行事务
-func RunInTransaction(fn func(tx TxInterface) error, connectionName ...string) error
+_, err = tx.Exec("INSERT INTO users (name) VALUES (?)", "张三")
+if err != nil {
+    tx.Rollback()
+    return err
+}
+
+err = tx.Commit()
 ```
 
 ## 💾 缓存接口
@@ -336,84 +437,32 @@ func RunInTransaction(fn func(tx TxInterface) error, connectionName ...string) e
 
 ```go
 type CacheInterface interface {
-    // 基础操作
     Get(key string) (interface{}, error)
     Set(key string, value interface{}, duration time.Duration) error
     Delete(key string) error
     Has(key string) (bool, error)
     Clear() error
-    Size() int
-    Close() error
 }
 
 type FullCacheInterface interface {
     CacheInterface
-    
-    // 批量操作
     GetMulti(keys []string) (map[string]interface{}, error)
     SetMulti(items map[string]interface{}, duration time.Duration) error
-    
-    // 标签操作
     SetWithTags(key string, value interface{}, duration time.Duration, tags []string) error
     DeleteByTags(tags []string) error
-    
-    // 数值操作
     Increment(key string, delta int64) (int64, error)
     Decrement(key string, delta int64) (int64, error)
-    
-    // 获取或设置
     GetOrSet(key string, fn func() (interface{}, error), duration time.Duration) (interface{}, error)
-    
-    // 统计
-    Stats() map[string]interface{}
-    ResetStats()
 }
-```
-
-### 缓存管理
-
-```go
-// 获取默认缓存管理器
-func GetDefaultCacheManager() *CacheManager
-
-// 添加缓存
-func AddCache(name string, cacheType CacheType, config interface{}) error
-
-// 获取缓存
-func GetCache(name string) (FullCacheInterface, error)
-
-// 列出缓存
-func (m *CacheManager) ListCaches() []string
-
-// 移除缓存
-func (m *CacheManager) RemoveCache(name string)
-
-// 关闭所有缓存
-func (m *CacheManager) CloseAll()
 ```
 
 ## 📜 迁移接口
-
-### MigrationInterface
-
-```go
-type MigrationInterface interface {
-    Up(conn Connection) error
-    Down(conn Connection) error
-    Version() string
-    Description() string
-}
-```
 
 ### Migrator
 
 ```go
 // 创建迁移器
 func NewMigrator(conn Connection, logger LoggerInterface) *Migrator
-
-// 配置
-func (m *Migrator) SetTableName(tableName string) *Migrator
-func (m *Migrator) SetAutoCreate(autoCreate bool) *Migrator
 
 // 注册迁移
 func (m *Migrator) Register(migration MigrationInterface) *Migrator
@@ -423,23 +472,16 @@ func (m *Migrator) RegisterFunc(version, description string, upFunc, downFunc fu
 func (m *Migrator) Up() error
 func (m *Migrator) Down(steps int) error
 func (m *Migrator) Reset() error
-func (m *Migrator) Fresh() error
 
 // 状态
 func (m *Migrator) Status() ([]*MigrationStatus, error)
-func (m *Migrator) PrintStatus() error
 ```
 
-### MigrationStatus
+### AutoMigrate
 
 ```go
-type MigrationStatus struct {
-    Version     string     `json:"version"`
-    Description string     `json:"description"`
-    Applied     bool       `json:"applied"`
-    AppliedAt   *time.Time `json:"applied_at,omitempty"`
-    Batch       int        `json:"batch,omitempty"`
-}
+// 自动迁移
+err := model.AutoMigrate(&User{}, &Post{}, &Comment{})
 ```
 
 ## 🔗 相关文档

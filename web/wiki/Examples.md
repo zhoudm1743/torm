@@ -2,115 +2,89 @@
 
 本页面提供 TORM 框架的完整使用示例，涵盖基础 CRUD、复杂查询和模型使用。
 
-## 🚀 快速开始示例
+## 🚀 快速开始
 
 ```go
 package main
 
 import (
     "fmt"
-    "time"
     "github.com/zhoudm1743/torm"
 )
 
-// 定义用户模型
-type User struct {
-    torm.BaseModel
-    ID        int       `json:"id" torm:"primary_key,auto_increment"`
-    Username  string    `json:"username" torm:"type:varchar,size:50,unique,index"`
-    Email     string    `json:"email" torm:"type:varchar,size:100,unique"`
-    Age       int       `json:"age" torm:"type:int,unsigned,default:0"`
-    Status    string    `json:"status" torm:"type:varchar,size:20,default:active,index"`
-    CreatedAt time.Time `json:"created_at" torm:"auto_create_time"`
-    UpdatedAt time.Time `json:"updated_at" torm:"auto_update_time"`
-}
-
 func main() {
     // 1. 配置数据库连接
-    err := torm.AddConnection("default", &torm.Config{
-        Driver:   "sqlite",
-        Database: "quickstart.db",
+    torm.AddConnection("default", &torm.Config{
+        Driver:   "mysql",
+        Host:     "localhost",
+        Port:     3306,
+        Database: "myapp",
+        Username: "root",
+        Password: "password",
+        Charset:  "utf8mb4",
     })
-    if err != nil {
-        panic(err)
-    }
-
-    // 2. 自动创建表结构
-    user := &User{}
-    if err := user.AutoMigrate(); err != nil {
-        panic(err)
-    }
-
-    // 3. 创建用户
-    newUser := &User{
-        Username: "zhangsan",
-        Email:    "zhangsan@example.com",
-        Age:      25,
-        Status:   "active",
-    }
-    if err := newUser.Save(); err != nil {
-        panic(err)
-    }
-    fmt.Printf("用户创建成功，ID: %d\n", newUser.ID)
-
-    // 4. 查询用户
-    users, err := torm.Table("users").
+    
+    // 2. 查询数据
+    users, _ := torm.Table("users").
         Where("status", "=", "active").
-        Where("age", ">=", 18).
+        OrderBy("created_at", "desc").
+        Limit(10).
         Get()
-    if err != nil {
-        panic(err)
-    }
-    fmt.Printf("查询到 %d 个活跃用户\n", len(users))
+    
+    fmt.Printf("查询到 %d 个用户\n", len(users))
+    
+    // 3. 插入数据
+    id, _ := torm.Table("users").Insert(map[string]interface{}{
+        "name":   "张三",
+        "email":  "zhangsan@example.com",
+        "status": "active",
+    })
+    
+    fmt.Printf("新用户 ID: %d\n", id)
 }
 ```
 
-## 📝 基础 CRUD 示例
+## 📝 基础 CRUD
 
 ### 创建记录
 
 ```go
-// 方式1：使用模型 Save
-user := &User{
-    Username: "zhangsan",
-    Email:    "zhangsan@example.com",
-    Age:      25,
-}
-err := user.Save()
-
-// 方式2：使用查询构建器 Insert
+// 单条插入
 id, err := torm.Table("users").Insert(map[string]interface{}{
-    "username": "lisi",
-    "email":    "lisi@example.com",
-    "age":      30,
+    "name":   "张三",
+    "email":  "zhangsan@example.com",
+    "age":    25,
+    "status": "active",
 })
 
-// 方式3：批量插入
+// 批量插入
 users := []map[string]interface{}{
-    {"username": "user1", "email": "user1@example.com", "age": 20},
-    {"username": "user2", "email": "user2@example.com", "age": 22},
+    {"name": "用户1", "email": "user1@example.com", "age": 20},
+    {"name": "用户2", "email": "user2@example.com", "age": 22},
+    {"name": "用户3", "email": "user3@example.com", "age": 24},
 }
 count, err := torm.Table("users").InsertBatch(users)
+fmt.Printf("插入了 %d 条记录\n", count)
 ```
 
 ### 查询记录
 
 ```go
-// 查询所有记录
+// 查询所有
 users, err := torm.Table("users").Get()
 
-// 查询单条记录
+// 查询单条
 user, err := torm.Table("users").Where("id", "=", 1).First()
 
 // 根据主键查找
 user, err := torm.Table("users").Find(1)
 
-// 查询指定字段
+// 选择特定字段
 users, err := torm.Table("users").
-    Select("id", "username", "email").
+    Select("id", "name", "email").
     Get()
 
-// 检查记录是否存在
+// 检查是否存在
 exists, err := torm.Table("users").
     Where("email", "=", "test@example.com").
     Exists()
@@ -119,138 +93,288 @@ exists, err := torm.Table("users").
 ### 更新记录
 
 ```go
-// 使用查询构建器 Update
+// 更新数据
 affected, err := torm.Table("users").
     Where("id", "=", 1).
     Update(map[string]interface{}{
-        "age":    26,
+        "name":   "李四",
         "status": "premium",
     })
 
-// 递增/递减
+// 递增
 affected, err := torm.Table("users").
     Where("id", "=", 1).
-    Increment("age", 1)
+    Increment("points", 10)
+
+// 递减
+affected, err := torm.Table("users").
+    Where("id", "=", 1).
+    Decrement("balance", 100)
 ```
 
 ### 删除记录
 
 ```go
-// 使用查询构建器 Delete
+// 删除记录
 affected, err := torm.Table("users").
     Where("status", "=", "inactive").
     Delete()
+
+// 清空表
+err := torm.Table("logs").Truncate()
 ```
 
-## 🔍 复杂查询示例
+## 🔍 条件查询
 
-### 条件查询
+### 基础条件
 
 ```go
-// 基础条件
-users, _ := torm.Table("users").
-    Where("status", "=", "active").
-    Where("age", ">=", 18).
-    Get()
+// 等于
+users, _ := torm.Table("users").Where("status", "=", "active").Get()
 
-// 参数化查询
-users, _ := torm.Table("users").
-    Where("status = ? AND age >= ?", "active", 18).
-    Get()
+// 不等于
+users, _ := torm.Table("users").Where("status", "!=", "banned").Get()
+
+// 大于/小于
+users, _ := torm.Table("users").Where("age", ">=", 18).Get()
 
 // OR 条件
 users, _ := torm.Table("users").
     Where("status", "=", "active").
     OrWhere("vip_level", ">", 3).
     Get()
+```
 
+### 特殊条件
+
+```go
 // IN 查询
 users, _ := torm.Table("users").
-    Where("status IN (?)", []string{"active", "premium"}).
+    WhereIn("status", []interface{}{"active", "pending"}).
+    Get()
+
+// NOT IN 查询
+users, _ := torm.Table("users").
+    WhereNotIn("status", []interface{}{"banned", "deleted"}).
     Get()
 
 // BETWEEN 查询
 users, _ := torm.Table("users").
-    Where("age BETWEEN ? AND ?", 18, 65).
+    WhereBetween("age", []interface{}{18, 65}).
     Get()
-```
 
-### 排序和分页
+// NULL 查询
+users, _ := torm.Table("users").WhereNull("deleted_at").Get()
+users, _ := torm.Table("users").WhereNotNull("email").Get()
 
-```go
-// 排序
+// LIKE 查询
+users, _ := torm.Table("users").WhereLike("name", "%张%").Get()
+
+// EXISTS 子查询
 users, _ := torm.Table("users").
-    OrderBy("created_at", "desc").
+    WhereExists("SELECT 1 FROM orders WHERE orders.user_id = users.id").
     Get()
-
-// 分页
-result, _ := torm.Table("users").
-    Where("status", "=", "active").
-    Paginate(1, 20)
 ```
 
-### 聚合查询
+## 📊 聚合查询
 
 ```go
 // 计数
-count, _ := torm.Table("users").
-    Where("status", "=", "active").
-    Count()
+count, _ := torm.Table("users").Where("status", "=", "active").Count()
 
 // 求和
 total, _ := torm.Table("orders").Sum("amount")
 
 // 平均值
-avg, _ := torm.Table("users").Avg("age")
+avgAge, _ := torm.Table("users").Avg("age")
+
+// 最大值/最小值
+maxPrice, _ := torm.Table("products").Max("price")
+minPrice, _ := torm.Table("products").Min("price")
 ```
 
-### JOIN 查询
+## 🔗 JOIN 查询
 
 ```go
+// INNER JOIN
+results, _ := torm.Table("users").
+    Join("profiles", "users.id", "=", "profiles.user_id").
+    Select("users.name", "profiles.avatar", "profiles.bio").
+    Get()
+
 // LEFT JOIN
 results, _ := torm.Table("users").
-    LeftJoin("profiles", "profiles.user_id", "=", "users.id").
-    Select("users.username", "profiles.avatar").
+    LeftJoin("orders", "users.id", "=", "orders.user_id").
+    Select("users.name", "COUNT(orders.id) as order_count").
+    GroupBy("users.id").
+    Get()
+
+// 多表 JOIN
+results, _ := torm.Table("orders").
+    Join("users", "orders.user_id", "=", "users.id").
+    Join("products", "orders.product_id", "=", "products.id").
+    Select("orders.id", "users.name", "products.title", "orders.amount").
     Get()
 ```
 
-## 💼 事务示例
+## 📄 分页查询
 
 ```go
-err := torm.Transaction(func(tx torm.TransactionInterface) error {
-    _, err := tx.Exec("INSERT INTO users (username, email) VALUES (?, ?)",
-        "zhangsan", "zhangsan@example.com")
-    if err != nil {
-        return err // 自动回滚
-    }
+// 基础分页
+result, _ := torm.Table("users").
+    Where("status", "=", "active").
+    OrderBy("created_at", "desc").
+    Paginate(1, 20) // 第1页，每页20条
 
-    _, err = tx.Exec("UPDATE accounts SET balance = balance - ? WHERE user_id = ?",
-        100, 1)
-    if err != nil {
-        return err // 自动回滚
-    }
+fmt.Printf("总数: %d\n", result.Total)
+fmt.Printf("当前页: %d\n", result.CurrentPage)
+fmt.Printf("总页数: %d\n", result.LastPage)
+fmt.Printf("数据: %v\n", result.Data)
 
-    return nil // 自动提交
-})
+// 游标分页（大数据量推荐）
+users, _ := torm.Table("users").
+    Where("id", ">", lastID).
+    OrderBy("id", "asc").
+    Limit(20).
+    Get()
 ```
 
-## 💾 缓存示例
+## 💼 事务处理
 
 ```go
-// 缓存查询结果
+// 闭包事务（推荐）
+err := torm.Transaction(func(tx torm.TransactionInterface) error {
+    // 扣减余额
+    _, err := tx.Exec(
+        "UPDATE accounts SET balance = balance - ? WHERE user_id = ?",
+        100, 1,
+    )
+    if err != nil {
+        return err // 自动回滚
+    }
+    
+    // 创建订单
+    _, err = tx.Exec(
+        "INSERT INTO orders (user_id, amount, status) VALUES (?, ?, ?)",
+        1, 100, "paid",
+    )
+    if err != nil {
+        return err // 自动回滚
+    }
+    
+    return nil // 自动提交
+})
+
+// 手动事务
+tx, _ := torm.BeginTransaction()
+
+_, err := tx.Exec("UPDATE accounts SET balance = balance - ? WHERE user_id = ?", 100, 1)
+if err != nil {
+    tx.Rollback()
+    return err
+}
+
+_, err = tx.Exec("INSERT INTO orders (user_id, amount) VALUES (?, ?)", 1, 100)
+if err != nil {
+    tx.Rollback()
+    return err
+}
+
+tx.Commit()
+```
+
+## 💾 缓存查询
+
+```go
+// 缓存查询结果 5 分钟
 users, _ := torm.Table("users").
     Where("status", "=", "active").
     Cache(5 * time.Minute).
     Get()
 
-// 清除缓存
+// 带标签的缓存
+users, _ := torm.Table("users").
+    Where("status", "=", "active").
+    CacheWithTags(5*time.Minute, "users", "active").
+    Get()
+
+// 清除标签缓存
 torm.ClearCacheByTags("users")
 ```
 
-## 🌐 跨数据库示例
+## 🏗️ 模型使用
 
 ```go
-// MySQL
+import "github.com/zhoudm1743/torm/model"
+
+// 定义模型
+type User struct {
+    model.BaseModel
+}
+
+func NewUser() *User {
+    user := &User{BaseModel: *model.NewBaseModel()}
+    user.SetTable("users")
+    user.EnableTimestamps()
+    user.EnableSoftDeletes()
+    return user
+}
+
+// 使用模型
+func main() {
+    // 创建
+    user := NewUser()
+    user.Fill(map[string]interface{}{
+        "name":  "张三",
+        "email": "zhangsan@example.com",
+    })
+    user.Save()
+    
+    // 查询
+    user2 := NewUser()
+    user2.Find(1)
+    fmt.Println(user2.GetAttribute("name"))
+    
+    // 更新
+    user2.SetAttribute("name", "李四")
+    user2.Save()
+    
+    // 软删除
+    user2.SoftDelete()
+    
+    // 恢复
+    user2.Restore()
+    
+    // 强制删除
+    user2.ForceDelete()
+}
+```
+
+## 🔄 关联关系
+
+```go
+// 定义关联
+func (u *User) Posts() *model.HasMany {
+    return u.HasMany(&Post{}, "user_id", "id")
+}
+
+func (u *User) Profile() *model.HasOne {
+    return u.HasOne(&Profile{}, "user_id", "id")
+}
+
+// 预加载
+users, _ := user.With("Posts", "Profile").Get()
+
+// 条件预加载
+users, _ := user.WithConstraint("Posts", func(q *QueryBuilder) *QueryBuilder {
+    return q.Where("status", "=", "published").Limit(5)
+}).Get()
+```
+
+## 🌐 多数据库
+
+```go
+// 配置多个连接
 torm.AddConnection("mysql", &torm.Config{
     Driver:   "mysql",
     Host:     "localhost",
@@ -259,19 +383,44 @@ torm.AddConnection("mysql", &torm.Config{
     Password: "password",
 })
 
-// PostgreSQL
 torm.AddConnection("postgres", &torm.Config{
     Driver:   "postgres",
     Host:     "localhost",
-    Database: "myapp",
+    Database: "analytics",
     Username: "postgres",
     Password: "password",
-    SSLMode:  "disable",
 })
 
-// SQLite
 torm.AddConnection("sqlite", &torm.Config{
     Driver:   "sqlite",
-    Database: "app.db",
+    Database: "cache.db",
 })
+
+// 使用不同连接
+users, _ := torm.Table("users", "mysql").Get()
+reports, _ := torm.Table("reports", "postgres").Get()
+cache, _ := torm.Table("cache", "sqlite").Get()
 ```
+
+## 🔧 调试
+
+```go
+// 获取 SQL 语句
+query := torm.Table("users").
+    Where("status", "=", "active").
+    OrderBy("created_at", "desc")
+
+sql, args := query.ToSQL()
+fmt.Printf("SQL: %s\n", sql)
+fmt.Printf("Args: %v\n", args)
+
+// 启用 SQL 日志
+torm.EnableSQLLogging()
+```
+
+## 🔗 相关文档
+
+- [查询构建器](Query-Builder) - 完整查询 API
+- [模型系统](Model-System) - 模型详细用法
+- [事务处理](Transactions) - 事务管理
+- [缓存系统](Caching) - 缓存策略
