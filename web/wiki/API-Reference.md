@@ -1,6 +1,6 @@
 # API 参考
 
-TORM API 完整参考文档，包含所有接口、方法和参数说明。
+TORM API 完整参考文档，包含所有核心接口、方法和参数说明。
 
 ## 📋 目录
 
@@ -9,7 +9,7 @@ TORM API 完整参考文档，包含所有接口、方法和参数说明。
 - [模型接口](#模型接口)
 - [事务接口](#事务接口)
 - [缓存接口](#缓存接口)
-- [日志接口](#日志接口)
+- [迁移接口](#迁移接口)
 
 ## 🔌 数据库连接
 
@@ -38,159 +38,150 @@ type Config struct {
     SSLCert         string        // SSL证书路径
     SSLKey          string        // SSL密钥路径
     SSLRootCert     string        // SSL根证书路径
+    
+    // 日志配置
+    LogQueries      bool          // 是否记录查询日志
 }
 ```
 
-### 连接管理
+### 连接管理函数
 
 ```go
 // 添加数据库连接
 func AddConnection(name string, config *Config) error
 
+// 获取数据库管理器
+func DefaultManager() *DbManager
+
 // 获取数据库连接
-func DB(name ...string) (DatabaseInterface, error)
-
-// 获取默认连接
-func GetDefaultConnection() DatabaseInterface
-
-// 设置默认连接
-func SetDefaultConnection(name string) error
+func (m *DbManager) Connection(name string) (Connection, error)
 
 // 关闭连接
-func CloseConnection(name string) error
+func (m *DbManager) Close(name string) error
 
 // 关闭所有连接
-func CloseAllConnections() error
+func (m *DbManager) CloseAll() error
+```
+
+### DSN 构建
+
+```go
+// MySQL DSN
+func (c *Config) MySQLDSN() string
+
+// PostgreSQL DSN
+func (c *Config) PostgresDSN() string
+
+// SQLite DSN
+func (c *Config) SQLiteDSN() string
 ```
 
 ## 🔍 查询构建器
 
-### QueryInterface
+### QueryBuilder
 
-查询构建器核心接口：
+查询构建器核心方法：
 
 ```go
-type QueryInterface interface {
-    // 表操作
-    Table(table string) QueryInterface
-    From(table string) QueryInterface
-    
-    // 字段选择
-    Select(columns ...string) QueryInterface
-    SelectRaw(expression string, bindings ...interface{}) QueryInterface
-    Distinct() QueryInterface
-    
-    // 条件查询
-    Where(args ...interface{}) QueryInterface                    // 支持多种调用方式
-    WhereRaw(expression string, bindings ...interface{}) QueryInterface
-    WhereIn(column string, values []interface{}) QueryInterface
-    WhereNotIn(column string, values []interface{}) QueryInterface
-    WhereBetween(column string, values []interface{}) QueryInterface  // v1.3.0 更新
-    WhereNotBetween(column string, values []interface{}) QueryInterface  // v1.3.0 新增
-    WhereNull(column string) QueryInterface
-    WhereNotNull(column string) QueryInterface
-    WhereExists(subQuery interface{}) QueryInterface              // v1.3.0 增强
-    WhereNotExists(subQuery interface{}) QueryInterface          // v1.3.0 增强
-    
-    // OR 条件
-    OrWhere(column string, operator string, value interface{}) QueryInterface
-    OrWhereRaw(expression string, bindings ...interface{}) QueryInterface
-    OrWhereIn(column string, values []interface{}) QueryInterface
-    OrWhereNotIn(column string, values []interface{}) QueryInterface
-    OrWhereBetween(column string, min, max interface{}) QueryInterface
-    OrWhereNotBetween(column string, min, max interface{}) QueryInterface
-    OrWhereNull(column string) QueryInterface
-    OrWhereNotNull(column string) QueryInterface
-    
-    // 连接查询
-    Join(table string, first string, operator string, second string) QueryInterface
-    LeftJoin(table string, first string, operator string, second string) QueryInterface
-    RightJoin(table string, first string, operator string, second string) QueryInterface
-    CrossJoin(table string) QueryInterface
-    
-    // 排序
-    OrderBy(column string, direction string) QueryInterface
-    OrderByRaw(expression string, bindings ...interface{}) QueryInterface
-    OrderRand() QueryInterface                               // v1.3.0 新增：随机排序
-    OrderField(field string, values []interface{}, direction string) QueryInterface  // v1.3.0 新增：按值排序
-    
-    // 字段表达式
-    FieldRaw(expression string, bindings ...interface{}) QueryInterface  // v1.3.0 新增：原生字段
-    
-    // 分组
-    GroupBy(columns ...string) QueryInterface
-    Having(column string, operator string, value interface{}) QueryInterface
-    HavingRaw(expression string, bindings ...interface{}) QueryInterface
-    
-    // 限制
-    Limit(limit int) QueryInterface
-    Offset(offset int) QueryInterface
-    Take(limit int) QueryInterface
-    Skip(offset int) QueryInterface
-    
-    // 执行查询
-    Model(model interface{}) QueryInterface                     // 设置模型实例，启用访问器
-    Get() ([]map[string]interface{}, error)                     // 返回数据（可应用访问器）
-    First(dest ...interface{}) (map[string]interface{}, error)  // 返回第一条记录
-    Find(id interface{}, dest ...interface{}) (map[string]interface{}, error)  // 根据ID查找
-    
-    // 原始数据查询 (向下兼容)
-    GetRaw() ([]map[string]interface{}, error)                  // 返回原始map数据
-    FirstRaw() (map[string]interface{}, error)                  // 返回原始map数据
-    Pluck(column string) ([]interface{}, error)
-    Value(column string) (interface{}, error)
-    Exists() (bool, error)
-    
-    // 聚合查询
-    Count() (int64, error)
-    Sum(column string) (interface{}, error)
-    Avg(column string) (interface{}, error)
-    Max(column string) (interface{}, error)
-    Min(column string) (interface{}, error)
-    
-    // 插入
-    Insert(data map[string]interface{}) (int64, error)
-    InsertBatch(data []map[string]interface{}) (int64, error)
-    InsertGetId(data map[string]interface{}) (int64, error)
-    InsertIgnore(data map[string]interface{}) (int64, error)
-    
-    // 更新
-    Update(data map[string]interface{}) (int64, error)
-    UpdateOrInsert(attributes map[string]interface{}, values map[string]interface{}) error
-    Increment(column string, amount interface{}) (int64, error)
-    Decrement(column string, amount interface{}) (int64, error)
-    
-    // 删除
-    Delete() (int64, error)
-    Truncate() error
-    
-    // 分页
-    Paginate(page int, perPage int) (*SimplePagination, error)
-    
-    // 分块处理
-    Chunk(size int, callback func([]map[string]interface{}) bool) error
-    
-    // 缓存
-    Cache(duration time.Duration) QueryInterface
-    CacheWithTags(duration time.Duration, tags ...string) QueryInterface
-    
-    // 原生SQL
-    Raw(sql string, bindings ...interface{}) QueryInterface
-    
-    // 调试
-    ToSQL() (string, []interface{})
-    Explain() ([]map[string]interface{}, error)
-    
-    // 克隆
-    Clone() QueryInterface
-}
+// 创建查询构建器
+func NewQueryBuilder(connectionName string) (*QueryBuilder, error)
+
+// 表操作
+func (q *QueryBuilder) Table(table string) *QueryBuilder
+func (q *QueryBuilder) From(table string) *QueryBuilder
+
+// 字段选择
+func (q *QueryBuilder) Select(columns ...interface{}) *QueryBuilder
+func (q *QueryBuilder) SelectRaw(expression string, bindings ...interface{}) *QueryBuilder
+func (q *QueryBuilder) Distinct() *QueryBuilder
+
+// 条件查询
+func (q *QueryBuilder) Where(args ...interface{}) *QueryBuilder
+func (q *QueryBuilder) OrWhere(args ...interface{}) *QueryBuilder
+func (q *QueryBuilder) WhereRaw(expression string, bindings ...interface{}) *QueryBuilder
+func (q *QueryBuilder) WhereIn(column string, values []interface{}) *QueryBuilder
+func (q *QueryBuilder) WhereNotIn(column string, values []interface{}) *QueryBuilder
+func (q *QueryBuilder) WhereBetween(column string, values []interface{}) *QueryBuilder
+func (q *QueryBuilder) WhereNotBetween(column string, values []interface{}) *QueryBuilder
+func (q *QueryBuilder) WhereNull(column string) *QueryBuilder
+func (q *QueryBuilder) WhereNotNull(column string) *QueryBuilder
+func (q *QueryBuilder) WhereLike(column string, pattern string) *QueryBuilder
+func (q *QueryBuilder) WhereNotLike(column string, pattern string) *QueryBuilder
+
+// 连接查询
+func (q *QueryBuilder) Join(table, first, operator, second string) *QueryBuilder
+func (q *QueryBuilder) LeftJoin(table, first, operator, second string) *QueryBuilder
+func (q *QueryBuilder) RightJoin(table, first, operator, second string) *QueryBuilder
+func (q *QueryBuilder) CrossJoin(table string) *QueryBuilder
+
+// 排序
+func (q *QueryBuilder) OrderBy(column, direction string) *QueryBuilder
+func (q *QueryBuilder) OrderByRaw(expression string, bindings ...interface{}) *QueryBuilder
+func (q *QueryBuilder) OrderRand() *QueryBuilder
+
+// 分组
+func (q *QueryBuilder) GroupBy(columns ...string) *QueryBuilder
+func (q *QueryBuilder) Having(args ...interface{}) *QueryBuilder
+func (q *QueryBuilder) HavingRaw(expression string, bindings ...interface{}) *QueryBuilder
+
+// 限制
+func (q *QueryBuilder) Limit(limit int) *QueryBuilder
+func (q *QueryBuilder) Offset(offset int) *QueryBuilder
+func (q *QueryBuilder) Page(page, size int) *QueryBuilder
+
+// 执行查询
+func (q *QueryBuilder) Get() ([]map[string]interface{}, error)
+func (q *QueryBuilder) GetRaw() ([]map[string]interface{}, error)
+func (q *QueryBuilder) First() (map[string]interface{}, error)
+func (q *QueryBuilder) FirstRaw() (map[string]interface{}, error)
+func (q *QueryBuilder) Pluck(column string) ([]interface{}, error)
+func (q *QueryBuilder) Value(column string) (interface{}, error)
+func (q *QueryBuilder) Exists() (bool, error)
+
+// 聚合查询
+func (q *QueryBuilder) Count() (int64, error)
+func (q *QueryBuilder) Sum(column string) (interface{}, error)
+func (q *QueryBuilder) Avg(column string) (interface{}, error)
+func (q *QueryBuilder) Max(column string) (interface{}, error)
+func (q *QueryBuilder) Min(column string) (interface{}, error)
+
+// 插入
+func (q *QueryBuilder) Insert(data map[string]interface{}) (int64, error)
+func (q *QueryBuilder) InsertBatch(data []map[string]interface{}) (int64, error)
+func (q *QueryBuilder) InsertGetId(data map[string]interface{}) (int64, error)
+
+// 更新
+func (q *QueryBuilder) Update(data map[string]interface{}) (int64, error)
+func (q *QueryBuilder) Increment(column string, amount interface{}) (int64, error)
+func (q *QueryBuilder) Decrement(column string, amount interface{}) (int64, error)
+
+// 删除
+func (q *QueryBuilder) Delete() (int64, error)
+func (q *QueryBuilder) Truncate() error
+
+// 分页
+func (q *QueryBuilder) Paginate(page, perPage int) (*Pagination, error)
+
+// 分块处理
+func (q *QueryBuilder) Chunk(size int, callback func([]map[string]interface{}) bool) error
+
+// 缓存
+func (q *QueryBuilder) Cache(duration time.Duration) *QueryBuilder
+func (q *QueryBuilder) CacheWithTags(duration time.Duration, tags ...string) *QueryBuilder
+func (q *QueryBuilder) CacheKey(key string) *QueryBuilder
+
+// 调试
+func (q *QueryBuilder) ToSQL() (string, []interface{})
+
+// 克隆
+func (q *QueryBuilder) Clone() *QueryBuilder
 ```
 
 ### 分页结果
 
 ```go
-type SimplePagination struct {
-    Data        []map[string]interface{} `json:"data"`     // 数据（可包含访问器处理）
+type Pagination struct {
+    Data        []map[string]interface{} `json:"data"`
     Total       int64                    `json:"total"`
     PerPage     int                      `json:"per_page"`
     CurrentPage int                      `json:"current_page"`
@@ -204,109 +195,109 @@ type SimplePagination struct {
 
 ### BaseModel
 
-基础模型结构：
+基础模型方法：
 
 ```go
-type BaseModel struct {
-    // 内部字段（不直接访问）
-    attributes   map[string]interface{}
-    original     map[string]interface{}
-    relations    map[string]interface{}
-    exists       bool
-    wasRecentlyCreated bool
-    
-    // 配置字段
-    tableName    string
-    primaryKeys  []string
-    connection   string
-    queryBuilder QueryInterface
-}
-```
+// 创建模型
+func NewModel(args ...interface{}) *BaseModel
 
-### 模型方法
-
-```go
-// 表操作
+// 配置方法
 func (m *BaseModel) SetTable(table string) *BaseModel
-func (m *BaseModel) TableName() string
-func (m *BaseModel) GetTable() string
-
-// 连接操作
+func (m *BaseModel) GetTableName() string
+func (m *BaseModel) SetPrimaryKey(key string) *BaseModel
+func (m *BaseModel) GetPrimaryKey() string
 func (m *BaseModel) SetConnection(connection string) *BaseModel
 func (m *BaseModel) GetConnection() string
 
+// 属性操作
+func (m *BaseModel) SetAttribute(key string, value interface{}) Model
+func (m *BaseModel) GetAttribute(key string) interface{}
+func (m *BaseModel) SetAttributes(attrs map[string]interface{}) Model
+func (m *BaseModel) GetAttributes() map[string]interface{}
+func (m *BaseModel) Fill(data map[string]interface{}) *BaseModel
+func (m *BaseModel) ClearAttributes() *BaseModel
+
+// 状态方法
+func (m *BaseModel) IsNew() bool
+func (m *BaseModel) IsExists() bool
+func (m *BaseModel) IsDirty() bool
+func (m *BaseModel) GetDirty() map[string]interface{}
+func (m *BaseModel) MarkAsNew() *BaseModel
+func (m *BaseModel) MarkAsExists() *BaseModel
+
 // 主键操作
-func (m *BaseModel) PrimaryKey() string
-func (m *BaseModel) PrimaryKeys() []string
-func (m *BaseModel) SetPrimaryKey(key string) *BaseModel
-func (m *BaseModel) SetPrimaryKeys(keys []string) *BaseModel
-func (m *BaseModel) HasCompositePrimaryKey() bool
 func (m *BaseModel) GetKey() interface{}
 func (m *BaseModel) SetKey(key interface{}) *BaseModel
-func (m *BaseModel) DetectPrimaryKeysFromStruct(structValue interface{}) *BaseModel
 
-// 属性操作
-func (m *BaseModel) GetAttribute(key string) interface{}
-func (m *BaseModel) SetAttribute(key string, value interface{}) *BaseModel
-func (m *BaseModel) GetAttributes() map[string]interface{}
-func (m *BaseModel) SetAttributes(attributes map[string]interface{}) *BaseModel
-func (m *BaseModel) Fill(attributes map[string]interface{}) *BaseModel
+// 持久化操作
+func (m *BaseModel) Save() error
+func (m *BaseModel) Delete() error
+func (m *BaseModel) Find(pk interface{}) error
+func (m *BaseModel) FindByPK(pk interface{}) error
+func (m *BaseModel) Reload() error
 
-// 脏数据检测
-func (m *BaseModel) IsDirty(keys ...string) bool
-func (m *BaseModel) GetDirty() map[string]interface{}
-func (m *BaseModel) GetOriginal(key ...string) interface{}
-func (m *BaseModel) SyncOriginal() *BaseModel
+// 软删除
+func (m *BaseModel) SoftDelete() error
+func (m *BaseModel) Restore() error
+func (m *BaseModel) ForceDelete() error
+func (m *BaseModel) IsSoftDeleted() bool
+func (m *BaseModel) EnableSoftDeletes() *BaseModel
+func (m *BaseModel) DisableSoftDeletes() *BaseModel
 
-// 状态检查
-func (m *BaseModel) Exists() bool
-func (m *BaseModel) WasRecentlyCreated() bool
-func (m *BaseModel) IsNew() bool
+// 时间戳
+func (m *BaseModel) EnableTimestamps() Model
+func (m *BaseModel) DisableTimestamps() Model
+func (m *BaseModel) SetCreatedAtField(field string) *BaseModel
+func (m *BaseModel) SetUpdatedAtField(field string) *BaseModel
 
 // 查询方法
-func (m *BaseModel) All() ([]map[string]interface{}, error)
-func (m *BaseModel) Find(id interface{}, dest ...interface{}) (map[string]interface{}, error)
-func (m *BaseModel) FindOrFail(id interface{}) error
-func (m *BaseModel) First(dest ...interface{}) (map[string]interface{}, error)
-func (m *BaseModel) FirstOrFail() error
-func (m *BaseModel) FirstOrCreate(attributes map[string]interface{}) error
-func (m *BaseModel) FirstOrNew(attributes map[string]interface{}) *BaseModel
-func (m *BaseModel) UpdateOrCreate(attributes map[string]interface{}, values map[string]interface{}) error
+func (m *BaseModel) Query() (*QueryBuilder, error)
+func (m *BaseModel) RawQuery() (*QueryBuilder, error)
+func (m *BaseModel) Where(args ...interface{}) (*QueryBuilder, error)
+func (m *BaseModel) Get() ([]map[string]interface{}, error)
+func (m *BaseModel) First() (map[string]interface{}, error)
+func (m *BaseModel) Count() (int64, error)
 
-// CRUD操作
-func (m *BaseModel) Save() error
-func (m *BaseModel) Create(attributes map[string]interface{}) error
-func (m *BaseModel) Update(attributes map[string]interface{}) error
-func (m *BaseModel) Delete() error
-func (m *BaseModel) ForceDelete() error
-
-// 查询构建器方法（所有QueryInterface方法都可用）
-func (m *BaseModel) Where(column string, operator string, value interface{}) *BaseModel
-func (m *BaseModel) WhereIn(column string, values []interface{}) *BaseModel
-func (m *BaseModel) OrderBy(column string, direction string) *BaseModel
-func (m *BaseModel) Limit(limit int) *BaseModel
-// ... 其他所有查询方法
-
-// 关联关系
-func (m *BaseModel) HasOne(related interface{}, foreignKey string, localKey string) *HasOne
-func (m *BaseModel) HasMany(related interface{}, foreignKey string, localKey string) *HasMany
-func (m *BaseModel) BelongsTo(related interface{}, foreignKey string, ownerKey string) *BelongsTo
-func (m *BaseModel) ManyToMany(related interface{}, table string, foreignPivotKey string, relatedPivotKey string) *ManyToMany
+// 关联方法
+func (m *BaseModel) HasOne(model interface{}, foreignKey, localKey string) *HasOne
+func (m *BaseModel) HasMany(model interface{}, foreignKey, localKey string) *HasMany
+func (m *BaseModel) BelongsTo(model interface{}, foreignKey, localKey string) *BelongsTo
+func (m *BaseModel) BelongsToMany(model interface{}, pivotTable, foreignKey, localKey string) *BelongsToMany
 
 // 预加载
-func (m *BaseModel) With(relations ...string) *BaseModel
-func (m *BaseModel) WithCount(relations ...string) *BaseModel
+func (m *BaseModel) With(relations ...string) *ModelQueryBuilder
+func (m *BaseModel) WithConstraint(relation string, constraint func(*QueryBuilder) *QueryBuilder) *ModelQueryBuilder
 func (m *BaseModel) Load(relations ...string) error
-func (m *BaseModel) LoadCount(relations ...string) error
-
-// 关联数据访问
-func (m *BaseModel) GetRelation(key string) interface{}
-func (m *BaseModel) SetRelation(key string, value interface{}) *BaseModel
-func (m *BaseModel) HasRelation(key string) bool
+func (m *BaseModel) GetRelation(name string) interface{}
+func (m *BaseModel) SetRelation(name string, data interface{}) *BaseModel
 
 // 序列化
 func (m *BaseModel) ToMap() map[string]interface{}
-func (m *BaseModel) ToJSON() ([]byte, error)
+func (m *BaseModel) ToJSON() (string, error)
+func (m *BaseModel) FromJSON(jsonStr string) error
+
+// 迁移
+func (m *BaseModel) AutoMigrate(models ...interface{}) error
+```
+
+### 事件钩子
+
+```go
+// 保存钩子
+func (m *BaseModel) BeforeSave() error
+func (m *BaseModel) AfterSave() error
+
+// 创建钩子
+func (m *BaseModel) BeforeCreate() error
+func (m *BaseModel) AfterCreate() error
+
+// 更新钩子
+func (m *BaseModel) BeforeUpdate() error
+func (m *BaseModel) AfterUpdate() error
+
+// 删除钩子
+func (m *BaseModel) BeforeDelete() error
+func (m *BaseModel) AfterDelete() error
 ```
 
 ## 🔄 事务接口
@@ -315,33 +306,28 @@ func (m *BaseModel) ToJSON() ([]byte, error)
 
 ```go
 type TransactionInterface interface {
-    QueryInterface  // 继承所有查询方法
+    // SQL执行
+    Query(query string, args ...interface{}) (*sql.Rows, error)
+    QueryRow(query string, args ...interface{}) *sql.Row
+    Exec(query string, args ...interface{}) (sql.Result, error)
     
-    // 事务操作
+    // 事务控制
     Commit() error
     Rollback() error
-    
-    // 保存点
-    Savepoint(name string) error
-    RollbackToSavepoint(name string) error
-    ReleaseSavepoint(name string) error
-    
-    // 嵌套事务
-    Transaction(callback func(TransactionInterface) error) error
 }
 ```
 
-### 事务管理
+### 事务函数
 
 ```go
+// 闭包事务
+func Transaction(fn func(tx TransactionInterface) error, connectionName ...string) error
+
 // 开始事务
-func Begin() (TransactionInterface, error)
+func BeginTransaction(connectionName ...string) (*DBTransaction, error)
 
-// 自动事务
-func Transaction(callback func(TransactionInterface) error) error
-
-// 带上下文的事务
-func TransactionWithContext(ctx context.Context, callback func(TransactionInterface) error) error
+// 运行事务
+func RunInTransaction(fn func(tx TxInterface) error, connectionName ...string) error
 ```
 
 ## 💾 缓存接口
@@ -355,103 +341,104 @@ type CacheInterface interface {
     Set(key string, value interface{}, duration time.Duration) error
     Delete(key string) error
     Has(key string) (bool, error)
-    Pull(key string) (interface{}, error)
+    Clear() error
+    Size() int
+    Close() error
+}
+
+type FullCacheInterface interface {
+    CacheInterface
     
     // 批量操作
-    GetMultiple(keys []string) (map[string]interface{}, error)
-    SetMultiple(items map[string]interface{}, duration time.Duration) error
-    DeleteMultiple(keys []string) error
+    GetMulti(keys []string) (map[string]interface{}, error)
+    SetMulti(items map[string]interface{}, duration time.Duration) error
     
     // 标签操作
-    SetWithTags(key string, value interface{}, duration time.Duration, tags ...string) error
-    FlushByTags(tags ...string) error
+    SetWithTags(key string, value interface{}, duration time.Duration, tags []string) error
+    DeleteByTags(tags []string) error
     
-    // 管理操作
-    Flush() error
-    Forever(key string, value interface{}) error
-    Forget(key string) error
+    // 数值操作
+    Increment(key string, delta int64) (int64, error)
+    Decrement(key string, delta int64) (int64, error)
     
-    // 统计信息
-    Stats() *CacheStats
-}
-
-type CacheStats struct {
-    Hits         int64
-    Misses       int64
-    Size         int64
-    Evictions    int64
-    LastAccess   time.Time
+    // 获取或设置
+    GetOrSet(key string, fn func() (interface{}, error), duration time.Duration) (interface{}, error)
+    
+    // 统计
+    Stats() map[string]interface{}
+    ResetStats()
 }
 ```
 
-## 📝 日志接口
-
-### LoggerInterface
+### 缓存管理
 
 ```go
-type LoggerInterface interface {
-    // 基础日志方法
-    Debug(message string, fields ...interface{})
-    Info(message string, fields ...interface{})
-    Warn(message string, fields ...interface{})
-    Error(message string, fields ...interface{})
-    Fatal(message string, fields ...interface{})
-    
-    // 格式化日志方法
-    Debugf(format string, args ...interface{})
-    Infof(format string, args ...interface{})
-    Warnf(format string, args ...interface{})
-    Errorf(format string, args ...interface{})
-    Fatalf(format string, args ...interface{})
-    
-    // 结构化日志方法
-    DebugWithFields(message string, fields map[string]interface{})
-    InfoWithFields(message string, fields map[string]interface{})
-    WarnWithFields(message string, fields map[string]interface{})
-    ErrorWithFields(message string, fields map[string]interface{})
-    FatalWithFields(message string, fields map[string]interface{})
-    
-    // 配置方法
-    SetLevel(level LogLevel)
-    SetOutput(output io.Writer)
-    SetFormatter(formatter FormatterInterface)
-    AddHook(hook HookInterface)
-}
+// 获取默认缓存管理器
+func GetDefaultCacheManager() *CacheManager
 
-// 日志级别
-type LogLevel int
+// 添加缓存
+func AddCache(name string, cacheType CacheType, config interface{}) error
 
-const (
-    DEBUG LogLevel = iota
-    INFO
-    WARN
-    ERROR
-    FATAL
-)
+// 获取缓存
+func GetCache(name string) (FullCacheInterface, error)
+
+// 列出缓存
+func (m *CacheManager) ListCaches() []string
+
+// 移除缓存
+func (m *CacheManager) RemoveCache(name string)
+
+// 关闭所有缓存
+func (m *CacheManager) CloseAll()
 ```
 
-### SQL日志接口
+## 📜 迁移接口
+
+### MigrationInterface
 
 ```go
-type SQLLoggerInterface interface {
-    LoggerInterface
-    
-    // SQL专用方法
-    LogQuery(sql string, bindings []interface{}, duration time.Duration)
-    LogSlowQuery(sql string, bindings []interface{}, duration time.Duration, threshold time.Duration)
-    
-    // 配置方法
-    SetSlowQueryThreshold(threshold time.Duration)
-    EnableQueryLog(enabled bool)
-    GetQueryLog() []*QueryLog
-    ClearQueryLog()
+type MigrationInterface interface {
+    Up(conn Connection) error
+    Down(conn Connection) error
+    Version() string
+    Description() string
 }
+```
 
-type QueryLog struct {
-    SQL       string
-    Bindings  []interface{}
-    Duration  time.Duration
-    Timestamp time.Time
+### Migrator
+
+```go
+// 创建迁移器
+func NewMigrator(conn Connection, logger LoggerInterface) *Migrator
+
+// 配置
+func (m *Migrator) SetTableName(tableName string) *Migrator
+func (m *Migrator) SetAutoCreate(autoCreate bool) *Migrator
+
+// 注册迁移
+func (m *Migrator) Register(migration MigrationInterface) *Migrator
+func (m *Migrator) RegisterFunc(version, description string, upFunc, downFunc func(conn Connection) error) *Migrator
+
+// 执行迁移
+func (m *Migrator) Up() error
+func (m *Migrator) Down(steps int) error
+func (m *Migrator) Reset() error
+func (m *Migrator) Fresh() error
+
+// 状态
+func (m *Migrator) Status() ([]*MigrationStatus, error)
+func (m *Migrator) PrintStatus() error
+```
+
+### MigrationStatus
+
+```go
+type MigrationStatus struct {
+    Version     string     `json:"version"`
+    Description string     `json:"description"`
+    Applied     bool       `json:"applied"`
+    AppliedAt   *time.Time `json:"applied_at,omitempty"`
+    Batch       int        `json:"batch,omitempty"`
 }
 ```
 
@@ -461,4 +448,4 @@ type QueryLog struct {
 - [模型系统](Model-System) - 模型系统详细说明
 - [事务处理](Transactions) - 事务使用指南
 - [缓存系统](Caching) - 缓存系统用法
-- [日志系统](Logging) - 日志系统配置 
+- [数据迁移](Migrations) - 迁移系统用法

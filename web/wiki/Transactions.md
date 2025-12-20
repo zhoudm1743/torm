@@ -1,16 +1,14 @@
 # 事务处理
 
-TORM 提供了完整的事务支持，包括自动事务管理、嵌套事务、保存点等功能，确保数据的一致性和完整性。
+TORM 提供了完整的事务支持，包括自动事务管理、手动事务控制、嵌套事务等功能，确保数据的一致性和完整性。
 
 ## 📋 目录
 
-- [基础事务](#基础事务)
-- [自动事务](#自动事务)
+- [快速开始](#快速开始)
+- [闭包事务](#闭包事务)
 - [手动事务](#手动事务)
-- [嵌套事务](#嵌套事务)
-- [保存点](#保存点)
+- [查询构建器事务](#查询构建器事务)
 - [事务回滚](#事务回滚)
-- [分布式事务](#分布式事务)
 - [最佳实践](#最佳实践)
 
 ## 🚀 快速开始
@@ -20,20 +18,21 @@ TORM 提供了完整的事务支持，包括自动事务管理、嵌套事务、
 ```go
 import "github.com/zhoudm1743/torm/db"
 
-// 基础事务
+// 使用闭包事务（推荐）
 err := db.Transaction(func(tx db.TransactionInterface) error {
     // 在事务中执行操作
-    _, err := tx.Exec("INSERT INTO users (name, email) VALUES (?, ?)", "张三", "zhangsan@example.com")
+    _, err := tx.Exec("INSERT INTO users (name, email) VALUES (?, ?)", 
+        "张三", "zhangsan@example.com")
     if err != nil {
-        return err // 自动回滚
+        return err // 返回错误自动回滚
     }
     
     _, err = tx.Exec("UPDATE accounts SET balance = balance - 100 WHERE user_id = ?", 1)
     if err != nil {
-        return err // 自动回滚
+        return err // 返回错误自动回滚
     }
     
-    return nil // 自动提交
+    return nil // 返回 nil 自动提交
 })
 
 if err != nil {
@@ -41,447 +40,272 @@ if err != nil {
 }
 ```
 
-## 🔄 基础事务
+## 🔄 闭包事务
 
-### 使用闭包事务
+闭包事务是最推荐的使用方式，自动处理提交和回滚。
+
+### 基础用法
 
 ```go
-// 简单的转账事务
+import "github.com/zhoudm1743/torm/db"
+
+// 默认连接
 err := db.Transaction(func(tx db.TransactionInterface) error {
-    // 检查发送方余额
-    var fromBalance float64
-    err := tx.QueryRow("SELECT balance FROM accounts WHERE user_id = ?", fromUserID).Scan(&fromBalance)
-    if err != nil {
-        return fmt.Errorf("查询发送方余额失败: %w", err)
-    }
-    
-    if fromBalance < amount {
-        return fmt.Errorf("余额不足")
-    }
-    
-    // 扣除发送方余额
-    _, err = tx.Exec("UPDATE accounts SET balance = balance - ? WHERE user_id = ?", amount, fromUserID)
-    if err != nil {
-        return fmt.Errorf("扣除发送方余额失败: %w", err)
-    }
-    
-    // 增加接收方余额
-    _, err = tx.Exec("UPDATE accounts SET balance = balance + ? WHERE user_id = ?", amount, toUserID)
-    if err != nil {
-        return fmt.Errorf("增加接收方余额失败: %w", err)
-    }
-    
-    // 记录转账日志
-    _, err = tx.Exec("INSERT INTO transfer_logs (from_user_id, to_user_id, amount) VALUES (?, ?, ?)", 
-        fromUserID, toUserID, amount)
-    if err != nil {
-        return fmt.Errorf("记录转账日志失败: %w", err)
-    }
-    
+    // 事务操作
     return nil
 })
-```
 
-### 使用查询构建器事务
-
-```go
+// 指定连接
 err := db.Transaction(func(tx db.TransactionInterface) error {
-    // 创建事务查询构建器
-    txQuery := tx.Table("users")
-    
-    // 插入用户
-    userID, err := txQuery.Insert(map[string]interface{}{
-        "name":  "新用户",
-        "email": "newuser@example.com",
-        "status": "active",
-    })
-    if err != nil {
-        return err
-    }
-    
-    // 创建用户档案
-    profileQuery := tx.Table("profiles")
-    _, err = profileQuery.Insert(map[string]interface{}{
-        "user_id": userID,
-        "avatar":  "default.png",
-        "bio":     "新用户",
-    })
-    if err != nil {
-        return err
-    }
-    
+    // 事务操作
     return nil
-})
+}, "mysql_connection")
 ```
 
-## 🤖 自动事务
-
-### 模型事务
+### 转账示例
 
 ```go
-// 模型自动事务
-user := models.NewUser()
-err := user.Transaction(func() error {
-    user.Name = "张三"
-    user.Email = "zhangsan@example.com"
-    err := user.Save()
-    if err != nil {
-        return err
-    }
-    
-    // 创建用户档案
-    profile := models.NewProfile()
-    profile.UserID = user.ID.(int64)
-    profile.Avatar = "avatar.png"
-    err = profile.Save()
-    if err != nil {
-        return err
-    }
-    
-    return nil
-})
-```
-
-### 批量操作事务
-
-```go
-users := []*models.User{
-    {Name: "用户1", Email: "user1@example.com"},
-    {Name: "用户2", Email: "user2@example.com"},
-    {Name: "用户3", Email: "user3@example.com"},
-}
-
-err := db.Transaction(func(tx db.TransactionInterface) error {
-    for _, user := range users {
-        err := user.WithTransaction(tx).Save()
-        if err != nil {
-            return fmt.Errorf("保存用户 %s 失败: %w", user.Name, err)
+func transfer(fromUserID, toUserID int64, amount float64) error {
+    return db.Transaction(func(tx db.TransactionInterface) error {
+        // 1. 检查发送方余额
+        var balance float64
+        row := tx.QueryRow("SELECT balance FROM accounts WHERE user_id = ?", fromUserID)
+        if err := row.Scan(&balance); err != nil {
+            return fmt.Errorf("查询余额失败: %w", err)
         }
-    }
-    return nil
-})
+        
+        if balance < amount {
+            return fmt.Errorf("余额不足")
+        }
+        
+        // 2. 扣除发送方余额
+        _, err := tx.Exec("UPDATE accounts SET balance = balance - ? WHERE user_id = ?", 
+            amount, fromUserID)
+        if err != nil {
+            return fmt.Errorf("扣款失败: %w", err)
+        }
+        
+        // 3. 增加接收方余额
+        _, err = tx.Exec("UPDATE accounts SET balance = balance + ? WHERE user_id = ?", 
+            amount, toUserID)
+        if err != nil {
+            return fmt.Errorf("入账失败: %w", err)
+        }
+        
+        // 4. 记录转账日志
+        _, err = tx.Exec(`INSERT INTO transfer_logs 
+            (from_user_id, to_user_id, amount, created_at) 
+            VALUES (?, ?, ?, NOW())`, 
+            fromUserID, toUserID, amount)
+        if err != nil {
+            return fmt.Errorf("记录日志失败: %w", err)
+        }
+        
+        return nil // 成功，自动提交
+    })
+}
+```
+
+### 批量操作
+
+```go
+func batchCreateUsers(users []map[string]interface{}) error {
+    return db.Transaction(func(tx db.TransactionInterface) error {
+        for i, user := range users {
+            _, err := tx.Exec(`INSERT INTO users (username, email, status) 
+                VALUES (?, ?, ?)`,
+                user["username"], user["email"], "active")
+            if err != nil {
+                return fmt.Errorf("创建用户 %d 失败: %w", i, err)
+            }
+        }
+        return nil
+    })
+}
 ```
 
 ## ✋ 手动事务
 
-### 手动开始和提交
+当需要更精细的控制时，可以使用手动事务。
+
+### 基础用法
 
 ```go
-// 手动开始事务
-tx, err := db.Begin()
+import "github.com/zhoudm1743/torm/db"
+
+// 开始事务
+tx, err := db.BeginTransaction()
 if err != nil {
-    log.Fatal(err)
+    return fmt.Errorf("开始事务失败: %w", err)
 }
 
-// 确保事务会被处理
-defer func() {
-    if p := recover(); p != nil {
-        tx.Rollback()
-        panic(p) // 重新抛出panic
-    } else if err != nil {
-        tx.Rollback()
-    } else {
-        err = tx.Commit()
-    }
-}()
-
-// 执行操作
-_, err = tx.Exec("INSERT INTO users (name, email) VALUES (?, ?)", "手动事务用户", "manual@example.com")
-if err != nil {
-    return // defer中会回滚
-}
-
-_, err = tx.Exec("UPDATE statistics SET user_count = user_count + 1")
-if err != nil {
-    return // defer中会回滚
-}
-
-// 成功执行，defer中会提交
+// 指定连接
+tx, err := db.BeginTransaction("mysql_connection")
 ```
 
-### 手动控制事务生命周期
+### 完整示例
 
 ```go
-type UserService struct {
-    db db.DatabaseInterface
-}
-
-func (s *UserService) CreateUserWithProfile(userData, profileData map[string]interface{}) error {
-    tx, err := s.db.Begin()
+func createUserWithProfile(userData, profileData map[string]interface{}) error {
+    // 开始事务
+    tx, err := db.BeginTransaction()
     if err != nil {
         return fmt.Errorf("开始事务失败: %w", err)
     }
     
+    // 确保事务被正确处理
+    defer func() {
+        if r := recover(); r != nil {
+            tx.Rollback()
+            panic(r) // 重新抛出 panic
+        }
+    }()
+    
     // 创建用户
-    userID, err := s.createUser(tx, userData)
+    result, err := tx.Exec(`INSERT INTO users (username, email) VALUES (?, ?)`,
+        userData["username"], userData["email"])
     if err != nil {
         tx.Rollback()
         return fmt.Errorf("创建用户失败: %w", err)
     }
     
-    // 创建档案
-    profileData["user_id"] = userID
-    err = s.createProfile(tx, profileData)
+    userID, _ := result.LastInsertId()
+    
+    // 创建用户档案
+    _, err = tx.Exec(`INSERT INTO profiles (user_id, avatar, bio) VALUES (?, ?, ?)`,
+        userID, profileData["avatar"], profileData["bio"])
     if err != nil {
         tx.Rollback()
         return fmt.Errorf("创建档案失败: %w", err)
     }
     
     // 提交事务
-    err = tx.Commit()
-    if err != nil {
+    if err := tx.Commit(); err != nil {
         return fmt.Errorf("提交事务失败: %w", err)
     }
     
     return nil
 }
-
-func (s *UserService) createUser(tx db.TransactionInterface, data map[string]interface{}) (int64, error) {
-    return tx.Table("users").Insert(data)
-}
-
-func (s *UserService) createProfile(tx db.TransactionInterface, data map[string]interface{}) error {
-    _, err := tx.Table("profiles").Insert(data)
-    return err
-}
 ```
 
-## 🔄 嵌套事务
-
-### 基础嵌套事务
+### 使用 defer 简化
 
 ```go
-err := db.Transaction(func(tx db.TransactionInterface) error {
-    // 外层事务：创建订单
-    orderID, err := tx.Table("orders").Insert(map[string]interface{}{
-        "user_id": userID,
-        "total":   totalAmount,
-        "status":  "pending",
-    })
+func createOrder(orderData map[string]interface{}, items []map[string]interface{}) error {
+    tx, err := db.BeginTransaction()
     if err != nil {
         return err
     }
     
-    // 嵌套事务：处理订单项
-    err = tx.Transaction(func(innerTx db.TransactionInterface) error {
-        for _, item := range orderItems {
-            // 检查库存
-            var stock int
-            err := innerTx.QueryRow("SELECT stock FROM products WHERE id = ?", item.ProductID).Scan(&stock)
-            if err != nil {
-                return err
-            }
-            
-            if stock < item.Quantity {
-                return fmt.Errorf("商品 %d 库存不足", item.ProductID)
-            }
-            
-            // 创建订单项
-            _, err = innerTx.Table("order_items").Insert(map[string]interface{}{
-                "order_id":   orderID,
-                "product_id": item.ProductID,
-                "quantity":   item.Quantity,
-                "price":      item.Price,
-            })
-            if err != nil {
-                return err
-            }
-            
-            // 减少库存
-            _, err = innerTx.Exec("UPDATE products SET stock = stock - ? WHERE id = ?", 
-                item.Quantity, item.ProductID)
-            if err != nil {
-                return err
-            }
+    // 使用 defer 确保事务被处理
+    var txErr error
+    defer func() {
+        if txErr != nil {
+            tx.Rollback()
         }
-        return nil
-    })
+    }()
     
-    if err != nil {
-        return fmt.Errorf("处理订单项失败: %w", err)
+    // 创建订单
+    result, txErr := tx.Exec(`INSERT INTO orders (user_id, total, status) VALUES (?, ?, ?)`,
+        orderData["user_id"], orderData["total"], "pending")
+    if txErr != nil {
+        return txErr
     }
     
-    // 更新订单状态
-    _, err = tx.Table("orders").Where("id", "=", orderID).Update(map[string]interface{}{
-        "status": "confirmed",
-    })
-    
-    return err
-})
-```
-
-### 条件嵌套事务
-
-```go
-err := db.Transaction(func(tx db.TransactionInterface) error {
-    // 主要操作
-    userID, err := tx.Table("users").Insert(userData)
-    if err != nil {
-        return err
-    }
-    
-    // 条件性嵌套事务
-    if shouldCreateProfile {
-        err = tx.Transaction(func(profileTx db.TransactionInterface) error {
-            _, err := profileTx.Table("profiles").Insert(map[string]interface{}{
-                "user_id": userID,
-                "avatar":  "default.png",
-            })
-            return err
-        })
-        if err != nil {
-            return fmt.Errorf("创建档案失败: %w", err)
-        }
-    }
-    
-    if shouldSendEmail {
-        err = tx.Transaction(func(emailTx db.TransactionInterface) error {
-            // 记录邮件发送日志
-            _, err := emailTx.Table("email_logs").Insert(map[string]interface{}{
-                "user_id": userID,
-                "type":    "welcome",
-                "status":  "pending",
-            })
-            return err
-        })
-        if err != nil {
-            return fmt.Errorf("记录邮件日志失败: %w", err)
-        }
-    }
-    
-    return nil
-})
-```
-
-## 💾 保存点
-
-### 使用保存点
-
-```go
-err := db.Transaction(func(tx db.TransactionInterface) error {
-    // 创建用户
-    userID, err := tx.Table("users").Insert(userData)
-    if err != nil {
-        return err
-    }
-    
-    // 创建保存点
-    savepointName := "after_user_creation"
-    err = tx.Savepoint(savepointName)
-    if err != nil {
-        return fmt.Errorf("创建保存点失败: %w", err)
-    }
-    
-    // 尝试创建档案
-    _, err = tx.Table("profiles").Insert(profileData)
-    if err != nil {
-        // 回滚到保存点
-        rollbackErr := tx.RollbackToSavepoint(savepointName)
-        if rollbackErr != nil {
-            return fmt.Errorf("回滚到保存点失败: %w", rollbackErr)
-        }
-        
-        // 记录警告但不阻止事务
-        log.Printf("创建档案失败，已回滚: %v", err)
-    }
-    
-    // 释放保存点
-    err = tx.ReleaseSavepoint(savepointName)
-    if err != nil {
-        return fmt.Errorf("释放保存点失败: %w", err)
-    }
-    
-    return nil
-})
-```
-
-### 复杂保存点场景
-
-```go
-err := db.Transaction(func(tx db.TransactionInterface) error {
-    // 主要操作
-    orderID, err := tx.Table("orders").Insert(orderData)
-    if err != nil {
-        return err
-    }
-    
-    // 处理每个订单项，使用保存点确保部分失败不影响整个订单
-    for i, item := range orderItems {
-        savepointName := fmt.Sprintf("item_%d", i)
-        
-        err = tx.Savepoint(savepointName)
-        if err != nil {
-            return err
-        }
-        
-        // 尝试处理订单项
-        err = processOrderItem(tx, orderID, item)
-        if err != nil {
-            // 回滚这个订单项
-            tx.RollbackToSavepoint(savepointName)
-            log.Printf("订单项 %d 处理失败: %v", i, err)
-            
-            // 记录失败的订单项
-            _, logErr := tx.Table("failed_order_items").Insert(map[string]interface{}{
-                "order_id":    orderID,
-                "product_id":  item.ProductID,
-                "error":       err.Error(),
-                "created_at":  time.Now(),
-            })
-            if logErr != nil {
-                return logErr
-            }
-        }
-        
-        tx.ReleaseSavepoint(savepointName)
-    }
-    
-    return nil
-})
-
-func processOrderItem(tx db.TransactionInterface, orderID int64, item OrderItem) error {
-    // 检查库存
-    var stock int
-    err := tx.QueryRow("SELECT stock FROM products WHERE id = ?", item.ProductID).Scan(&stock)
-    if err != nil {
-        return err
-    }
-    
-    if stock < item.Quantity {
-        return fmt.Errorf("库存不足")
-    }
+    orderID, _ := result.LastInsertId()
     
     // 创建订单项
-    _, err = tx.Table("order_items").Insert(map[string]interface{}{
-        "order_id":   orderID,
-        "product_id": item.ProductID,
-        "quantity":   item.Quantity,
+    for _, item := range items {
+        _, txErr = tx.Exec(`INSERT INTO order_items (order_id, product_id, quantity, price) 
+            VALUES (?, ?, ?, ?)`,
+            orderID, item["product_id"], item["quantity"], item["price"])
+        if txErr != nil {
+            return txErr
+        }
+    }
+    
+    // 提交
+    return tx.Commit()
+}
+```
+
+## 🔧 查询构建器事务
+
+在事务中使用查询构建器。
+
+### 基础用法
+
+```go
+err := db.Transaction(func(tx db.TransactionInterface) error {
+    // 创建事务查询构建器
+    userQuery := tx.Table("users")
+    
+    // 插入
+    userID, err := userQuery.Insert(map[string]interface{}{
+        "username": "newuser",
+        "email":    "newuser@example.com",
+        "status":   "active",
     })
     if err != nil {
         return err
     }
     
-    // 减少库存
-    _, err = tx.Exec("UPDATE products SET stock = stock - ? WHERE id = ?", 
-        item.Quantity, item.ProductID)
+    // 创建档案
+    profileQuery := tx.Table("profiles")
+    _, err = profileQuery.Insert(map[string]interface{}{
+        "user_id": userID,
+        "avatar":  "default.png",
+    })
+    if err != nil {
+        return err
+    }
+    
+    return nil
+})
+```
+
+### 复杂查询
+
+```go
+err := db.Transaction(func(tx db.TransactionInterface) error {
+    // 查询
+    userQuery := tx.Table("users")
+    user, err := userQuery.Where("id", "=", 1).First()
+    if err != nil {
+        return err
+    }
+    
+    // 更新
+    _, err = userQuery.Where("id", "=", 1).Update(map[string]interface{}{
+        "login_count": user["login_count"].(int) + 1,
+        "last_login":  time.Now(),
+    })
+    if err != nil {
+        return err
+    }
+    
+    // 条件删除
+    logQuery := tx.Table("login_logs")
+    _, err = logQuery.Where("created_at", "<", time.Now().AddDate(0, -1, 0)).Delete()
     
     return err
-}
+})
 ```
 
 ## ⏪ 事务回滚
 
 ### 自动回滚
 
+闭包事务在返回错误时自动回滚：
+
 ```go
-// 当函数返回错误时自动回滚
 err := db.Transaction(func(tx db.TransactionInterface) error {
-    _, err := tx.Exec("INSERT INTO users (name) VALUES (?)", "测试用户")
+    _, err := tx.Exec("INSERT INTO users (name) VALUES (?)", "test")
     if err != nil {
         return err // 自动回滚
     }
     
-    // 模拟错误
+    // 业务逻辑错误
     if someCondition {
         return errors.New("业务逻辑错误") // 自动回滚
     }
@@ -493,342 +317,293 @@ err := db.Transaction(func(tx db.TransactionInterface) error {
 ### 手动回滚
 
 ```go
-tx, err := db.Begin()
+tx, err := db.BeginTransaction()
 if err != nil {
     return err
 }
-
-defer func() {
-    if err != nil {
-        tx.Rollback()
-    }
-}()
 
 // 执行操作
-_, err = tx.Exec("INSERT INTO users (name) VALUES (?)", "用户")
+_, err = tx.Exec("INSERT INTO users (name) VALUES (?)", "test")
 if err != nil {
+    tx.Rollback() // 手动回滚
     return err
 }
 
-// 业务逻辑检查
-valid, err := validateBusinessLogic(tx)
-if err != nil {
-    return err
+// 业务验证
+if !isValid {
+    tx.Rollback() // 手动回滚
+    return errors.New("验证失败")
 }
 
-if !valid {
-    tx.Rollback()
-    return errors.New("业务逻辑验证失败")
-}
-
-// 手动提交
-err = tx.Commit()
-return err
+// 提交
+return tx.Commit()
 ```
 
-### 部分回滚处理
+### Panic 恢复
 
 ```go
 err := db.Transaction(func(tx db.TransactionInterface) error {
-    // 批量处理，部分失败不影响整体
-    var successCount, failCount int
-    
-    for _, user := range users {
-        err := processUser(tx, user)
-        if err != nil {
-            failCount++
-            log.Printf("处理用户 %s 失败: %v", user.Name, err)
-            continue
+    defer func() {
+        if r := recover(); r != nil {
+            // panic 时自动回滚
+            log.Printf("事务 panic: %v", r)
         }
-        successCount++
-    }
+    }()
     
-    // 记录处理结果
-    _, err := tx.Table("batch_results").Insert(map[string]interface{}{
-        "success_count": successCount,
-        "fail_count":    failCount,
-        "processed_at":  time.Now(),
+    // 可能 panic 的操作
+    riskyOperation(tx)
+    
+    return nil
+})
+```
+
+## 📊 实际应用场景
+
+### 订单处理
+
+```go
+func processOrder(orderID int64) error {
+    return db.Transaction(func(tx db.TransactionInterface) error {
+        // 1. 获取订单
+        orderQuery := tx.Table("orders")
+        order, err := orderQuery.Where("id", "=", orderID).First()
+        if err != nil {
+            return fmt.Errorf("订单不存在: %w", err)
+        }
+        
+        if order["status"] != "pending" {
+            return fmt.Errorf("订单状态不正确")
+        }
+        
+        // 2. 获取订单项
+        itemQuery := tx.Table("order_items")
+        items, err := itemQuery.Where("order_id", "=", orderID).Get()
+        if err != nil {
+            return err
+        }
+        
+        // 3. 检查并扣减库存
+        for _, item := range items {
+            productID := item["product_id"]
+            quantity := item["quantity"].(int)
+            
+            // 检查库存
+            productQuery := tx.Table("products")
+            product, err := productQuery.Where("id", "=", productID).First()
+            if err != nil {
+                return fmt.Errorf("商品 %v 不存在", productID)
+            }
+            
+            stock := product["stock"].(int)
+            if stock < quantity {
+                return fmt.Errorf("商品 %v 库存不足", productID)
+            }
+            
+            // 扣减库存
+            _, err = productQuery.Where("id", "=", productID).Update(map[string]interface{}{
+                "stock": stock - quantity,
+            })
+            if err != nil {
+                return err
+            }
+        }
+        
+        // 4. 更新订单状态
+        _, err = orderQuery.Where("id", "=", orderID).Update(map[string]interface{}{
+            "status":     "confirmed",
+            "updated_at": time.Now(),
+        })
+        if err != nil {
+            return err
+        }
+        
+        // 5. 记录日志
+        logQuery := tx.Table("order_logs")
+        _, err = logQuery.Insert(map[string]interface{}{
+            "order_id":   orderID,
+            "action":     "confirmed",
+            "created_at": time.Now(),
+        })
+        
+        return err
+    })
+}
+```
+
+### 用户注册
+
+```go
+func registerUser(userData map[string]interface{}) (int64, error) {
+    var userID int64
+    
+    err := db.Transaction(func(tx db.TransactionInterface) error {
+        // 1. 检查用户名是否存在
+        userQuery := tx.Table("users")
+        existing, _ := userQuery.Where("username", "=", userData["username"]).First()
+        if existing != nil {
+            return fmt.Errorf("用户名已存在")
+        }
+        
+        // 2. 检查邮箱是否存在
+        existing, _ = userQuery.Where("email", "=", userData["email"]).First()
+        if existing != nil {
+            return fmt.Errorf("邮箱已被注册")
+        }
+        
+        // 3. 创建用户
+        id, err := userQuery.Insert(map[string]interface{}{
+            "username":   userData["username"],
+            "email":      userData["email"],
+            "password":   hashPassword(userData["password"].(string)),
+            "status":     "active",
+            "created_at": time.Now(),
+        })
+        if err != nil {
+            return err
+        }
+        userID = id
+        
+        // 4. 创建用户档案
+        profileQuery := tx.Table("profiles")
+        _, err = profileQuery.Insert(map[string]interface{}{
+            "user_id":    userID,
+            "avatar":     "default.png",
+            "created_at": time.Now(),
+        })
+        if err != nil {
+            return err
+        }
+        
+        // 5. 分配默认角色
+        roleQuery := tx.Table("user_roles")
+        _, err = roleQuery.Insert(map[string]interface{}{
+            "user_id":    userID,
+            "role_id":    1, // 默认角色
+            "created_at": time.Now(),
+        })
+        
+        return err
     })
     
+    return userID, err
+}
+```
+
+## 💡 最佳实践
+
+### 1. 优先使用闭包事务
+
+```go
+// ✅ 推荐：闭包事务自动处理提交和回滚
+err := db.Transaction(func(tx db.TransactionInterface) error {
+    // 操作
+    return nil
+})
+
+// ⚠️ 谨慎：手动事务需要自己处理提交和回滚
+tx, _ := db.BeginTransaction()
+// 必须确保 Commit 或 Rollback 被调用
+```
+
+### 2. 保持事务简短
+
+```go
+// ✅ 好：事务只包含必要的数据库操作
+err := db.Transaction(func(tx db.TransactionInterface) error {
+    _, err := tx.Exec("UPDATE accounts SET balance = balance - ? WHERE id = ?", amount, fromID)
     if err != nil {
         return err
     }
-    
-    // 如果失败率太高，回滚整个批次
-    if failCount > successCount {
-        return errors.New("失败率过高，回滚整个批次")
-    }
-    
-    return nil
-})
-```
-
-## 🌐 分布式事务
-
-### 两阶段提交 (2PC)
-
-```go
-// 分布式事务管理器
-type DistributedTransactionManager struct {
-    databases []db.DatabaseInterface
-}
-
-func (dtm *DistributedTransactionManager) Execute(operations []DistributedOperation) error {
-    // 阶段1：准备阶段
-    transactions := make([]db.TransactionInterface, len(dtm.databases))
-    
-    for i, database := range dtm.databases {
-        tx, err := database.Begin()
-        if err != nil {
-            // 回滚已开始的事务
-            dtm.rollbackAll(transactions[:i])
-            return fmt.Errorf("开始事务失败: %w", err)
-        }
-        transactions[i] = tx
-    }
-    
-    // 执行操作
-    for i, op := range operations {
-        err := op.Execute(transactions[i])
-        if err != nil {
-            // 回滚所有事务
-            dtm.rollbackAll(transactions)
-            return fmt.Errorf("执行操作 %d 失败: %w", i, err)
-        }
-    }
-    
-    // 阶段2：提交阶段
-    for i, tx := range transactions {
-        err := tx.Commit()
-        if err != nil {
-            // 如果提交失败，尝试回滚剩余事务
-            dtm.rollbackAll(transactions[i+1:])
-            return fmt.Errorf("提交事务 %d 失败: %w", i, err)
-        }
-    }
-    
-    return nil
-}
-
-func (dtm *DistributedTransactionManager) rollbackAll(transactions []db.TransactionInterface) {
-    for _, tx := range transactions {
-        if tx != nil {
-            tx.Rollback()
-        }
-    }
-}
-
-type DistributedOperation interface {
-    Execute(tx db.TransactionInterface) error
-}
-```
-
-### 补偿事务模式 (Saga)
-
-```go
-type SagaStep struct {
-    Execute    func(tx db.TransactionInterface) error
-    Compensate func(tx db.TransactionInterface) error
-}
-
-type SagaTransaction struct {
-    steps []SagaStep
-}
-
-func (saga *SagaTransaction) Execute() error {
-    executedSteps := make([]int, 0)
-    
-    // 执行所有步骤
-    for i, step := range saga.steps {
-        err := db.Transaction(func(tx db.TransactionInterface) error {
-            return step.Execute(tx)
-        })
-        
-        if err != nil {
-            // 执行补偿操作
-            saga.compensate(executedSteps)
-            return fmt.Errorf("步骤 %d 执行失败: %w", i, err)
-        }
-        
-        executedSteps = append(executedSteps, i)
-    }
-    
-    return nil
-}
-
-func (saga *SagaTransaction) compensate(executedSteps []int) {
-    // 逆序执行补偿操作
-    for i := len(executedSteps) - 1; i >= 0; i-- {
-        stepIndex := executedSteps[i]
-        step := saga.steps[stepIndex]
-        
-        err := db.Transaction(func(tx db.TransactionInterface) error {
-            return step.Compensate(tx)
-        })
-        
-        if err != nil {
-            log.Printf("补偿步骤 %d 失败: %v", stepIndex, err)
-            // 继续执行其他补偿操作
-        }
-    }
-}
-
-// 使用示例
-func transferWithSaga(fromAccount, toAccount int64, amount float64) error {
-    saga := &SagaTransaction{
-        steps: []SagaStep{
-            {
-                Execute: func(tx db.TransactionInterface) error {
-                    // 扣除发送方余额
-                    _, err := tx.Exec("UPDATE accounts SET balance = balance - ? WHERE id = ?", 
-                        amount, fromAccount)
-                    return err
-                },
-                Compensate: func(tx db.TransactionInterface) error {
-                    // 恢复发送方余额
-                    _, err := tx.Exec("UPDATE accounts SET balance = balance + ? WHERE id = ?", 
-                        amount, fromAccount)
-                    return err
-                },
-            },
-            {
-                Execute: func(tx db.TransactionInterface) error {
-                    // 增加接收方余额
-                    _, err := tx.Exec("UPDATE accounts SET balance = balance + ? WHERE id = ?", 
-                        amount, toAccount)
-                    return err
-                },
-                Compensate: func(tx db.TransactionInterface) error {
-                    // 恢复接收方余额
-                    _, err := tx.Exec("UPDATE accounts SET balance = balance - ? WHERE id = ?", 
-                        amount, toAccount)
-                    return err
-                },
-            },
-        },
-    }
-    
-    return saga.Execute()
-}
-```
-
-## 📚 最佳实践
-
-### 1. 事务粒度控制
-
-```go
-// 好的做法：事务粒度适中
-err := db.Transaction(func(tx db.TransactionInterface) error {
-    // 只包含相关的操作
-    userID, err := tx.Table("users").Insert(userData)
-    if err != nil {
-        return err
-    }
-    
-    _, err = tx.Table("profiles").Insert(map[string]interface{}{
-        "user_id": userID,
-        "avatar":  "default.png",
-    })
+    _, err = tx.Exec("UPDATE accounts SET balance = balance + ? WHERE id = ?", amount, toID)
     return err
 })
 
-// 避免：事务过大
-// 不要在一个事务中包含不相关的操作或长时间运行的操作
+// ❌ 避免：在事务中执行耗时操作
+err := db.Transaction(func(tx db.TransactionInterface) error {
+    // 不要在事务中调用外部 API
+    response, _ := http.Get("https://api.example.com/verify")
+    // ...
+    return nil
+})
 ```
 
-### 2. 错误处理
+### 3. 正确处理错误
 
 ```go
-// 好的做法：完整的错误处理
-err := db.Transaction(func(tx db.TransactionInterface) error {
-    userID, err := createUser(tx, userData)
-    if err != nil {
-        return fmt.Errorf("创建用户失败: %w", err)
-    }
+// ✅ 完整的错误处理
+func createUserWithProfile(userData, profileData map[string]interface{}) error {
+    err := db.Transaction(func(tx db.TransactionInterface) error {
+        userID, err := createUser(tx, userData)
+        if err != nil {
+            return fmt.Errorf("创建用户失败: %w", err)
+        }
+        
+        err = createProfile(tx, userID, profileData)
+        if err != nil {
+            return fmt.Errorf("创建档案失败: %w", err)
+        }
+        
+        return nil
+    })
     
-    err = createProfile(tx, userID, profileData)
     if err != nil {
-        return fmt.Errorf("创建档案失败: %w", err)
+        log.Printf("事务执行失败: %v", err)
+        return err
     }
     
     return nil
-})
-
-if err != nil {
-    log.Printf("事务执行失败: %v", err)
-    // 处理事务失败的情况
 }
 ```
 
-### 3. 超时控制
+### 4. 避免死锁
 
 ```go
-// 设置事务超时
-ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-defer cancel()
-
-err := db.TransactionWithContext(ctx, func(tx db.TransactionInterface) error {
-    // 长时间运行的操作
-    return processLargeDataset(tx)
-})
-
-if err != nil {
-    if errors.Is(err, context.DeadlineExceeded) {
-        log.Println("事务超时")
-    } else {
-        log.Printf("事务失败: %v", err)
-    }
-}
-```
-
-### 4. 死锁预防
-
-```go
-// 好的做法：按固定顺序访问资源
+// ✅ 按固定顺序访问资源
 err := db.Transaction(func(tx db.TransactionInterface) error {
     // 总是按 ID 升序锁定账户
-    accountIDs := []int64{fromAccountID, toAccountID}
-    sort.Slice(accountIDs, func(i, j int) bool {
-        return accountIDs[i] < accountIDs[j]
-    })
+    ids := []int64{fromAccountID, toAccountID}
+    sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
     
-    for _, accountID := range accountIDs {
-        _, err := tx.Exec("SELECT balance FROM accounts WHERE id = ? FOR UPDATE", accountID)
+    for _, id := range ids {
+        _, err := tx.Exec("SELECT * FROM accounts WHERE id = ? FOR UPDATE", id)
         if err != nil {
             return err
         }
     }
     
-    // 执行转账操作
+    // 执行转账
     return performTransfer(tx, fromAccountID, toAccountID, amount)
 })
 ```
 
-### 5. 资源清理
+### 5. 事务粒度控制
 
 ```go
-// 确保资源得到正确清理
-func processWithTransaction() error {
-    tx, err := db.Begin()
-    if err != nil {
-        return err
-    }
-    
-    // 确保事务被正确处理
-    defer func() {
-        if p := recover(); p != nil {
-            tx.Rollback()
-            panic(p)
-        } else if err != nil {
-            tx.Rollback()
-        } else {
-            err = tx.Commit()
+// ✅ 适当的事务粒度
+func processOrders(orderIDs []int64) error {
+    for _, orderID := range orderIDs {
+        // 每个订单一个事务，失败不影响其他订单
+        err := db.Transaction(func(tx db.TransactionInterface) error {
+            return processOrder(tx, orderID)
+        })
+        if err != nil {
+            log.Printf("订单 %d 处理失败: %v", orderID, err)
+            // 继续处理其他订单
         }
-    }()
-    
-    // 执行业务逻辑
-    err = performBusinessLogic(tx)
-    return err
+    }
+    return nil
+}
+
+// ❌ 避免：一个大事务处理所有订单
+func processAllOrders(orderIDs []int64) error {
+    return db.Transaction(func(tx db.TransactionInterface) error {
+        for _, orderID := range orderIDs {
+            if err := processOrder(tx, orderID); err != nil {
+                return err // 一个失败，全部回滚
+            }
+        }
+        return nil
+    })
 }
 ```
 
@@ -836,5 +611,5 @@ func processWithTransaction() error {
 
 - [查询构建器](Query-Builder) - 在事务中使用查询构建器
 - [模型系统](Model-System) - 模型的事务支持
-- [性能优化](Performance) - 事务性能优化
-- [故障排除](Troubleshooting) - 事务相关问题解决 
+- [配置指南](Configuration) - 数据库连接配置
+- [错误处理](API-Reference#错误处理) - 错误处理最佳实践

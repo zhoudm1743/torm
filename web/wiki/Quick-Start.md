@@ -1,489 +1,211 @@
-# 快速开始指南
+# 快速开始
 
-欢迎使用TORM,这个指南将在5分钟内让你体验TORM的强大功能，包括零配置的自动迁移、丰富的TORM标签系统、跨数据库支持等革命性特性。
+本指南将帮助你在 5 分钟内上手 TORM。
 
 ## 📋 前置要求
 
 - Go 1.19 或更高版本
-- 支持的数据库之一 (MySQL, PostgreSQL, SQLite)
+- 支持的数据库 (MySQL, PostgreSQL, SQLite)
 
-## 🚀 第1步：安装TORM
+## 🚀 安装
 
 ```bash
-# 创建新项目
-mkdir my-torm-app
-cd my-torm-app
-go mod init my-torm-app
+# 创建项目
+mkdir my-project && cd my-project
+go mod init my-project
 
-# 安装TORM
+# 安装 TORM
 go get github.com/zhoudm1743/torm
 
 # 安装数据库驱动（根据需要选择）
 go get github.com/go-sql-driver/mysql      # MySQL
-go get github.com/lib/pq                   # PostgreSQL  
+go get github.com/lib/pq                   # PostgreSQL
 go get github.com/mattn/go-sqlite3         # SQLite
 ```
 
-## 🔧 第2步：创建现代化示例
+## 🔧 配置数据库连接
 
-### 创建主文件 `main.go`
-
-```go
-package main
-
-import (
-    "fmt"
-    "time"
-    "github.com/zhoudm1743/torm"
-)
-
-// 用户模型 - 展示丰富的TORM标签
-type User struct {
-    torm.BaseModel
-    
-    // 主键和自增
-    ID int `json:"id" torm:"primary_key,auto_increment"`
-    
-    // 字符串类型和约束
-    Username string `json:"username" torm:"type:varchar,size:50,unique,index"`
-    Email    string `json:"email" torm:"type:varchar,size:100,unique"`
-    Password string `json:"password" torm:"type:varchar,size:255"`
-    
-    // 数值类型和默认值
-    Age    int     `json:"age" torm:"type:int,unsigned,default:0"`
-    Salary float64 `json:"salary" torm:"type:decimal,precision:10,scale:2,default:0.00"`
-    
-    // 状态和布尔字段
-    Status   string `json:"status" torm:"type:varchar,size:20,default:active,index"`
-    IsActive bool   `json:"is_active" torm:"type:boolean,default:1"`
-    
-    // 文本字段
-    Bio string `json:"bio" torm:"type:text"`
-    
-    // 外键关联
-    DeptID int `json:"dept_id" torm:"type:int,references:departments.id,on_delete:set_null"`
-    
-    // 自动时间戳
-    CreatedAt time.Time `json:"created_at" torm:"auto_create_time"`
-    UpdatedAt time.Time `json:"updated_at" torm:"auto_update_time"`
-}
-
-// 部门模型
-type Department struct {
-    torm.BaseModel
-    ID       int     `json:"id" torm:"primary_key,auto_increment"`
-    Name     string  `json:"name" torm:"type:varchar,size:100,unique"`
-    Budget   float64 `json:"budget" torm:"type:decimal,precision:12,scale:2,default:0.00"`
-    Location string  `json:"location" torm:"type:varchar,size:255"`
-    IsActive bool    `json:"is_active" torm:"type:boolean,default:1"`
-    
-    CreatedAt time.Time `json:"created_at" torm:"auto_create_time"`
-    UpdatedAt time.Time `json:"updated_at" torm:"auto_update_time"`
-}
-
-func main() {
-    fmt.Println("🚀 TORM 快速开始演示")
-    
-    // 第1步：配置数据库连接
-    fmt.Println("\n📡 配置数据库连接...")
-    
-    // SQLite（推荐用于快速开始）
-    err := torm.AddConnection("default", &torm.Config{
-        Driver:   "sqlite",
-        Database: "quickstart.db",
-    })
-    
-    // MySQL示例（可选）
-    /*
-    err := torm.AddConnection("default", &torm.Config{
-        Driver:   "mysql",
-        Host:     "localhost",
-        Port:     3306,
-        Username: "root",
-        Password: "password",
-        Database: "torm_demo",
-        Charset:  "utf8mb4",
-    })
-    */
-    
-    // PostgreSQL示例（可选）
-    /*
-    err := torm.AddConnection("default", &torm.Config{
-        Driver:   "postgres",
-        Host:     "localhost",
-        Port:     5432,
-        Username: "postgres",
-        Password: "password",
-        Database: "torm_demo",
-        SSLMode:  "disable",
-    })
-    */
-    
-    if err != nil {
-        panic(fmt.Sprintf("数据库连接失败: %v", err))
-    }
-    fmt.Println("✅ 数据库连接成功")
-    
-    // 第2步：自动创建表结构
-    fmt.Println("\n🏗️  自动创建表结构...")
-    
-    // 先创建部门表（被引用的表）
-    dept := &Department{}
-    if err := dept.AutoMigrate(); err != nil {
-        panic(fmt.Sprintf("部门表创建失败: %v", err))
-    }
-    fmt.Println("✅ 部门表创建成功")
-    
-    // 再创建用户表（包含外键）
-    user := &User{}
-    if err := user.AutoMigrate(); err != nil {
-        panic(fmt.Sprintf("用户表创建失败: %v", err))
-    }
-    fmt.Println("✅ 用户表创建成功")
-    
-    // 第3步：演示CRUD操作
-    fmt.Println("\n📊 演示CRUD操作...")
-    
-    // 创建部门
-    techDept := &Department{
-        Name:     "技术部",
-        Budget:   100000.00,
-        Location: "北京",
-        IsActive: true,
-    }
-    if err := techDept.Save(); err != nil {
-        fmt.Printf("部门创建失败: %v\n", err)
-    } else {
-        fmt.Printf("✅ 部门创建成功，ID: %d\n", techDept.ID)
-    }
-    
-    // 创建用户
-    newUser := &User{
-        Username: "zhangsan",
-        Email:    "zhangsan@example.com",
-        Password: "password123",
-        Age:      28,
-        Salary:   8000.50,
-        Status:   "active",
-        IsActive: true,
-        Bio:      "这是一个演示用户",
-        DeptID:   techDept.ID,
-    }
-    
-    if err := newUser.Save(); err != nil {
-        fmt.Printf("用户创建失败: %v\n", err)
-    } else {
-        fmt.Printf("✅ 用户创建成功，ID: %d\n", newUser.ID)
-    }
-    
-    // 第4步：演示查询操作
-    fmt.Println("\n🔍 演示查询操作...")
-    
-    // 原始数据查询（高性能）
-    users, err := torm.Table("users").
-        Where("status", "=", "active").
-        Where("age", ">=", 18).
-        OrderBy("created_at", "desc").
-        GetRaw()
-    
-    if err != nil {
-        fmt.Printf("查询失败: %v\n", err)
-    } else {
-        fmt.Printf("✅ 查询到 %d 个活跃用户\n", len(users))
-    }
-    
-    // 参数化查询
-    activeUsers, err := torm.Table("users").
-        Where("status = ? AND age >= ?", "active", 18).
-        GetRaw()
-    
-    if err != nil {
-        fmt.Printf("参数化查询失败: %v\n", err)
-    } else {
-        fmt.Printf("✅ 参数化查询到 %d 个用户\n", len(activeUsers))
-    }
-    
-    // 聚合查询
-    count, err := torm.Table("users").
-        Where("status", "=", "active").
-        Count()
-    
-    if err != nil {
-        fmt.Printf("计数查询失败: %v\n", err)
-    } else {
-        fmt.Printf("✅ 活跃用户总数: %d\n", count)
-    }
-    
-    // 第5步：演示更新操作
-    fmt.Println("\n🔄 演示更新操作...")
-    
-    affected, err := torm.Table("users").
-        Where("username", "=", "zhangsan").
-        Update(map[string]interface{}{
-            "salary": 9000.00,
-            "status": "promoted",
-        })
-    
-    if err != nil {
-        fmt.Printf("更新失败: %v\n", err)
-    } else {
-        fmt.Printf("✅ 更新成功，影响行数: %d\n", affected)
-    }
-    
-    // 第6步：演示事务操作
-    fmt.Println("\n💼 演示事务操作...")
-    
-    err = torm.Transaction(func(tx torm.TransactionInterface) error {
-        // 在事务中执行多个操作
-        _, err := tx.Exec("INSERT INTO departments (name, budget, location, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            "事务部门", 50000.00, "上海", true, time.Now(), time.Now())
-        if err != nil {
-            return err
-        }
-        
-        _, err = tx.Exec("INSERT INTO users (username, email, password, age, status, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            "transaction_user", "tx@example.com", "password", 25, "active", true, time.Now(), time.Now())
-        if err != nil {
-            return err
-        }
-        
-        return nil // 自动提交
-    })
-    
-    if err != nil {
-        fmt.Printf("事务失败: %v\n", err)
-    } else {
-        fmt.Println("✅ 事务执行成功")
-    }
-    
-    // 第7步：演示访问器功能（新特性）
-    fmt.Println("\n🎨 演示访问器功能...")
-    
-    // 如果有用户数据，演示访问器
-    if count > 0 {
-        fmt.Println("访问器演示：")
-        
-        // 使用模型查询（支持访问器）
-        userResult, err := torm.Table("users").
-            Model(&User{}).                    // 启用访问器
-            Where("username", "=", "zhangsan").
-            First()
-        
-        if err == nil && userResult != nil {
-            fmt.Printf("✅ 访问器查询成功\n")
-            fmt.Printf("   用户名: %v\n", userResult["username"])
-            fmt.Printf("   状态: %v\n", userResult["status"])
-            
-            // 演示JSON输出
-            if jsonBytes, err := json.Marshal(userResult); err == nil {
-                fmt.Printf("   JSON: %s\n", string(jsonBytes)[:100] + "...")  // 显示前100字符
-            }
-        }
-        
-        // 演示集合查询
-        userResults, err := torm.Table("users").
-            Model(&User{}).
-            Where("status", "=", "promoted").
-            Get()
-        
-        if err == nil && len(userResults) > 0 {
-            fmt.Printf("✅ 找到 %d 个晋升用户\n", len(userResults))
-            
-            // 演示遍历
-            for i, user := range userResults {
-                if i < 3 {  // 只显示前3个
-                    fmt.Printf("   [%d] 用户: %v\n", i+1, user["username"])
-                }
-            }
-        }
-    }
-    
-    fmt.Println("\n🎉 TORM 快速开始演示完成！")
-    fmt.Println("\n✨ 新特性亮点：")
-    fmt.Println("   🎨 访问器系统 - 支持Get/Set访问器")
-    fmt.Println("   🔗 Model().Get() - 简洁的链式调用API")
-    fmt.Println("   ⚡ GetRaw() - 高性能原始数据查询")
-    fmt.Println("   📊 直接数据操作 - 原生map[string]interface{}")
-    fmt.Println("\n📚 接下来你可以：")
-    fmt.Println("   - 查看完整文档：http://torm.site/docs.html")
-    fmt.Println("   - 学习TORM标签：http://torm.site/docs.html?doc=migrations")
-    fmt.Println("   - 探索查询构建器：http://torm.site/docs.html?doc=query-builder")
-    fmt.Println("   - 了解模型系统：http://torm.site/docs.html?doc=model-system")
-    fmt.Println("   - 体验访问器系统：http://torm.site/docs.html?doc=model-system#accessors")
-}
-```
-
-## 🎯 第3步：运行代码
-
-```bash
-go run main.go
-```
-
-你将看到类似输出：
-
-```
-🚀 TORM 快速开始演示
-
-📡 配置数据库连接...
-✅ 数据库连接成功
-
-🏗️ 自动创建表结构...
-✅ 部门表创建成功
-✅ 用户表创建成功
-
-📊 演示CRUD操作...
-✅ 部门创建成功，ID: 1
-✅ 用户创建成功，ID: 1
-
-🔍 演示查询操作...
-✅ 查询到 1 个活跃用户
-✅ 参数化查询到 1 个用户
-✅ 活跃用户总数: 1
-
-🔄 演示更新操作...
-✅ 更新成功，影响行数: 1
-
-💼 演示事务操作...
-✅ 事务执行成功
-
-🎉 TORM 快速开始演示完成！
-```
-
-## ✨ 核心特性展示
-
-### 1. 🆕 零配置自动迁移
+### MySQL
 
 ```go
-// 定义模型即完成数据库设计
-type Product struct {
-    torm.BaseModel
-    ID          int     `torm:"primary_key,auto_increment"`
-    Name        string  `torm:"type:varchar,size:200,comment:产品名称"`
-    SKU         string  `torm:"type:varchar,size:50,unique,comment:产品编码"`
-    Price       float64 `torm:"type:decimal,precision:10,scale:2,default:0.00"`
-    CategoryID  int     `torm:"type:int,references:categories.id,on_delete:cascade"`
-    IsActive    bool    `torm:"type:boolean,default:1"`
-    CreatedAt   time.Time `torm:"auto_create_time"`
-}
+import "github.com/zhoudm1743/torm"
 
-// 一行代码创建完整表结构（包括索引、外键、约束）
-product := &Product{}
-product.AutoMigrate()
+err := torm.AddConnection("default", &torm.Config{
+    Driver:   "mysql",
+    Host:     "localhost",
+    Port:     3306,
+    Database: "myapp",
+    Username: "root",
+    Password: "password",
+    Charset:  "utf8mb4",
+})
 ```
 
-### 2. 🏷️ 丰富的TORM标签系统
+### PostgreSQL
 
 ```go
-type User struct {
-    torm.BaseModel
-    
-    // 主键和自增
-    ID int64 `torm:"primary_key,auto_increment,comment:用户ID"`
-    
-    // 精确类型控制
-    Username string  `torm:"type:varchar,size:50,unique,index"`
-    Email    string  `torm:"type:varchar,size:100,unique"`
-    Bio      string  `torm:"type:text"`
-    
-    // 数值精度控制
-    Age      int     `torm:"type:int,unsigned,default:0"`
-    Salary   float64 `torm:"type:decimal,precision:10,scale:2"`
-    
-    // 索引优化
-    Status   string  `torm:"type:varchar,size:20,default:active,index"`
-    City     string  `torm:"type:varchar,size:50,index:city_idx"`
-    
-    // 外键关系
-    DeptID   int     `torm:"type:int,references:departments.id,on_delete:set_null"`
-    
-    // 自动时间戳
-    CreatedAt time.Time `torm:"auto_create_time"`
-    UpdatedAt time.Time `torm:"auto_update_time"`
-}
+err := torm.AddConnection("default", &torm.Config{
+    Driver:   "postgres",
+    Host:     "localhost",
+    Port:     5432,
+    Database: "myapp",
+    Username: "postgres",
+    Password: "password",
+    SSLMode:  "disable",
+})
 ```
 
-### 3. 🔗 强大的查询构建器
+### SQLite
 
 ```go
-// 访问器查询（支持访问器）
-users, _ := torm.Table("users").
-    Model(&User{}).                     // 启用访问器
+err := torm.AddConnection("default", &torm.Config{
+    Driver:   "sqlite",
+    Database: "app.db",
+})
+```
+
+## 📝 基础查询
+
+### 查询数据
+
+```go
+// 查询所有记录
+users, err := torm.Table("users").Get()
+
+// 条件查询
+users, err := torm.Table("users").
     Where("status", "=", "active").
     Where("age", ">=", 18).
-    OrderBy("created_at", "desc").
-    Limit(10).
-    Get()                               // 返回 []map[string]interface{}
-
-// 参数化查询（支持数组参数）
-activeUsers, _ := torm.Table("users").
-    Model(&User{}).
-    Where("status IN (?)", []string{"active", "premium"}).
-    Where("age BETWEEN ? AND ?", 18, 65).
     Get()
 
-// 复杂条件组合
-results, _ := torm.Table("users").
-    Model(&User{}).
-    Where("(status = ? OR vip_level > ?) AND age >= ?", "premium", 3, 25).
+// 参数化查询
+users, err := torm.Table("users").
+    Where("status = ? AND age >= ?", "active", 18).
     Get()
 
-// 原始数据查询（高性能）
-rawUsers, _ := torm.Table("users").
-    Where("status", "=", "active").
-    GetRaw()                            // 返回 []map[string]interface{}
+// 查询单条记录
+user, err := torm.Table("users").
+    Where("id", "=", 1).
+    First()
 
-// 聚合查询
-count, _ := torm.Table("users").Where("status", "=", "active").Count()
+// 检查记录是否存在
+exists, err := torm.Table("users").
+    Where("email", "=", "test@example.com").
+    Exists()
 ```
 
-### 4. 🌐 跨数据库支持
+### 插入数据
 
 ```go
-// 同一套代码，支持多种数据库
-configs := map[string]*torm.Config{
-    "sqlite": {
-        Driver:   "sqlite",
-        Database: "app.db",
-    },
-    "mysql": {
-        Driver:   "mysql",
-        Host:     "localhost",
-        Database: "myapp",
-        Username: "root",
-        Password: "password",
-    },
-    "postgres": {
-        Driver:   "postgres", 
-        Host:     "localhost",
-        Database: "myapp",
-        Username: "postgres",
-        Password: "password",
-        SSLMode:  "disable",
-    },
-}
+// 单条插入
+id, err := torm.Table("users").Insert(map[string]interface{}{
+    "name":   "张三",
+    "email":  "zhangsan@example.com",
+    "status": "active",
+})
 
-// 同一模型自动适配不同数据库
-for name, config := range configs {
-    torm.AddConnection(name, config)
-    
-    user := &User{}
-    user.SetConnection(name)
-    user.AutoMigrate() // 自动适配数据库差异
+// 批量插入
+count, err := torm.Table("users").InsertBatch([]map[string]interface{}{
+    {"name": "李四", "email": "lisi@example.com"},
+    {"name": "王五", "email": "wangwu@example.com"},
+})
+```
+
+### 更新数据
+
+```go
+// 条件更新
+affected, err := torm.Table("users").
+    Where("id", "=", 1).
+    Update(map[string]interface{}{
+        "name":   "新名字",
+        "status": "updated",
+    })
+
+// 自增/自减
+affected, err := torm.Table("users").
+    Where("id", "=", 1).
+    Increment("login_count", 1)
+```
+
+### 删除数据
+
+```go
+affected, err := torm.Table("users").
+    Where("status", "=", "deleted").
+    Delete()
+```
+
+## 📦 使用模型
+
+### 定义模型
+
+```go
+import (
+    "time"
+    "github.com/zhoudm1743/torm/model"
+)
+
+type User struct {
+    model.BaseModel
+    ID        int       `json:"id" torm:"primary_key,auto_increment"`
+    Name      string    `json:"name" torm:"type:varchar,size:100"`
+    Email     string    `json:"email" torm:"type:varchar,size:100,unique"`
+    Status    string    `json:"status" torm:"type:varchar,size:20,default:active"`
+    CreatedAt time.Time `json:"created_at" torm:"auto_create_time"`
+    UpdatedAt time.Time `json:"updated_at" torm:"auto_update_time"`
 }
 ```
 
-### 5. 💼 自动事务管理
+### 使用模型
 
 ```go
-// 简洁的事务API
+// 创建模型实例
+userModel := model.NewModel(&User{})
+userModel.SetConnection("default")
+
+// 自动迁移（创建表）
+err := userModel.AutoMigrate(&User{})
+
+// 创建记录
+user := model.NewModel("users")
+user.SetPrimaryKey("id").SetConnection("default")
+user.Fill(map[string]interface{}{
+    "name":   "张三",
+    "email":  "zhangsan@example.com",
+    "status": "active",
+})
+err := user.Save()
+
+// 查询记录
+user := model.NewModel("users")
+user.SetConnection("default")
+err := user.Find(1) // 根据主键查找
+
+// 获取属性
+name := user.GetAttribute("name")
+email := user.GetAttribute("email")
+
+// 更新记录
+user.SetAttribute("name", "新名字")
+err := user.Save()
+
+// 删除记录
+err := user.Delete()
+```
+
+## 💼 事务处理
+
+```go
 err := torm.Transaction(func(tx torm.TransactionInterface) error {
-    // 所有操作在事务中执行
-    _, err := tx.Exec("INSERT INTO users (...) VALUES (...)")
+    // 在事务中执行操作
+    _, err := tx.Exec("INSERT INTO users (name, email) VALUES (?, ?)", 
+        "张三", "zhangsan@example.com")
     if err != nil {
         return err // 自动回滚
     }
     
-    _, err = tx.Exec("UPDATE departments SET budget = budget - 1000")
+    _, err = tx.Exec("UPDATE accounts SET balance = balance - 100 WHERE user_id = ?", 1)
     if err != nil {
         return err // 自动回滚
     }
@@ -492,94 +214,88 @@ err := torm.Transaction(func(tx torm.TransactionInterface) error {
 })
 ```
 
-## 📊 性能特点
-
-- **🚀 零反射查询**: 直接SQL构建，避免运行时反射开销
-- **🔄 智能占位符**: 自动适配MySQL(`?`)和PostgreSQL(`$N`)占位符
-- **📦 批量操作**: 原生支持批量插入和数组参数
-- **🏗️ 连接池优化**: 高效的数据库连接管理
-- **📈 索引自动化**: 根据TORM标签自动创建优化索引
-- **🎨 双模式查询**: 访问器查询(功能丰富) + Raw查询(高性能)
-
-### API 性能对比
+## 📊 聚合查询
 
 ```go
-// 🎯 功能丰富：Model().Get() (获得访问器支持)
-users, _ := torm.Table("users").Model(&User{}).Get()
-for _, user := range users {
-    // 自动格式化的数据，适合前端展示
-    status := user["status"]  // 访问器处理后的数据
-}
+// 计数
+count, err := torm.Table("users").
+    Where("status", "=", "active").
+    Count()
 
-// ⚡ 高性能：GetRaw() (最佳性能，原始数据)
-rawUsers, _ := torm.Table("users").GetRaw()
-for _, user := range rawUsers {
-    // 直接操作原始map，性能最优
-    status := user["status"]  // 原始数据库值
-}
+// 求和
+total, err := torm.Table("orders").Sum("amount")
 
-// 🔄 混合使用：根据场景选择
-users, _ := torm.Table("users").Model(&User{}).Get()
-totalSalary := 0
-for _, user := range users {
-    // 显示数据用访问器
-    displayInfo := user["salary"] // 访问器格式化后的数据
-    
-    // 计算逻辑需要原始值时使用GetRaw()
-    if rawSalary, ok := user["salary"].(float64); ok {
-        totalSalary += int(rawSalary)
-    }
+// 平均值
+avg, err := torm.Table("products").Avg("price")
+
+// 最大/最小值
+max, err := torm.Table("products").Max("price")
+min, err := torm.Table("products").Min("price")
+```
+
+## 📄 分页查询
+
+```go
+// 分页查询
+result, err := torm.Table("users").
+    Where("status", "=", "active").
+    OrderBy("created_at", "desc").
+    Paginate(1, 20) // 第1页，每页20条
+
+// 访问分页结果
+fmt.Printf("总数: %d\n", result.Total)
+fmt.Printf("当前页: %d\n", result.CurrentPage)
+fmt.Printf("总页数: %d\n", result.LastPage)
+for _, user := range result.Data {
+    fmt.Printf("用户: %v\n", user["name"])
 }
 ```
 
-## 🛠️ 常见使用场景
-
-### 1. 快速原型开发
+## 🔗 关联查询
 
 ```go
-// 30秒搭建博客数据模型
-type Post struct {
-    torm.BaseModel
-    ID       int    `torm:"primary_key,auto_increment"`
-    Title    string `torm:"type:varchar,size:200"`
-    Content  string `torm:"type:text"`
-    AuthorID int    `torm:"type:int,references:users.id"`
-    Status   string `torm:"type:varchar,size:20,default:draft,index"`
+// 定义关联
+func (u *User) Posts() *model.HasMany {
+    return u.HasMany(&Post{}, "user_id", "id")
+}
+
+// 使用关联
+user := model.NewModel(&User{})
+user.SetConnection("default")
+user.Find(1)
+
+// 获取用户的所有文章
+posts, err := user.Posts().Get()
+
+// 带条件的关联查询
+publishedPosts, err := user.Posts().
+    Where("status", "=", "published").
+    OrderBy("created_at", "desc").
+    Get()
+```
+
+## 🗄️ 自动迁移
+
+```go
+// 定义模型
+type User struct {
+    model.BaseModel
+    ID        int       `torm:"primary_key,auto_increment"`
+    Name      string    `torm:"type:varchar,size:100"`
+    Email     string    `torm:"type:varchar,size:100,unique"`
     CreatedAt time.Time `torm:"auto_create_time"`
 }
 
-(&User{}).AutoMigrate()
-(&Post{}).AutoMigrate()
+// 自动创建/更新表结构
+userModel := model.NewModel(&User{})
+userModel.SetConnection("default")
+err := userModel.AutoMigrate(&User{})
 ```
 
-### 2. 微服务架构
+## 📚 下一步
 
-```go
-// 每个服务独立的数据模型
-type OrderService struct{}
-
-func (s *OrderService) InitDatabase() {
-    torm.AddConnection("orders", config)
-    
-    models := []interface{}{
-        &Order{}, &OrderItem{}, &Payment{},
-    }
-    
-    for _, model := range models {
-        model.(interface{ AutoMigrate() error }).AutoMigrate()
-    }
-}
-```
-
-### 3. 多环境部署
-
-```go
-func deployEnvironment(env string) {
-    config := getConfigByEnv(env) // dev/test/prod配置
-    torm.AddConnection("default", config)
-    
-    // 同一套模型，自动适配不同环境的数据库
-    (&User{}).AutoMigrate()
-    (&Product{}).AutoMigrate()
-}
-```
+- [配置文档](Configuration) - 详细配置选项
+- [查询构建器](Query-Builder) - 高级查询技巧
+- [模型系统](Model-System) - 深入模型设计
+- [关联关系](Relationships) - 模型间关联
+- [事务处理](Transactions) - 事务管理
